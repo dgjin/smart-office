@@ -1,8 +1,18 @@
 
-import { User, Resource, ApprovalNode } from './types';
+import { User, Resource, ApprovalNode, Department } from './types';
+
+export const INITIAL_DEPARTMENTS: Department[] = [
+  { id: 'dpt-root', name: '集团总部' },
+  { id: 'dpt1', name: '信息技术部', parentId: 'dpt-root' },
+  { id: 'dpt1-1', name: '架构组', parentId: 'dpt1' },
+  { id: 'dpt1-2', name: '运维组', parentId: 'dpt1' },
+  { id: 'dpt2', name: '行政部', parentId: 'dpt-root' },
+  { id: 'dpt3', name: '市场部', parentId: 'dpt-root' },
+  { id: 'dpt4', name: '销售部', parentId: 'dpt-root' },
+];
 
 export const INITIAL_USERS: User[] = [
-  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'], department: '信息技术部' },
+  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'], department: '架构组' },
   { id: '2', name: '审批负责人', email: 'approver@company.com', role: ['APPROVAL_ADMIN'], department: '行政部' },
   { id: '3', name: '李员工', email: 'li@company.com', role: ['EMPLOYEE'], department: '市场部' },
 ];

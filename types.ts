@@ -9,6 +9,12 @@ export interface User {
   department: string;
 }
 
+export interface Department {
+  id: string;
+  name: string;
+  parentId?: string; // 父部门ID，空则为根部门
+}
+
 export type ResourceType = 'ROOM' | 'DESK';
 export type ResourceStatus = 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE' | 'PENDING';
 
@@ -54,7 +60,7 @@ export interface Booking {
 
 export interface Notification {
   id: string;
-  userId: string; // 接收人
+  userId: string; 
   title: string;
   content: string;
   timestamp: string;
@@ -66,6 +72,7 @@ export interface Notification {
 export interface AppState {
   currentUser: User | null;
   users: User[];
+  departments: Department[];
   resources: Resource[];
   bookings: Booking[];
   workflow: ApprovalNode[];
