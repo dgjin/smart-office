@@ -1,0 +1,7 @@
+{
+  "name": "智慧办公空间管理系统",
+  "description": "一个全面的办公资源管理系统，支持会议室与工位的一键申请、管理员审批以及 AI 智能分配建议。",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
