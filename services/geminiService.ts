@@ -2,7 +2,8 @@
 import { GoogleGenAI } from "@google/genai";
 import { Resource } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+// Fix: Initialize GoogleGenAI with a named parameter using process.env.API_KEY directly
+const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
 export const getSmartRecommendation = async (
   purpose: string, 

@@ -1,11 +1,11 @@
 
-export type Role = 'ADMIN' | 'EMPLOYEE';
+export type Role = 'SYSTEM_ADMIN' | 'APPROVAL_ADMIN' | 'EMPLOYEE';
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: Role;
+  role: Role[];
   department: string;
 }
 
@@ -24,6 +24,20 @@ export interface Resource {
 
 export type BookingStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED' | 'CANCELLED';
 
+export interface ApprovalNode {
+  id: string;
+  name: string;
+  approverRole: Role;
+}
+
+export interface ApprovalRecord {
+  nodeName: string;
+  approverName: string;
+  status: 'APPROVED' | 'REJECTED';
+  timestamp: string;
+  comment?: string;
+}
+
 export interface Booking {
   id: string;
   userId: string;
@@ -34,6 +48,19 @@ export interface Booking {
   status: BookingStatus;
   purpose: string;
   createdAt: string;
+  currentNodeIndex: number; 
+  approvalHistory: ApprovalRecord[];
+}
+
+export interface Notification {
+  id: string;
+  userId: string; // 接收人
+  title: string;
+  content: string;
+  timestamp: string;
+  isRead: boolean;
+  type: 'INFO' | 'SUCCESS' | 'WARNING';
+  linkView?: 'BOOKINGS' | 'RESOURCES' | 'USERS';
 }
 
 export interface AppState {
@@ -41,4 +68,6 @@ export interface AppState {
   users: User[];
   resources: Resource[];
   bookings: Booking[];
+  workflow: ApprovalNode[];
+  notifications: Notification[];
 }
