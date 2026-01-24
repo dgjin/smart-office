@@ -1,5 +1,11 @@
 
-import { User, Resource, ApprovalNode, Department } from './types';
+import { User, Resource, ApprovalNode, Department, RoleDefinition } from './types';
+
+export const INITIAL_ROLES: RoleDefinition[] = [
+  { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '拥有全系统最高管理权限', color: 'indigo' },
+  { id: 'APPROVAL_ADMIN', name: '审批负责人', description: '负责各类资源申请的业务审核', color: 'amber' },
+  { id: 'EMPLOYEE', name: '正式员工', description: '可申请并使用公司公共资源', color: 'emerald' },
+];
 
 export const INITIAL_DEPARTMENTS: Department[] = [
   { id: 'dpt-root', name: '集团总部' },
@@ -12,7 +18,7 @@ export const INITIAL_DEPARTMENTS: Department[] = [
 ];
 
 export const INITIAL_USERS: User[] = [
-  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'], department: '架构组' },
+  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN'], department: '架构组' },
   { id: '2', name: '审批负责人', email: 'approver@company.com', role: ['APPROVAL_ADMIN'], department: '行政部' },
   { id: '3', name: '李员工', email: 'li@company.com', role: ['EMPLOYEE'], department: '市场部' },
 ];

@@ -1,18 +1,25 @@
 
-export type Role = 'SYSTEM_ADMIN' | 'APPROVAL_ADMIN' | 'EMPLOYEE';
+export interface RoleDefinition {
+  id: string;
+  name: string;
+  description: string;
+  color: string;
+}
+
+export type Role = string; // IDs of RoleDefinition
 
 export interface User {
   id: string;
   name: string;
   email: string;
-  role: Role[];
+  role: Role[]; 
   department: string;
 }
 
 export interface Department {
   id: string;
   name: string;
-  parentId?: string; // 父部门ID，空则为根部门
+  parentId?: string;
 }
 
 export type ResourceType = 'ROOM' | 'DESK';
@@ -66,15 +73,5 @@ export interface Notification {
   timestamp: string;
   isRead: boolean;
   type: 'INFO' | 'SUCCESS' | 'WARNING';
-  linkView?: 'BOOKINGS' | 'RESOURCES' | 'USERS';
-}
-
-export interface AppState {
-  currentUser: User | null;
-  users: User[];
-  departments: Department[];
-  resources: Resource[];
-  bookings: Booking[];
-  workflow: ApprovalNode[];
-  notifications: Notification[];
+  linkView?: 'BOOKINGS' | 'RESOURCES' | 'USERS' | 'ROLES';
 }
