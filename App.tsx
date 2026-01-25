@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useMemo } from 'react';
+
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
   Cpu, Monitor, Coffee, Edit2, Trash2, UserPlus, RefreshCw,
@@ -6,9 +7,10 @@ import {
   Zap, ShieldCheck, Check, X, Building2, 
   PieChart, ChevronLeft, Timer, Briefcase, Shield, FolderTree,
   UserCircle, AlertTriangle, Download, Upload, Database,
-  Info, MoreHorizontal, Activity, ArrowRightCircle
+  Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
+  CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp
 } from 'lucide-react';
-import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition } from './types';
+import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
 import { getSmartRecommendation } from './services/geminiService';
 
@@ -24,9 +26,10 @@ const StatusBadge = ({ status, theme }: any) => {
     OCCUPIED: 'bg-rose-50 text-rose-600 border-rose-100', 
     APPROVED: `bg-${theme}-50 text-${theme}-600 border-${theme}-100`, 
     REJECTED: 'bg-rose-50 text-rose-600 border-rose-100', 
-    COMPLETED: 'bg-gray-100 text-gray-400 border-gray-200'
+    COMPLETED: 'bg-gray-100 text-gray-400 border-gray-200',
+    MAINTENANCE: 'bg-gray-50 text-gray-500 border-gray-200'
   };
-  const labels: any = { AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', OCCUPIED: '占用', COMPLETED: '结束' };
+  const labels: any = { AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', OCCUPIED: '占用', COMPLETED: '结束', MAINTENANCE: '维护中' };
   return <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
 };
 
@@ -124,11 +127,18 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
 };
 
 const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Resource[], bookings: Booking[], users: User[], theme: string }) => {
-  const [currentDate, setCurrentDate] = useState(new Date());
-  const daysInMonth = useMemo(() => Array.from({ length: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate() }, (_, i) => i + 1), [currentDate]);
+  const [startDate, setStartDate] = useState(new Date());
   
-  const getDayStatus = (resourceId: string, day: number) => {
-    const dStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+  const displayDays = useMemo(() => {
+    return Array.from({ length: 30 }).map((_, i) => {
+      const d = new Date(startDate);
+      d.setDate(startDate.getDate() + i);
+      return d;
+    });
+  }, [startDate]);
+  
+  const getDayStatus = (resourceId: string, date: Date) => {
+    const dStr = date.toISOString().split('T')[0];
     const booking = bookings.find(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING') && (dStr >= b.startTime.split('T')[0] && dStr <= b.endTime.split('T')[0]));
     if (!booking) return null;
     return { ...booking, userName: users.find(u => u.id === booking.userId)?.name };
@@ -137,17 +147,41 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
   return (
     <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm overflow-hidden animate-in fade-in duration-700">
       <div className="flex justify-between items-center mb-8">
-        <h4 className="font-bold flex items-center space-x-2 text-lg"><PieChart className={`text-${theme}-600`} size={20}/> <span>月度资源全景</span></h4>
+        <h4 className="font-bold flex items-center space-x-2 text-lg"><PieChart className={`text-${theme}-600`} size={20}/> <span>资源占用全景 (未来30天)</span></h4>
         <div className="flex items-center bg-gray-50 p-1 rounded-2xl border">
-          <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronLeft size={18}/></button>
-          <span className="px-6 text-sm font-black min-w-[140px] text-center">{currentDate.getFullYear()}年 {currentDate.getMonth() + 1}月</span>
-          <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronRight size={18}/></button>
+          <button onClick={() => { const d = new Date(startDate); d.setDate(d.getDate() - 7); setStartDate(d); }} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronLeft size={18}/></button>
+          <span className="px-6 text-sm font-black min-w-[140px] text-center">{startDate.getMonth() + 1}月{startDate.getDate()}日起</span>
+          <button onClick={() => { const d = new Date(startDate); d.setDate(d.getDate() + 7); setStartDate(d); }} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronRight size={18}/></button>
         </div>
       </div>
       <div className="overflow-x-auto custom-scrollbar pb-4">
         <table className="w-full border-collapse">
-          <thead><tr><th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-black text-gray-400 uppercase min-w-[180px] border-b">资源名称</th>{daysInMonth.map(day => (<th key={day} className="p-2 text-center border-b min-w-[36px] font-bold text-gray-400 text-[10px]">{day}</th>))}</tr></thead>
-          <tbody>{resources.map(res => (<tr key={res.id} className="hover:bg-gray-50 transition-colors"><td className="sticky left-0 z-10 bg-white p-4 border-b text-xs font-bold text-gray-700 truncate">{res.name}</td>{daysInMonth.map(day => { const info = getDayStatus(res.id, day); return (<td key={day} className="p-1 border-b text-center"><div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50'}`} title={info ? `${info.userName}: ${info.purpose}` : ''}/></td>); })}</tr>))}</tbody>
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-black text-gray-400 uppercase min-w-[180px] border-b">资源名称</th>
+              {displayDays.map((date, i) => (
+                <th key={i} className={`p-2 text-center border-b min-w-[36px] font-bold text-[10px] ${date.getDay() === 0 || date.getDay() === 6 ? 'text-rose-400 bg-rose-50/30' : 'text-gray-400'}`}>
+                  <div>{date.getDate()}</div>
+                  <div className="text-[8px] opacity-50">{['日', '一', '二', '三', '四', '五', '六'][date.getDay()]}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {resources.map(res => (
+              <tr key={res.id} className="hover:bg-gray-50 transition-colors">
+                <td className="sticky left-0 z-10 bg-white p-4 border-b text-xs font-bold text-gray-700 truncate">{res.name}</td>
+                {displayDays.map((date, i) => { 
+                  const info = getDayStatus(res.id, date); 
+                  return (
+                    <td key={i} className={`p-1 border-b text-center ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-rose-50/10' : ''}`}>
+                      <div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50/50'}`} title={info ? `${info.userName}: ${info.purpose}` : ''}/>
+                    </td>
+                  ); 
+                })}
+              </tr>
+            ))}
+          </tbody>
         </table>
       </div>
     </div>
@@ -176,13 +210,21 @@ const App: React.FC = () => {
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
-  const [showApprovalActionModal, setShowApprovalActionModal] = useState<Booking | null>(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [editingWorkflowNode, setEditingWorkflowNode] = useState<ApprovalNode | null>(null);
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
   const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
-  const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, conflictingBooking: Booking, user: User } | null>(null);
+  const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, requestedStart: string, requestedEnd: string, resourceBookings: Booking[] } | null>(null);
+  const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
+  const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
+  
+  // Import States
+  const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | null>(null);
+
+  // Batch Selection States
+  const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
 
@@ -216,10 +258,12 @@ const App: React.FC = () => {
     );
 
     if (conflict) {
+      const resourceBookings = bookings.filter(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING'));
       setBookingConflict({ 
         resource, 
-        conflictingBooking: conflict, 
-        user: users.find(u => u.id === conflict.userId) || { name: '未知人员', department: '--' } as any 
+        requestedStart: startTime,
+        requestedEnd: endTime,
+        resourceBookings 
       });
       return;
     }
@@ -237,13 +281,14 @@ const App: React.FC = () => {
       currentNodeIndex: 0, 
       approvalHistory: [] 
     };
-    setBookings([newBooking, ...bookings]);
+    setBookings(prev => [newBooking, ...prev]);
     setShowBookingModal(false);
+    setCalendarDateForBooking(null);
   };
 
   const handleApprove = (booking: Booking) => {
     const isLast = booking.currentNodeIndex === workflow.length - 1;
-    setBookings(bookings.map(b => b.id === booking.id ? { 
+    setBookings(prev => prev.map(b => b.id === booking.id ? { 
       ...b, 
       currentNodeIndex: isLast ? b.currentNodeIndex : b.currentNodeIndex + 1, 
       status: isLast ? 'APPROVED' : 'PENDING', 
@@ -254,11 +299,10 @@ const App: React.FC = () => {
         timestamp: new Date().toISOString() 
       }] 
     } : b));
-    setShowApprovalActionModal(null);
   };
 
   const handleReject = (booking: Booking, comment: string) => {
-    setBookings(bookings.map(b => b.id === booking.id ? { 
+    setBookings(prev => prev.map(b => b.id === booking.id ? { 
       ...b, 
       status: 'REJECTED', 
       approvalHistory: [...b.approvalHistory, { 
@@ -269,7 +313,41 @@ const App: React.FC = () => {
         timestamp: new Date().toISOString() 
       }] 
     } : b));
-    setShowApprovalActionModal(null);
+  };
+
+  // Batch Operations Logic
+  const toggleResourceSelection = (id: string) => {
+    setSelectedResourceIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+  };
+  const toggleAllResources = () => {
+    setSelectedResourceIds(prev => prev.length === resources.length ? [] : resources.map(r => r.id));
+  };
+  const handleBatchDeleteResources = () => {
+    if (confirm(`确定要删除选中的 ${selectedResourceIds.length} 个资源吗？`)) {
+      setResources(prev => prev.filter(r => !selectedResourceIds.includes(r.id)));
+      setSelectedResourceIds([]);
+    }
+  };
+  const handleBatchUpdateResourceStatus = (status: ResourceStatus) => {
+    setResources(prev => prev.map(r => selectedResourceIds.includes(r.id) ? { ...r, status } : r));
+    setSelectedResourceIds([]);
+  };
+
+  const toggleUserSelection = (id: string) => {
+    setSelectedUserIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
+  };
+  const toggleAllUsers = () => {
+    setSelectedUserIds(prev => prev.length === users.length ? [] : users.map(u => u.id));
+  };
+  const handleBatchDeleteUsers = () => {
+    if (confirm(`确定要注销选中的 ${selectedUserIds.length} 位成员吗？`)) {
+      setUsers(prev => prev.filter(u => !selectedUserIds.includes(u.id)));
+      setSelectedUserIds([]);
+    }
+  };
+  const handleBatchAssignRole = (roleId: string) => {
+    setUsers(prev => prev.map(u => selectedUserIds.includes(u.id) ? { ...u, role: [...new Set([...u.role, roleId])] } : u));
+    setSelectedUserIds([]);
   };
 
   if (!currentUser) return (
@@ -328,7 +406,7 @@ const App: React.FC = () => {
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 overflow-auto relative bg-gray-50">
+      <main className="flex-1 min-w-0 overflow-auto relative bg-gray-50 pb-32">
         <header className="h-16 bg-white/80 backdrop-blur-md border-b px-8 flex items-center justify-between sticky top-0 z-40">
           <h2 className="text-lg font-bold">
             {view === 'DASHBOARD' && '数据全景看板'}
@@ -346,7 +424,6 @@ const App: React.FC = () => {
         <div className="p-8 max-w-7xl mx-auto">
           {view === 'DASHBOARD' && (
             <div className="space-y-6 animate-in fade-in">
-              {/* Top Section: Compact Quick Action Row */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <button onClick={() => setView('RESOURCES')} className={`flex items-center justify-between p-5 bg-${theme}-600 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]`}>
                   <div className="flex items-center space-x-4 relative z-10">
@@ -377,42 +454,14 @@ const App: React.FC = () => {
                 </button>
               </div>
 
-              {/* Stats Grid */}
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                 <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend="+2" color="indigo" onClick={() => setView('RESOURCES')} />
                 <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="+12%" color="emerald" onClick={() => setView('BOOKINGS')} />
                 <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setView('APPROVAL_CENTER')} />
               </div>
 
-              {/* Gantt View */}
               <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
-
-              {/* Monthly Grid */}
               <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
-              
-              {/* Quick Navigation Footer */}
-              <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-6">
-                <div>
-                  <h4 className="font-black text-gray-800">系统管理快捷导航</h4>
-                  <p className="text-xs text-gray-400 mt-1">点击图标可快速跳转至对应管理面板</p>
-                </div>
-                <div className="flex flex-wrap gap-3">
-                  <button onClick={() => setView('RESOURCES')} className="px-5 py-2.5 bg-gray-50 hover:bg-indigo-50 text-[11px] font-black text-gray-500 hover:text-indigo-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
-                    <MapPin size={16}/> <span>资源库</span>
-                  </button>
-                  <button onClick={() => setView('USERS')} className="px-5 py-2.5 bg-gray-50 hover:bg-emerald-50 text-[11px] font-black text-gray-500 hover:text-emerald-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
-                    <Users size={16}/> <span>员工管理</span>
-                  </button>
-                  <button onClick={() => setView('APPROVAL_CENTER')} className="px-5 py-2.5 bg-gray-50 hover:bg-amber-50 text-[11px] font-black text-gray-500 hover:text-amber-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
-                    <ShieldCheck size={16}/> <span>审批台</span>
-                  </button>
-                  {currentUser.role.includes('SYSTEM_ADMIN') && (
-                    <button onClick={() => setView('WORKFLOW_CONFIG')} className="px-5 py-2.5 bg-gray-50 hover:bg-indigo-50 text-[11px] font-black text-gray-500 hover:text-indigo-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
-                      <GitMerge size={16}/> <span>流程配置</span>
-                    </button>
-                  )}
-                </div>
-              </div>
             </div>
           )}
 
@@ -420,26 +469,69 @@ const App: React.FC = () => {
             <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-end mb-6">
                 <div><h3 className="text-2xl font-black">空间资产</h3><p className="text-sm text-gray-400 mt-1">查看及预约全公司物理空间资源。</p></div>
-                <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增资源</span></button>
+                <div className="flex items-center space-x-3">
+                  <button onClick={() => setShowImportModal('RESOURCES')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50"><Upload size={18}/> <span>批量导入</span></button>
+                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增资源</span></button>
+                </div>
               </div>
               <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
                 <table className="w-full text-left">
-                  <thead><tr className="bg-gray-50 border-b"><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">资源标识</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">物理位置</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">类型/容量</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">状态</th><th className="px-6 py-4 text-right">操作</th></tr></thead>
-                  <tbody className="divide-y divide-gray-50">{resources.map(r => (
-                    <tr key={r.id} className="hover:bg-indigo-50/20 transition-colors">
-                      <td className="px-6 py-4 font-bold text-gray-800">{r.name}</td>
-                      <td className="px-6 py-4 text-xs font-medium text-gray-500">{r.location}</td>
-                      <td className="px-6 py-4 text-xs text-gray-500">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
-                      <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
-                      <td className="px-6 py-4 text-right space-x-2">
-                        <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
-                        <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[10px] font-black shadow-md`}>预约</button>
-                        {currentUser.role.includes('SYSTEM_ADMIN') && (<button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>)}
-                      </td>
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="px-6 py-4 w-12">
+                        <button onClick={toggleAllResources} className={`transition-colors ${selectedResourceIds.length === resources.length && resources.length > 0 ? `text-${theme}-600` : 'text-gray-300'}`}>
+                          {selectedResourceIds.length === resources.length && resources.length > 0 ? <CheckSquare size={18}/> : <Square size={18}/>}
+                        </button>
+                      </th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">资源标识</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">物理位置</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">类型/容量</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">状态</th>
+                      <th className="px-6 py-4 text-right">操作</th>
                     </tr>
-                  ))}</tbody>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {resources.map(r => (
+                      <tr key={r.id} className={`hover:bg-${theme}-50/20 transition-colors ${selectedResourceIds.includes(r.id) ? `bg-${theme}-50/30` : ''}`}>
+                        <td className="px-6 py-4">
+                          <button onClick={() => toggleResourceSelection(r.id)} className={`transition-colors ${selectedResourceIds.includes(r.id) ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-400'}`}>
+                            {selectedResourceIds.includes(r.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 font-bold text-gray-800">{r.name}</td>
+                        <td className="px-6 py-4 text-xs font-medium text-gray-500">{r.location}</td>
+                        <td className="px-6 py-4 text-xs text-gray-500">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
+                        <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
+                        <td className="px-6 py-4 text-right space-x-2">
+                          <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors" title="详情"><Info size={16}/></button>
+                          {r.type === 'DESK' && (
+                            <button onClick={() => setShowResourceCalendar(r)} className={`p-2 text-gray-300 hover:text-emerald-600 transition-colors`} title="查看可用日历"><CalendarDays size={16}/></button>
+                          )}
+                          <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[10px] font-black shadow-md`}>预约</button>
+                          {currentUser.role.includes('SYSTEM_ADMIN') && (<button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
+              {/* Floating Batch Action Bar for Resources */}
+              {selectedResourceIds.length > 0 && (
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-8">
+                  <div className="bg-gray-900/95 backdrop-blur-xl text-white px-8 py-4 rounded-[2.5rem] shadow-2xl border border-white/10 flex items-center space-x-8">
+                    <div className="flex items-center space-x-3 pr-8 border-r border-white/10">
+                      <div className={`w-8 h-8 rounded-full bg-${theme}-500 flex items-center justify-center font-black text-xs`}>{selectedResourceIds.length}</div>
+                      <span className="text-xs font-bold text-gray-300">项资源已选中</span>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <button onClick={() => handleBatchUpdateResourceStatus('AVAILABLE')} className="px-4 py-2 bg-emerald-500/10 hover:bg-emerald-500 text-emerald-400 hover:text-white text-[10px] font-black rounded-xl transition-all border border-emerald-500/20">设为可用</button>
+                      <button onClick={() => handleBatchUpdateResourceStatus('MAINTENANCE')} className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white text-[10px] font-black rounded-xl transition-all border border-amber-500/20">维护状态</button>
+                      <button onClick={handleBatchDeleteResources} className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white text-[10px] font-black rounded-xl transition-all border border-rose-500/20 flex items-center space-x-2"><Trash2 size={12}/> <span>批量删除</span></button>
+                      <button onClick={() => setSelectedResourceIds([])} className="text-gray-400 hover:text-white"><X size={18}/></button>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
@@ -447,34 +539,135 @@ const App: React.FC = () => {
             <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-end mb-6">
                 <div><h3 className="text-2xl font-black">成员名录</h3><p className="text-sm text-gray-400 mt-1">管理企业员工信息及其系统角色。</p></div>
-                <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><UserPlus size={18}/> <span>录入成员</span></button>
+                <div className="flex items-center space-x-3">
+                  <button onClick={() => setShowImportModal('USERS')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50"><Upload size={18}/> <span>批量导入</span></button>
+                  <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><UserPlus size={18}/> <span>录入成员</span></button>
+                </div>
               </div>
               <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
                 <table className="w-full text-left">
-                  <thead><tr className="bg-gray-50 border-b"><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">基本信息</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">部门</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">系统角色</th><th className="px-6 py-4 text-right">操作</th></tr></thead>
-                  <tbody className="divide-y divide-gray-50">{users.map(u => (
-                    <tr key={u.id} className="hover:bg-indigo-50/20 transition-colors">
-                      <td className="px-6 py-4 flex items-center space-x-3">
-                        <div className={`w-8 h-8 rounded-full bg-${theme}-100 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{u.name[0]}</div>
-                        <div><p className="font-bold text-gray-800 text-sm">{u.name}</p><p className="text-[10px] text-gray-400">{u.email}</p></div>
-                      </td>
-                      <td className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">{u.department}</td>
-                      <td className="px-6 py-4"><div className="flex flex-wrap gap-1">{u.role.map(rid => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div></td>
-                      <td className="px-6 py-4 text-right">
-                        <button onClick={() => setViewDetail({ type: 'USER', data: u })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
-                        <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>
-                        <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="p-2 text-gray-200 hover:text-rose-500"><Trash2 size={16}/></button>
-                      </td>
+                  <thead>
+                    <tr className="bg-gray-50 border-b">
+                      <th className="px-6 py-4 w-12">
+                        <button onClick={toggleAllUsers} className={`transition-colors ${selectedUserIds.length === users.length && users.length > 0 ? `text-${theme}-600` : 'text-gray-300'}`}>
+                          {selectedUserIds.length === users.length && users.length > 0 ? <CheckSquare size={18}/> : <Square size={18}/>}
+                        </button>
+                      </th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">基本信息</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">部门</th>
+                      <th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">系统角色</th>
+                      <th className="px-6 py-4 text-right">操作</th>
                     </tr>
-                  ))}</tbody>
+                  </thead>
+                  <tbody className="divide-y divide-gray-50">
+                    {users.map(u => (
+                      <tr key={u.id} className={`hover:bg-${theme}-50/20 transition-colors ${selectedUserIds.includes(u.id) ? `bg-${theme}-50/30` : ''}`}>
+                        <td className="px-6 py-4">
+                          <button onClick={() => toggleUserSelection(u.id)} className={`transition-colors ${selectedUserIds.includes(u.id) ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-400'}`}>
+                            {selectedUserIds.includes(u.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
+                          </button>
+                        </td>
+                        <td className="px-6 py-4 flex items-center space-x-3">
+                          <div className={`w-8 h-8 rounded-full bg-${theme}-100 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{u.name[0]}</div>
+                          <div><p className="font-bold text-gray-800 text-sm">{u.name}</p><p className="text-[10px] text-gray-400">{u.email}</p></div>
+                        </td>
+                        <td className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">{u.department}</td>
+                        <td className="px-6 py-4"><div className="flex flex-wrap gap-1">{u.role.map(rid => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div></td>
+                        <td className="px-6 py-4 text-right">
+                          <button onClick={() => setViewDetail({ type: 'USER', data: u })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
+                          <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>
+                          <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="p-2 text-gray-200 hover:text-rose-500"><Trash2 size={16}/></button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
                 </table>
               </div>
+              {/* Floating Batch Action Bar for Users */}
+              {selectedUserIds.length > 0 && (
+                <div className="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 animate-in slide-in-from-bottom-8">
+                  <div className="bg-gray-900/95 backdrop-blur-xl text-white px-8 py-4 rounded-[2.5rem] shadow-2xl border border-white/10 flex items-center space-x-8">
+                    <div className="flex items-center space-x-3 pr-8 border-r border-white/10">
+                      <div className={`w-8 h-8 rounded-full bg-${theme}-500 flex items-center justify-center font-black text-xs`}>{selectedUserIds.length}</div>
+                      <span className="text-xs font-bold text-gray-300">位成员已选中</span>
+                    </div>
+                    <div className="flex items-center space-x-4">
+                      <div className="relative group/roles">
+                        <button className="px-4 py-2 bg-white/10 hover:bg-white text-white hover:text-gray-900 text-[10px] font-black rounded-xl transition-all border border-white/20 flex items-center space-x-1">
+                          <span>分配角色</span> <ChevronUp size={12}/>
+                        </button>
+                        <div className="absolute bottom-full mb-4 left-0 bg-white rounded-2xl shadow-2xl border border-gray-100 p-2 hidden group-hover/roles:block min-w-[160px]">
+                           {roles.map(r => (
+                             <button key={r.id} onClick={() => handleBatchAssignRole(r.id)} className="w-full text-left px-4 py-2 hover:bg-gray-50 rounded-lg text-[10px] font-bold text-gray-700">{r.name}</button>
+                           ))}
+                        </div>
+                      </div>
+                      <button onClick={handleBatchDeleteUsers} className="px-4 py-2 bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white text-[10px] font-black rounded-xl transition-all border border-rose-500/20 flex items-center space-x-2"><Trash2 size={12}/> <span>批量注销</span></button>
+                      <button onClick={() => setSelectedUserIds([])} className="text-gray-400 hover:text-white"><X size={18}/></button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {view === 'APPROVAL_CENTER' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="mb-8">
+                <h3 className="text-3xl font-black text-gray-800">审批工作台</h3>
+                <p className="text-sm text-gray-400 mt-2 flex items-center space-x-2">
+                   <ShieldCheck size={14} className={`text-${theme}-600`}/>
+                   <span>当前共 <strong className={`text-${theme}-600`}>{pendingCount}</strong> 项待处理申请</span>
+                </p>
+              </div>
+              
+              <div className="grid grid-cols-1 gap-6">
+                {bookings.filter(b => canApprove(b)).map(b => (
+                  <ApprovalTaskCard 
+                    key={b.id} 
+                    booking={b} 
+                    workflow={workflow} 
+                    users={users} 
+                    resources={resources} 
+                    theme={theme} 
+                    onApprove={() => handleApprove(b)} 
+                    onReject={(c) => handleReject(b, c)} 
+                  />
+                ))}
+                {bookings.filter(b => canApprove(b)).length === 0 && (
+                  <div className="text-center py-32 bg-white rounded-[3rem] border border-dashed border-gray-200">
+                    <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-300">
+                      <CheckCircle size={40}/>
+                    </div>
+                    <p className="text-gray-400 font-bold">工作台已全部清空，太棒了！</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {view === 'BOOKINGS' && (
+            <div className="space-y-4 animate-in fade-in">
+              <h3 className="text-2xl font-black mb-4">我的申请动态</h3>
+              {bookings.filter(b => b.userId === currentUser.id).map(b => (
+                <div key={b.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 hover:border-indigo-200 transition-all">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center space-x-4">
+                      <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={20}/></div>
+                      <div><h4 className="font-black text-gray-800">{b.purpose}</h4><p className="text-[10px] text-gray-400 font-bold uppercase">{resources.find(r => r.id === b.resourceId)?.name} · {b.startTime.replace('T', ' ')}</p></div>
+                    </div>
+                    <StatusBadge status={b.status} theme={theme} />
+                  </div>
+                  <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
+                </div>
+              ))}
+              {bookings.filter(b => b.userId === currentUser.id).length === 0 && <div className="text-center py-20 bg-white rounded-[2.5rem] border border-dashed text-gray-400 font-medium">暂无预约申请记录</div>}
             </div>
           )}
 
           {view === 'ROLES' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">角色权限定义</h3></div><button onClick={() => { setEditingRole(null); setShowRoleModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}><Plus size={18}/> <span>新增角色</span></button></div>
+              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">角色权限集</h3></div><button onClick={() => { setEditingRole(null); setShowRoleModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}><Plus size={18}/> <span>新增角色</span></button></div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {roles.map(r => (
                   <div key={r.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm relative group">
@@ -522,24 +715,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {view === 'APPROVAL_CENTER' && (
-            <div className="space-y-6 animate-in fade-in">
-              <div className="mb-6"><h3 className="text-2xl font-black">审批工作台</h3><p className="text-sm text-gray-400 mt-1">处理待您核准的各类资源申请。</p></div>
-              <div className="grid grid-cols-1 gap-4">
-                {bookings.filter(b => canApprove(b)).map(b => (
-                  <div key={b.id} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between group hover:border-indigo-200 transition-all">
-                    <div className="space-y-2">
-                      <div className="flex items-center space-x-3"><div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={18}/></div><h5 className="text-lg font-bold">{b.purpose}</h5></div>
-                      <p className="text-xs text-gray-400 pl-13">申请人：{users.find(u => u.id === b.userId)?.name} · 资源：{resources.find(r => r.id === b.resourceId)?.name}</p>
-                    </div>
-                    <button onClick={() => setShowApprovalActionModal(b)} className={`mt-4 md:mt-0 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2`}><ShieldCheck size={18}/> <span>处理</span></button>
-                  </div>
-                ))}
-                {bookings.filter(b => canApprove(b)).length === 0 && <div className="text-center py-20 bg-white rounded-3xl border border-dashed text-gray-400 font-medium">当前无待处理任务</div>}
-              </div>
-            </div>
-          )}
-
           {view === 'DATA_CENTER' && (
             <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
               <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-xl relative overflow-hidden">
@@ -563,37 +738,97 @@ const App: React.FC = () => {
               </div>
             </div>
           )}
-
-          {view === 'BOOKINGS' && (
-            <div className="space-y-4 animate-in fade-in">
-              <h3 className="text-2xl font-black mb-4">我的申请动态</h3>
-              {bookings.filter(b => b.userId === currentUser.id).map(b => (
-                <div key={b.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 hover:border-indigo-200 transition-all">
-                  <div className="flex items-center justify-between mb-6">
-                    <div className="flex items-center space-x-4">
-                      <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={20}/></div>
-                      <div><h4 className="font-black text-gray-800">{b.purpose}</h4><p className="text-[10px] text-gray-400 font-bold uppercase">{resources.find(r => r.id === b.resourceId)?.name} · {b.startTime.replace('T', ' ')}</p></div>
-                    </div>
-                    <StatusBadge status={b.status} theme={theme} />
-                  </div>
-                  <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
-                </div>
-              ))}
-              {bookings.filter(b => b.userId === currentUser.id).length === 0 && <div className="text-center py-20 bg-white rounded-[2.5rem] border border-dashed text-gray-400 font-medium">暂无预约申请记录</div>}
-            </div>
-          )}
         </div>
       </main>
 
       {/* --- Modals --- */}
 
+      {showImportModal && (
+        <BatchImportModal 
+          type={showImportModal} 
+          theme={theme} 
+          onClose={() => setShowImportModal(null)} 
+          onImport={(data) => {
+            if (showImportModal === 'USERS') setUsers(prev => [...prev, ...data]);
+            else setResources(prev => [...prev, ...data]);
+            setShowImportModal(null);
+          }}
+        />
+      )}
+
+      {showResourceCalendar && (
+        <ResourceCalendarModal 
+          resource={showResourceCalendar} 
+          bookings={bookings} 
+          users={users} 
+          theme={theme} 
+          onClose={() => setShowResourceCalendar(null)} 
+          onSelectDate={(date) => {
+            setCalendarDateForBooking(date);
+            setSelectedResource(showResourceCalendar);
+            setShowResourceCalendar(null);
+            setShowBookingModal(true);
+          }}
+        />
+      )}
+
       {bookingConflict && (
-        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in text-center">
-            <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center border-4 border-rose-100 mx-auto mb-6"><AlertTriangle size={32} /></div>
-            <h3 className="text-2xl font-black mb-2">时间冲突</h3>
-            <p className="text-gray-400 text-sm mb-8">抱歉，该时段已被 <span className="text-rose-500 font-bold">{bookingConflict.user.name}</span> 占用。</p>
-            <button onClick={() => setBookingConflict(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>关闭</button>
+        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in">
+            <div className="text-center mb-10">
+               <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50">
+                 <AlertTriangle size={40} />
+               </div>
+               <h3 className="text-3xl font-black text-gray-800 mb-2">预约时间冲突</h3>
+               <p className="text-gray-400 font-medium">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold`}>{bookingConflict.resource.name}</span> 在此时段不可用。</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10 text-left">
+               <div className="p-6 bg-rose-50/50 border border-rose-100 rounded-[2rem] space-y-4 relative overflow-hidden">
+                  <div className="flex items-center justify-between relative z-10">
+                    <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center space-x-2">
+                      <Zap size={14}/> <span>您的申请请求</span>
+                    </h5>
+                  </div>
+                  <div className="relative z-10">
+                    <p className="text-sm font-black text-gray-700 leading-relaxed">
+                      从: <span className="text-rose-600">{bookingConflict.requestedStart.replace('T', ' ')}</span>
+                    </p>
+                    <p className="text-sm font-black text-gray-700 leading-relaxed">
+                      至: <span className="text-rose-600">{bookingConflict.requestedEnd.replace('T', ' ')}</span>
+                    </p>
+                  </div>
+                  <CalendarDays className="absolute -right-4 -bottom-4 text-rose-200/30" size={80}/>
+               </div>
+
+               <div className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-4 relative overflow-hidden">
+                  <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-2">
+                    <History size={14}/> <span>该资源现有排期</span>
+                  </h5>
+                  <div className="space-y-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                    {bookingConflict.resourceBookings.length > 0 ? (
+                      bookingConflict.resourceBookings.map((b, i) => (
+                        <div key={b.id} className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
+                           <p className="text-[10px] font-bold text-gray-700">
+                             {b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}
+                             <span className="text-gray-300 ml-2 font-medium">({users.find(u => u.id === b.userId)?.name})</span>
+                           </p>
+                        </div>
+                      ))
+                    ) : (
+                      <p className="text-xs text-gray-300 italic">暂无确认的预订记录</p>
+                    )}
+                  </div>
+                  <Clock className="absolute -right-4 -bottom-4 text-gray-200/30" size={80}/>
+               </div>
+            </div>
+
+            <button 
+              onClick={() => setBookingConflict(null)} 
+              className={`w-full py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl shadow-${theme}-600/20 active:translate-y-1 transition-all`}
+            >
+              我知道了，去调整时间
+            </button>
           </div>
         </div>
       )}
@@ -626,13 +861,398 @@ const App: React.FC = () => {
       {showResourceModal && <ResourceModal resource={editingResource} onClose={() => setShowResourceModal(false)} onSave={(data: any) => { if(editingResource) setResources(resources.map(r => r.id === editingResource.id ? {...r, ...data} : r)); else setResources([...resources, { id: 'r-'+Date.now(), status: 'AVAILABLE', features: [], ...data }]); setShowResourceModal(false); }} theme={theme} />}
       {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={(data: any) => { if(editingRole) setRoles(roles.map(r => r.id === editingRole.id ? {...r, ...data} : r)); else setRoles([...roles, { id: 'rl-'+Date.now(), ...data }]); setShowRoleModal(false); }} theme={theme} />}
       {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => { if(editingWorkflowNode) setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? {...n, ...data} : n)); else setWorkflow([...workflow, { id: 'wf-'+Date.now(), ...data }]); setShowWorkflowModal(false); }} theme={theme} />}
-      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} onClose={() => setShowBookingModal(false)} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')}/>)}
-      {showApprovalActionModal && (<ApprovalActionModal booking={showApprovalActionModal} workflow={workflow} users={users} theme={theme} onApprove={() => handleApprove(showApprovalActionModal)} onReject={(c: any) => handleReject(showApprovalActionModal, c)} onClose={() => setShowApprovalActionModal(null)} />)}
+      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); }} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')}/>)}
     </div>
   );
 };
 
-// --- Modal Helper Components ---
+// --- Specialized Components ---
+
+const BatchImportModal = ({ type, theme, onClose, onImport }: any) => {
+  const [importText, setImportText] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const templates: any = {
+    USERS: "姓名,邮箱,部门,角色(用|隔开)\n张三,zhangsan@company.com,技术部,EMPLOYEE\n李四,lisi@company.com,市场部,EMPLOYEE|APPROVAL_ADMIN",
+    RESOURCES: "资源名称,类型(ROOM/DESK),容量,位置,设施(用|隔开)\n会议室X,ROOM,10,2号楼,投屏|白板\n工位Z,DESK,1,A区,双显"
+  };
+
+  const handleDownloadTemplate = () => {
+    const blob = new Blob([templates[type]], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.setAttribute("download", `Template_${type}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onload = (event) => setImportText(event.target?.result as string);
+      reader.readAsText(file);
+    }
+  };
+
+  const processImport = () => {
+    setError(null);
+    const lines = importText.trim().split('\n').filter(l => l.trim() !== '');
+    if (lines.length < 2) return setError("数据格式不正确：请至少包含标题行和一行数据。");
+    
+    const [header, ...rows] = lines;
+    const importedData: any[] = [];
+
+    try {
+      rows.forEach((row, idx) => {
+        const parts = row.split(',').map(p => p.trim());
+        if (type === 'USERS') {
+          const [name, email, department, rolesStr] = parts;
+          if (!name || !email) throw new Error(`第 ${idx + 2} 行数据不完整`);
+          importedData.push({
+            id: `u-import-${Date.now()}-${idx}`,
+            name,
+            email,
+            department: department || '未分配',
+            role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE']
+          });
+        } else {
+          const [name, rType, capacity, location, featuresStr] = parts;
+          if (!name || !rType) throw new Error(`第 ${idx + 2} 行数据不完整`);
+          importedData.push({
+            id: `r-import-${Date.now()}-${idx}`,
+            name,
+            type: rType === 'ROOM' ? 'ROOM' : 'DESK',
+            capacity: parseInt(capacity) || 0,
+            location: location || '未定义',
+            features: featuresStr ? featuresStr.split('|') : [],
+            status: 'AVAILABLE'
+          });
+        }
+      });
+      onImport(importedData);
+    } catch (e: any) {
+      setError(e.message || "解析失败，请检查数据格式。");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[160] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-4">
+            <div className={`w-14 h-14 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 border border-${theme}-100`}>
+              <FileUp size={28}/>
+            </div>
+            <div>
+              <h3 className="text-2xl font-black text-gray-800">批量导入{type === 'USERS' ? '成员' : '资源'}</h3>
+              <p className="text-xs text-gray-400 font-medium">支持 CSV 格式或纯文本粘贴。</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500"><X size={20}/></button>
+        </div>
+
+        <div className="flex-1 space-y-6 overflow-y-auto custom-scrollbar pr-2">
+           <div className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100">
+              <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-4 flex items-center space-x-2">
+                <FileText size={14}/> <span>导入说明与模版</span>
+              </h5>
+              <div className="bg-white p-4 rounded-2xl border border-gray-100 mb-4 overflow-x-auto">
+                 <pre className="text-[10px] text-indigo-600 font-mono leading-relaxed">{templates[type]}</pre>
+              </div>
+              <button onClick={handleDownloadTemplate} className="text-[10px] font-black text-indigo-600 hover:underline flex items-center space-x-1">
+                <Download size={12}/> <span>下载标准 CSV 模版</span>
+              </button>
+           </div>
+
+           <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">粘贴数据或上传文件</label>
+                <input type="file" ref={fileInputRef} onChange={handleFileUpload} accept=".csv,.txt" className="hidden" />
+                <button onClick={() => fileInputRef.current?.click()} className="text-[10px] font-black text-indigo-600 hover:underline">浏览文件...</button>
+              </div>
+              <textarea 
+                value={importText}
+                onChange={e => setImportText(e.target.value)}
+                placeholder="在此粘贴 CSV 格式文本..."
+                className="w-full h-48 p-6 bg-gray-50 rounded-[2.5rem] border border-gray-100 outline-none text-xs font-mono shadow-inner resize-none focus:ring-2 focus:ring-indigo-100"
+              />
+              {error && (
+                <div className="p-4 bg-rose-50 border border-rose-100 rounded-2xl flex items-center space-x-3 text-rose-500 text-xs font-bold animate-pulse">
+                  <AlertTriangle size={16}/> <span>{error}</span>
+                </div>
+              )}
+           </div>
+        </div>
+
+        <div className="mt-10 flex space-x-4 pt-4 border-t border-gray-50">
+           <button onClick={onClose} className="flex-1 py-5 font-bold text-gray-400 hover:text-gray-600">取消</button>
+           <button 
+             disabled={!importText.trim()}
+             onClick={processImport} 
+             className={`flex-1 py-5 bg-${theme}-600 text-white font-black rounded-3xl shadow-2xl disabled:opacity-50 disabled:cursor-not-allowed`}
+           >
+             开始导入
+           </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ResourceCalendarModal = ({ resource, bookings, users, theme, onClose, onSelectDate }: any) => {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  
+  const daysInMonth = useMemo(() => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const days = [];
+    
+    // Fill leading empty days
+    const firstDayOfWeek = firstDay.getDay();
+    for (let i = 0; i < firstDayOfWeek; i++) {
+      days.push(null);
+    }
+    
+    // Fill actual days
+    for (let i = 1; i <= lastDay.getDate(); i++) {
+      days.push(new Date(year, month, i));
+    }
+    return days;
+  }, [currentMonth]);
+
+  const getBookingForDate = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+    return bookings.find((b: any) => 
+      b.resourceId === resource.id && 
+      (b.status === 'APPROVED' || b.status === 'PENDING') &&
+      dateStr >= b.startTime.split('T')[0] && 
+      dateStr <= b.endTime.split('T')[0]
+    );
+  };
+
+  const nextMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  const prevMonth = () => setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+
+  return (
+    <div className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-8 shadow-2xl animate-in zoom-in overflow-hidden flex flex-col max-h-[90vh]">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-4">
+            <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 shadow-sm border border-${theme}-100`}>
+              <CalendarDays size={24}/>
+            </div>
+            <div>
+              <h3 className="text-xl font-black text-gray-800">{resource.name} 可用性</h3>
+              <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{resource.location}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500 transition-colors">
+            <X size={20}/>
+          </button>
+        </div>
+
+        <div className="flex items-center justify-between bg-gray-50 p-4 rounded-3xl mb-6">
+          <button onClick={prevMonth} className="p-2 hover:bg-white rounded-xl transition-all shadow-sm"><ChevronLeft size={20}/></button>
+          <span className="text-lg font-black text-gray-700">{currentMonth.getFullYear()}年 {currentMonth.getMonth() + 1}月</span>
+          <button onClick={nextMonth} className="p-2 hover:bg-white rounded-xl transition-all shadow-sm"><ChevronRight size={20}/></button>
+        </div>
+
+        <div className="flex-1 overflow-auto custom-scrollbar">
+          <div className="grid grid-cols-7 gap-3 mb-4 text-center">
+            {['日', '一', '二', '三', '四', '五', '六'].map(d => (
+              <span key={d} className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{d}</span>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-7 gap-3 pb-4">
+            {daysInMonth.map((date, i) => {
+              if (!date) return <div key={i} className="aspect-square"></div>;
+              const booking = getBookingForDate(date);
+              const isToday = date.toISOString().split('T')[0] === new Date().toISOString().split('T')[0];
+              const isPast = date < new Date(new Date().setHours(0,0,0,0));
+              
+              return (
+                <button 
+                  key={i} 
+                  disabled={!!booking || isPast}
+                  onClick={() => onSelectDate(date.toISOString().split('T')[0])}
+                  className={`aspect-square rounded-2xl flex flex-col items-center justify-center relative border transition-all group ${
+                    booking 
+                      ? 'bg-rose-50 border-rose-100 text-rose-300 cursor-not-allowed' 
+                      : isPast 
+                        ? 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed'
+                        : `bg-white border-gray-100 hover:border-${theme}-400 hover:shadow-lg hover:scale-105`
+                  } ${isToday ? `border-${theme}-600 ring-2 ring-${theme}-100` : ''}`}
+                >
+                  <span className={`text-sm font-black ${isToday ? `text-${theme}-600` : booking ? 'text-rose-400' : 'text-gray-700'}`}>
+                    {date.getDate()}
+                  </span>
+                  {booking && (
+                    <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-rose-400"></div>
+                  )}
+                  {!booking && !isPast && (
+                    <div className={`mt-1 opacity-0 group-hover:opacity-100 transition-opacity bg-${theme}-100 p-1 rounded-full text-${theme}-600`}>
+                      <Plus size={10}/>
+                    </div>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="mt-6 pt-6 border-t border-gray-100 flex items-center justify-between">
+          <div className="flex items-center space-x-6">
+             <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full bg-white border border-gray-200"></div><span className="text-[10px] font-bold text-gray-400">空闲</span></div>
+             <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full bg-rose-100"></div><span className="text-[10px] font-bold text-gray-400">已占用</span></div>
+             <div className="flex items-center space-x-2"><div className="w-3 h-3 rounded-full bg-gray-100"></div><span className="text-[10px] font-bold text-gray-400">过去时间</span></div>
+          </div>
+          <p className="text-[10px] font-black text-gray-300 italic">点击空格日期直接发起预约</p>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprove, onReject }: any) => {
+  const [isRejecting, setIsRejecting] = useState(false);
+  const [rejectReason, setRejectReason] = useState('');
+  const user = users.find((u: any) => u.id === booking.userId);
+  const resource = resources.find((r: any) => r.id === booking.resourceId);
+
+  const handleAction = (e: React.MouseEvent, action: 'APPROVE' | 'REJECT') => {
+    e.stopPropagation();
+    if (action === 'APPROVE') {
+      onApprove();
+    } else {
+      setIsRejecting(true);
+    }
+  };
+
+  const submitReject = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!rejectReason.trim()) return;
+    onReject(rejectReason);
+    setIsRejecting(false);
+  };
+
+  return (
+    <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden hover:border-indigo-200 hover:shadow-xl transition-all duration-300 group">
+      <div className="flex flex-col lg:flex-row">
+        <div className="p-8 flex-1 space-y-6">
+          <div className="flex items-start justify-between">
+            <div className="flex items-center space-x-4">
+              <div className={`w-14 h-14 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 group-hover:scale-110 transition-transform`}>
+                {booking.type === 'ROOM' ? <Monitor size={28}/> : <Coffee size={28}/>}
+              </div>
+              <div>
+                <h4 className="text-xl font-black text-gray-800 leading-tight">{booking.purpose || '常规预约使用'}</h4>
+                <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mt-1">资源：{resource?.name || '未知资源'} · {resource?.location}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-6 pt-4 border-t border-gray-50">
+            <div className="space-y-1">
+              <p className="text-[9px] font-black text-gray-300 uppercase">申请人</p>
+              <div className="flex items-center space-x-2">
+                <div className={`w-5 h-5 rounded-full bg-${theme}-100 flex items-center justify-center text-[8px] font-black text-${theme}-700`}>{user?.name?.[0]}</div>
+                <p className="text-xs font-bold text-gray-700">{user?.name}</p>
+              </div>
+            </div>
+            <div className="space-y-1">
+              <p className="text-[9px] font-black text-gray-300 uppercase">开始时间</p>
+              <p className="text-xs font-black text-gray-600">{booking.startTime.replace('T', ' ')}</p>
+            </div>
+            <div className="hidden md:block space-y-1">
+              <p className="text-[9px] font-black text-gray-300 uppercase">结束时间</p>
+              <p className="text-xs font-black text-gray-600">{booking.endTime.replace('T', ' ')}</p>
+            </div>
+          </div>
+
+          <div className="pt-6 border-t border-gray-50">
+            <p className="text-[9px] font-black text-gray-300 uppercase mb-4">流转轨迹</p>
+            <div className="flex items-center">
+              <div className="flex items-center">
+                <div className="w-4 h-4 rounded-full bg-emerald-500 shadow-sm flex items-center justify-center"><Check size={8} className="text-white"/></div>
+                <div className="h-0.5 w-6 bg-emerald-100"></div>
+              </div>
+              {workflow.map((node: any, idx: number) => {
+                const isCurrent = booking.currentNodeIndex === idx;
+                const isPast = idx < booking.currentNodeIndex;
+                const isLast = idx === workflow.length - 1;
+                return (
+                  <React.Fragment key={node.id}>
+                    <div className="flex items-center group/node relative">
+                      <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-[9px] font-black transition-all ${
+                        isPast ? 'bg-emerald-100 text-emerald-600' : isCurrent ? `bg-${theme}-600 text-white shadow-lg animate-pulse` : 'bg-gray-100 text-gray-400'
+                      }`}>
+                        {idx + 1}
+                      </div>
+                      <span className={`absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap text-[8px] font-black ${isCurrent ? `text-${theme}-600` : 'text-gray-300'}`}>
+                        {node.name}
+                      </span>
+                    </div>
+                    {!isLast && <div className={`h-0.5 w-8 ${isPast ? 'bg-emerald-100' : 'bg-gray-100'}`}></div>}
+                  </React.Fragment>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        <div className={`w-full lg:w-48 bg-gray-50/50 p-6 flex flex-col justify-center space-y-3 border-l border-gray-50 transition-all ${isRejecting ? 'lg:w-80' : ''}`}>
+          {!isRejecting ? (
+            <>
+              <button 
+                onClick={(e) => handleAction(e, 'APPROVE')} 
+                className={`w-full py-4 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-2xl shadow-xl shadow-${theme}-600/10 hover:translate-y-[-2px] active:translate-y-[1px] transition-all flex items-center justify-center space-x-2`}
+              >
+                <CheckCircle size={18}/> <span>一键核准</span>
+              </button>
+              <button 
+                onClick={(e) => handleAction(e, 'REJECT')} 
+                className="w-full py-4 bg-white border border-rose-100 text-rose-500 font-bold rounded-2xl hover:bg-rose-50 hover:border-rose-200 transition-all flex items-center justify-center space-x-2"
+              >
+                <XCircle size={18}/> <span>驳回申请</span>
+              </button>
+            </>
+          ) : (
+            <form onSubmit={submitReject} className="space-y-4 animate-in slide-in-from-right-4">
+              <div className="flex items-center justify-between">
+                <h5 className="text-xs font-black text-rose-500 uppercase flex items-center space-x-2">
+                  <MessageSquare size={14}/> <span>请输入驳回理由</span>
+                </h5>
+                <button type="button" onClick={() => setIsRejecting(false)} className="text-gray-400 hover:text-gray-600"><X size={16}/></button>
+              </div>
+              <textarea 
+                autoFocus
+                value={rejectReason}
+                onChange={(e) => setRejectReason(e.target.value)}
+                placeholder="例如：时段冲突、资料不全..."
+                className="w-full h-24 p-4 bg-white border border-rose-100 rounded-2xl outline-none text-xs focus:ring-2 focus:ring-rose-200 transition-all resize-none shadow-inner"
+              />
+              <button 
+                type="submit" 
+                className="w-full py-3 bg-rose-500 text-white font-black rounded-xl text-xs flex items-center justify-center space-x-2"
+              >
+                <Send size={14}/> <span>确认驳回</span>
+              </button>
+            </form>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// --- Standard UI Components ---
 
 const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) => {
   const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '' });
@@ -671,39 +1291,41 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
   );
 };
 
-const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResources }: any) => {
+const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, availableResources }: any) => {
   const [purpose, setPurpose] = useState('');
-  const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
+  const [startDate, setStartDate] = useState(initialDate || new Date().toISOString().split('T')[0]);
   const [startTime, setStartTime] = useState("09:00");
   
-  // Default duration logic
   const [endDate, setEndDate] = useState(() => {
+    if (initialDate) return initialDate;
     const d = new Date();
-    if (resource.type === 'DESK') d.setMonth(d.getMonth() + 1); // 1 month for Desk
+    if (resource.type === 'DESK') d.setMonth(d.getMonth() + 1); 
     return d.toISOString().split('T')[0];
   });
   const [endTime, setEndTime] = useState(() => {
-    if (resource.type === 'ROOM') return "10:00"; // 1 hour for Room (09:00 - 10:00)
-    return "09:00";
+    if (resource.type === 'ROOM') return "10:00"; 
+    return "18:00";
   });
 
   const [loadingAI, setLoadingAI] = useState(false);
   const [recommendation, setRecommendation] = useState('');
 
   return (
-    <div className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[200] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in">
         <h2 className="text-2xl font-black mb-1">资源预约</h2>
-        <p className="text-xs text-gray-400 mb-8">目标: <span className={`text-${theme}-600 font-bold`}>{resource.name}</span> | {resource.type === 'ROOM' ? '默认 1 小时' : '默认 1 个月'}</p>
+        <p className="text-xs text-gray-400 mb-8">目标: <span className={`text-${theme}-600 font-bold`}>{resource.name}</span> | {resource.type === 'ROOM' ? '时分预约' : '天数预约'}</p>
         <div className="space-y-6">
            <div className="grid grid-cols-2 gap-4 text-left">
              <div className="space-y-1"><label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">开始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
              <div className="space-y-1"><label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">结束日期</label><input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
            </div>
-           <div className="grid grid-cols-2 gap-4 text-left">
-             <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">开始时刻</label><input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
-             <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">结束时刻</label><input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
-           </div>
+           {resource.type === 'ROOM' && (
+             <div className="grid grid-cols-2 gap-4 text-left">
+               <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">开始时刻</label><input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
+               <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">结束时刻</label><input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
+             </div>
+           )}
            <textarea value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="预约理由（例如：周度项目复盘、独立办公等）" className="w-full p-4 bg-gray-50 rounded-[2rem] h-24 outline-none text-sm resize-none shadow-inner" />
            <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 text-left">
               <button onClick={async () => { setLoadingAI(true); const rec = await getSmartRecommendation(purpose, 1, availableResources); setRecommendation(rec); setLoadingAI(false); }} className="text-[10px] font-black text-indigo-600 flex items-center space-x-1 mb-1 hover:opacity-70 transition-all"><Zap size={12}/> <span>AI 选址建议</span></button>
@@ -740,23 +1362,6 @@ const WorkflowStepper = ({ booking, workflow, users, theme }: any) => (
           </div>
         );
       })}
-    </div>
-  </div>
-);
-
-const ApprovalActionModal = ({ booking, workflow, users, theme, onApprove, onReject, onClose }: any) => (
-  <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-    <div className="bg-white rounded-[3rem] w-full max-2xl p-10 shadow-2xl animate-in zoom-in">
-      <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-black">工单审批</h2><button onClick={onClose} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500"><X size={24}/></button></div>
-      <div className="bg-gray-50 p-8 rounded-[2rem] border mb-8 text-left">
-        <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">申请理由</p>
-        <p className="text-lg font-bold text-gray-800 mb-6">{booking.purpose}</p>
-        <div className="grid grid-cols-2 gap-4">
-          <div><p className="text-[10px] text-gray-400 uppercase font-black">申请人</p><p className="font-bold text-gray-700">{users.find((u:any) => u.id === booking.userId)?.name}</p></div>
-          <div><p className="text-[10px] text-gray-400 uppercase font-black">时段</p><p className="font-bold text-gray-700">{booking.startTime.replace('T', ' ')}</p></div>
-        </div>
-      </div>
-      <div className="flex space-x-4"><button onClick={() => { const c = prompt('理由：'); if(c !== null) onReject(c); }} className="flex-1 py-5 bg-rose-50 text-rose-600 font-bold rounded-2xl">拒绝申请</button><button onClick={onApprove} className={`flex-[2] py-5 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>通过核准</button></div>
     </div>
   </div>
 );
