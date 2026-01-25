@@ -1,3 +1,4 @@
+
 // ... existing imports
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
@@ -10,7 +11,7 @@ import {
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
-  Save, RotateCcw
+  Save, RotateCcw, Phone
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -259,7 +260,7 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
 
   return (
     <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col">
-      <h3 className="font-black text-lg mb-4">未来30天热度 (资源 x 日期)</h3>
+      <h3 className="font-black text-lg mb-4">未来30天资源申请情况</h3>
       <div className="overflow-x-auto custom-scrollbar pb-2">
         <table className="border-collapse w-full min-w-[800px]">
           <thead>
@@ -410,7 +411,7 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
   const [text, setText] = useState('');
   
   const getTemplate = () => {
-    if (type === 'USERS') return "姓名,邮箱,部门,角色(可选)\n张三,zhangsan@company.com,市场部,正式员工";
+    if (type === 'USERS') return "姓名,邮箱,部门,角色(可选),办公电话(可选),移动电话(可选)\n张三,zhangsan@company.com,市场部,正式员工,010-88886666,13800000001";
     if (type === 'RESOURCES') return "资源名称,类型(会议室/工位),容量,位置\nGamma 演示厅,会议室,20,2号楼";
     if (type === 'DEPARTMENTS') return "部门名称,上级部门名称(可选)\n华北区,\n北京分公司,华北区";
     return "";
@@ -478,6 +479,8 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
             const email = parts[1]?.trim();
             const department = parts[2]?.trim();
             const roleName = parts[3]?.trim();
+            const landline = parts[4]?.trim();
+            const mobile = parts[5]?.trim();
 
             if (!name) continue;
             
@@ -493,7 +496,9 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
                name,
                email: email || `${name}@company.com`, // Default email generator
                department: department || '待分配',
-               role: roleIds
+               role: roleIds,
+               landline,
+               mobile
             });
          }
       } else if (type === 'RESOURCES') {
@@ -639,7 +644,7 @@ const ResourceCalendarModal = ({ resource, onClose }: any) => (
 );
 
 const UserModal = ({ user, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState(user || { name: '', email: '', role: [], department: '' });
+  const [formData, setFormData] = useState(user || { name: '', email: '', role: [], department: '', landline: '', mobile: '' });
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
       <div className="bg-white rounded-3xl p-8 max-w-md w-full">
@@ -648,6 +653,10 @@ const UserModal = ({ user, onClose, onSave, theme }: any) => {
           <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="姓名" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
           <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="邮箱" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
           <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="部门" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} />
+          <div className="flex space-x-4">
+            <input className="flex-1 p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="办公电话" value={formData.landline || ''} onChange={e => setFormData({...formData, landline: e.target.value})} />
+            <input className="flex-1 p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="移动电话" value={formData.mobile || ''} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+          </div>
         </div>
         <div className="flex space-x-3 mt-8">
           <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
@@ -776,8 +785,6 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
   );
 };
 
-// ... DetailViewModal and BookingConflictModal implementation (omitted for brevity but assumed present) ...
-// (Retaining existing DetailViewModal and BookingConflictModal from previous step)
 const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }: any) => {
   const { type, data } = viewDetail;
   const relatedBookings = bookings.filter((b: any) => 
@@ -804,7 +811,8 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
                <div className="space-y-2 text-sm font-medium text-gray-600">
                  <div className="flex justify-between"><span>部门</span><span className="text-gray-900 font-bold">{data.department}</span></div>
                  <div className="flex justify-between"><span>角色</span><span className="text-gray-900 font-bold">{data.role.map((rId: string) => roles.find((r: any) => r.id === rId)?.name || rId).join(', ')}</span></div>
-                 <div className="flex justify-between"><span>电话</span><span className="text-gray-900 font-bold">{data.mobile || data.landline || '-'}</span></div>
+                 <div className="flex justify-between"><span>办公电话</span><span className="text-gray-900 font-bold">{data.landline || '-'}</span></div>
+                 <div className="flex justify-between"><span>移动电话</span><span className="text-gray-900 font-bold">{data.mobile || '-'}</span></div>
                </div>
              </div>
            )}
@@ -1339,7 +1347,11 @@ const App: React.FC = () => {
                         </td>
                         <td className="px-6 py-4 flex items-center space-x-3">
                           <div className={`w-8 h-8 rounded-full bg-${theme}-100 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{u.name[0]}</div>
-                          <div><p className="font-bold text-gray-800 text-sm">{u.name}</p><p className="text-[10px] text-gray-400 font-medium">{u.email}</p></div>
+                          <div>
+                            <p className="font-bold text-gray-800 text-sm">{u.name}</p>
+                            <p className="text-[10px] text-gray-400 font-medium">{u.email}</p>
+                            {u.mobile && <p className="text-[10px] text-indigo-400 font-bold mt-0.5 flex items-center"><Smartphone size={10} className="mr-1"/>{u.mobile}</p>}
+                          </div>
                         </td>
                         <td className="px-6 py-4 text-xs font-black text-gray-500 uppercase">{u.department}</td>
                         <td className="px-6 py-4"><div className="flex flex-wrap gap-1">{u.role.map(rid => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div></td>
