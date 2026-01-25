@@ -9,7 +9,7 @@ import {
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
-  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle
+  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -17,6 +17,15 @@ import { getSmartRecommendation } from './services/geminiService';
 
 const STORAGE_KEY = 'SMART_OFFICE_DATA_V26';
 const THEME_KEY = 'SMART_OFFICE_THEME';
+
+// --- Theme Config ---
+const THEMES = [
+  { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600' },
+  { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600' },
+  { id: 'orange', name: '活力橙', color: 'bg-orange-600' },
+  { id: 'rose', name: '胭脂红', color: 'bg-rose-600' },
+  { id: 'purple', name: '极光紫', color: 'bg-purple-600' },
+];
 
 // --- Helper Components ---
 
@@ -53,7 +62,7 @@ const SidebarItem = ({ icon: Icon, label, id, active, onClick, theme, badge }: a
 // --- Data Dashboard Components ---
 
 const StatCard = ({ title, value, icon: Icon, trend, color, onClick }: any) => (
-  <button onClick={onClick} className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between group hover:border-indigo-200 transition-all text-left">
+  <button onClick={onClick} className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all text-left">
     <div className="space-y-1">
       <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{title}</p>
       <h3 className="text-2xl font-black text-gray-800">{value}</h3>
@@ -160,7 +169,7 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
         <table className="w-full border-collapse">
           <thead>
             <tr>
-              <th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-black text-gray-400 uppercase min-w-[180px] border-b">资源名称</th>
+              <th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-black text-gray-400 uppercase tracking-widest min-w-[180px] border-b">资源名称</th>
               {displayDays.map((date, i) => (
                 <th key={i} className={`p-2 text-center border-b min-w-[36px] font-bold text-[10px] ${date.getDay() === 0 || date.getDay() === 6 ? 'text-rose-400 bg-rose-50/30' : 'text-gray-400'}`}>
                   <div>{date.getDate()}</div>
@@ -196,7 +205,7 @@ const App: React.FC = () => {
   const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [isChangingPassword, setIsChangingPassword] = useState(false);
-  const [theme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
+  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
   // Data states
   const [roles, setRoles] = useState<RoleDefinition[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).roles : INITIAL_ROLES; });
@@ -231,6 +240,7 @@ const App: React.FC = () => {
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
+  useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
   const canApprove = (booking: Booking) => booking.status === 'PENDING' && currentUser?.role.includes(workflow[booking.currentNodeIndex]?.approverRole);
   const pendingCount = bookings.filter(b => canApprove(b)).length;
@@ -399,6 +409,22 @@ const App: React.FC = () => {
             </>
           )}
         </nav>
+
+        {/* Theme Switcher */}
+        <div className="mt-4 pt-4 border-t shrink-0">
+          <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-3 px-2">系统主题风格</p>
+          <div className="flex items-center justify-around px-2">
+            {THEMES.map(t => (
+              <button 
+                key={t.id} 
+                onClick={() => setTheme(t.id)} 
+                title={t.name}
+                className={`w-6 h-6 rounded-full ${t.color} border-2 transition-all ${theme === t.id ? 'border-gray-900 scale-125' : 'border-transparent hover:scale-110'}`}
+              />
+            ))}
+          </div>
+        </div>
+
         <div className="mt-6 pt-6 border-t shrink-0 flex items-center justify-between">
           <div className="flex items-center space-x-2 truncate">
             <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner`}>{currentUser.name[0]}</div>
@@ -410,17 +436,26 @@ const App: React.FC = () => {
 
       <main className="flex-1 min-w-0 overflow-auto relative bg-gray-50 pb-32">
         <header className="h-16 bg-white/80 backdrop-blur-md border-b px-8 flex items-center justify-between sticky top-0 z-40">
-          <h2 className="text-lg font-bold">
-            {view === 'DASHBOARD' && '数据全景看板'}
-            {view === 'RESOURCES' && '空间资源库'}
-            {view === 'USERS' && '成员中心'}
-            {view === 'BOOKINGS' && '我的申请记录'}
-            {view === 'APPROVAL_CENTER' && '审批中心'}
-            {view === 'WORKFLOW_CONFIG' && '审批引擎配置'}
-            {view === 'DEPARTMENTS' && '组织架构'}
-            {view === 'ROLES' && '角色权限集'}
-            {view === 'DATA_CENTER' && '数据维护中心'}
-          </h2>
+          <div className="flex items-center space-x-4">
+            <h2 className="text-lg font-bold">
+              {view === 'DASHBOARD' && '数据全景看板'}
+              {view === 'RESOURCES' && '空间资源库'}
+              {view === 'USERS' && '成员中心'}
+              {view === 'BOOKINGS' && '我的申请记录'}
+              {view === 'APPROVAL_CENTER' && '审批中心'}
+              {view === 'WORKFLOW_CONFIG' && '审批引擎配置'}
+              {view === 'DEPARTMENTS' && '组织架构'}
+              {view === 'ROLES' && '角色权限集'}
+              {view === 'DATA_CENTER' && '数据维护中心'}
+            </h2>
+          </div>
+          <button className={`lg:hidden p-2 text-gray-500 hover:text-${theme}-600`}><MoreHorizontal size={20}/></button>
+          <div className="flex items-center space-x-3">
+             <button className={`bg-${theme}-50 text-${theme}-600 px-3 py-1.5 rounded-xl font-black text-[10px] flex items-center space-x-1 hover:bg-${theme}-100 transition-all`} onClick={() => alert('请在手机端使用扫码签到功能')}>
+               <QrCode size={14}/>
+               <span>扫码签到</span>
+             </button>
+          </div>
         </header>
 
         <div className="p-8 max-w-7xl mx-auto">
@@ -457,7 +492,7 @@ const App: React.FC = () => {
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend="+2" color="indigo" onClick={() => setView('RESOURCES')} />
+                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend="+2" color={theme} onClick={() => setView('RESOURCES')} />
                 <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="+12%" color="emerald" onClick={() => setView('BOOKINGS')} />
                 <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setView('APPROVAL_CENTER')} />
               </div>
@@ -696,7 +731,7 @@ const App: React.FC = () => {
             <div className="space-y-4 animate-in fade-in">
               <h3 className="text-2xl font-black mb-4">我的申请动态</h3>
               {bookings.filter(b => b.userId === currentUser.id).map(b => (
-                <div key={b.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 hover:border-indigo-200 transition-all">
+                <div key={b.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 hover:border-gray-200 transition-all">
                   <div className="flex items-center justify-between mb-6">
                     <div className="flex items-center space-x-4">
                       <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={20}/></div>
@@ -735,7 +770,7 @@ const App: React.FC = () => {
               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">审批流程</h3></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}><Plus size={18}/> <span>新增节点</span></button></div>
               <div className="space-y-4">
                 {workflow.map((node, index) => (
-                  <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-indigo-200 transition-all">
+                  <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all">
                     <div className="flex items-center space-x-6">
                       <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center font-black text-${theme}-600`}>{index + 1}</div>
                       <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-400 mt-1">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p></div>
@@ -819,7 +854,7 @@ const App: React.FC = () => {
                  <AlertTriangle size={40} />
                </div>
                <h3 className="text-3xl font-black text-gray-800 mb-2">预约时间冲突</h3>
-               <p className="text-gray-400 font-medium">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold`}>{bookingConflict.resource.name}</span> 在此时段不可用。</p>
+               <p className="text-gray-400 font-medium leading-relaxed">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold underline`}>{bookingConflict.resource.name}</span> 在此时段已被占用或不可用。</p>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10 text-left">
@@ -842,16 +877,19 @@ const App: React.FC = () => {
 
                <div className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-4 relative overflow-hidden">
                   <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-2">
-                    <History size={14}/> <span>该资源现有排期</span>
+                    <History size={14}/> <span>该资源现有冲突项</span>
                   </h5>
-                  <div className="space-y-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
+                  <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar pr-2">
                     {bookingConflict.resourceBookings.length > 0 ? (
                       bookingConflict.resourceBookings.map((b) => (
                         <div key={b.id} className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                           <p className="text-[10px] font-bold text-gray-700">
-                             {b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}
-                             <span className="text-gray-300 ml-2 font-medium">({users.find(u => u.id === b.userId)?.name})</span>
-                           </p>
+                           <div className="flex justify-between items-center">
+                             <p className="text-[10px] font-bold text-gray-700">
+                               {b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}
+                             </p>
+                             <span className="text-[9px] font-black bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">预订中</span>
+                           </div>
+                           <p className="text-[9px] text-gray-400 mt-1 font-bold">由 {users.find(u => u.id === b.userId)?.name} 预订</p>
                         </div>
                       ))
                     ) : (
@@ -862,12 +900,20 @@ const App: React.FC = () => {
                </div>
             </div>
 
-            <button 
-              onClick={() => setBookingConflict(null)} 
-              className={`w-full py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl shadow-${theme}-600/20 active:translate-y-1 transition-all`}
-            >
-              我知道了，去调整时间
-            </button>
+            <div className="flex space-x-4">
+              <button 
+                onClick={() => setBookingConflict(null)} 
+                className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all"
+              >
+                取消
+              </button>
+              <button 
+                onClick={() => setBookingConflict(null)} 
+                className={`flex-1 py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl shadow-${theme}-600/20 active:translate-y-1 transition-all`}
+              >
+                重新选择时间
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -917,7 +963,6 @@ const App: React.FC = () => {
                     </div>
 
                     <div className="space-y-6 overflow-y-auto custom-scrollbar max-h-[400px] pr-2">
-                       {/* Today's Focused View */}
                        <div>
                           <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-4">今日实时占用</p>
                           <div className="space-y-3">
@@ -957,7 +1002,6 @@ const App: React.FC = () => {
                           </div>
                        </div>
 
-                       {/* This Week's Overview */}
                        <div className="pt-4 border-t border-gray-100">
                           <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-4">本周后续预览</p>
                           <div className="grid grid-cols-1 gap-2">
@@ -975,7 +1019,7 @@ const App: React.FC = () => {
                                }
 
                                return weekBookings.sort((a, b) => a.startTime.localeCompare(b.startTime)).map(b => (
-                                 <div key={b.id} className="flex items-center justify-between p-3 bg-white/50 rounded-xl border border-gray-50 hover:border-indigo-100 transition-colors group">
+                                 <div key={b.id} className="flex items-center justify-between p-3 bg-white/50 rounded-xl border border-gray-50 hover:border-gray-200 transition-colors group">
                                     <div className="flex items-center space-x-3">
                                        <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
                                        <p className="text-[10px] font-bold text-gray-500">{b.startTime.replace('T', ' ').slice(5, 16)}</p>
@@ -1025,9 +1069,9 @@ const LoginView = ({ users, onLogin, theme }: any) => {
   };
 
   return (
-    <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6`}>
+    <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6 transition-colors duration-500`}>
       <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-md animate-in zoom-in">
-        <div className="flex justify-center mb-6"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
+        <div className="flex justify-center mb-6 transition-all duration-500"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
         <h1 className="text-2xl font-black text-center mb-2">SmartOffice</h1>
         <p className="text-gray-400 text-xs font-bold text-center mb-10 uppercase tracking-widest">智慧办公登录中心</p>
         <form onSubmit={handleLogin} className="space-y-4">
@@ -1401,7 +1445,7 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
   };
 
   return (
-    <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden hover:border-indigo-200 hover:shadow-xl transition-all duration-300 group">
+    <div className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden hover:border-gray-200 hover:shadow-xl transition-all duration-300 group">
       <div className="flex flex-col lg:flex-row">
         <div className="p-8 flex-1 space-y-6">
           <div className="flex items-start justify-between">
@@ -1674,7 +1718,6 @@ const DepartmentTreeNode = ({ department, departments, onAdd, onDelete, onRename
 
   return (
     <div className={`relative ${!isRoot ? 'ml-10' : ''}`}>
-      {/* Connector lines for non-root nodes */}
       {!isRoot && (
         <div className="absolute -left-[2.5rem] top-0 bottom-0 w-px bg-gray-100">
            <div className="absolute top-6 left-0 w-6 h-px bg-gray-100 rounded-full"></div>
