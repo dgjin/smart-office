@@ -12,11 +12,12 @@ export interface User {
   id: string;
   name: string;
   email: string;
-  password?: string; // Added for login
+  password?: string; 
   role: Role[]; 
   department: string;
   landline?: string;
   mobile?: string;
+  needsPasswordChange?: boolean; // Added to track forced password update
 }
 
 export interface Department {

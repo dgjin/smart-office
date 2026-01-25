@@ -8,7 +8,8 @@ import {
   PieChart, ChevronLeft, Timer, Briefcase, Shield, FolderTree,
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
-  CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp
+  CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
+  Lock, Smartphone, Mail, Key, Minus, Layers
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -89,7 +90,7 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
       <div className="flex justify-between items-center mb-10">
         <div className="space-y-1">
           <h4 className="font-black flex items-center space-x-2 text-lg"><Timer className={`text-${theme}-600`} size={20}/> <span>今日实时动态</span></h4>
-          <p className="text-[10px] text-gray-400 font-bold uppercase pl-7">资源占用时间轴 (08:00 - 20:00)</p>
+          <p className="text-[10px] text-gray-400 font-bold uppercase pl-7">展示各资源的预订分布及预订人部门信息</p>
         </div>
         <div className="flex items-center space-x-4 bg-gray-50 px-4 py-2 rounded-2xl border border-gray-100">
            <div className="flex items-center space-x-1.5"><div className={`w-2 h-2 rounded-full bg-${theme}-500`}></div><span className="text-[10px] font-black text-gray-500">已核准</span></div>
@@ -112,8 +113,8 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
                   const dur = Math.max(2, right - left);
                   const user = users.find(u => u.id === b.userId);
                   return (
-                    <div key={b.id} className={`absolute top-1 bottom-1 rounded-lg shadow-sm transition-all cursor-help z-10 flex flex-col justify-center px-3 border-l-4 ${b.status === 'APPROVED' ? `bg-${theme}-500/10 border-${theme}-500 text-${theme}-700` : 'bg-amber-400/10 border-amber-400 text-amber-700'}`} style={{ left: `${left}%`, width: `${dur}%` }} title={`${user?.name}: ${b.purpose}`}>
-                      {dur > 12 && (<div className="truncate pointer-events-none text-[9px]"><p className="font-black leading-tight truncate">{user?.name}</p><p className="opacity-70">{b.startTime.split('T')[1].slice(0, 5)}-{b.endTime.split('T')[1].slice(0, 5)}</p></div>)}
+                    <div key={b.id} className={`absolute top-1 bottom-1 rounded-lg shadow-sm transition-all cursor-help z-10 flex flex-col justify-center px-3 border-l-4 ${b.status === 'APPROVED' ? `bg-${theme}-500/10 border-${theme}-500 text-${theme}-700` : 'bg-amber-400/10 border-amber-400 text-amber-700'}`} style={{ left: `${left}%`, width: `${dur}%` }} title={`${user?.name} (${user?.department}): ${b.purpose}`}>
+                      {dur > 15 && (<div className="truncate pointer-events-none text-[9px]"><p className="font-black leading-tight truncate">{user?.name} · {user?.department}</p><p className="opacity-70">{b.startTime.split('T')[1].slice(0, 5)}-{b.endTime.split('T')[1].slice(0, 5)}</p></div>)}
                     </div>
                   );
                 })}
@@ -141,7 +142,8 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
     const dStr = date.toISOString().split('T')[0];
     const booking = bookings.find(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING') && (dStr >= b.startTime.split('T')[0] && dStr <= b.endTime.split('T')[0]));
     if (!booking) return null;
-    return { ...booking, userName: users.find(u => u.id === booking.userId)?.name };
+    const user = users.find(u => u.id === booking.userId);
+    return { ...booking, userName: user?.name || '未知', userDept: user?.department || '未定义部门' };
   };
 
   return (
@@ -175,7 +177,7 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
                   const info = getDayStatus(res.id, date); 
                   return (
                     <td key={i} className={`p-1 border-b text-center ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-rose-50/10' : ''}`}>
-                      <div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50/50'}`} title={info ? `${info.userName}: ${info.purpose}` : ''}/>
+                      <div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50/50'}`} title={info ? `${info.userName} (${info.userDept}): ${info.purpose}` : ''}/>
                     </td>
                   ); 
                 })}
@@ -193,6 +195,7 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
 const App: React.FC = () => {
   const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [theme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
   // Data states
@@ -218,6 +221,7 @@ const App: React.FC = () => {
   const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, requestedStart: string, requestedEnd: string, resourceBookings: Booking[] } | null>(null);
   const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
+  const [allExpanded, setAllExpanded] = useState(true);
   
   // Import States
   const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | 'DEPARTMENTS' | null>(null);
@@ -315,6 +319,24 @@ const App: React.FC = () => {
     } : b));
   };
 
+  const handleLogin = (user: User) => {
+    if (user.password === '123456' || user.needsPasswordChange) {
+      setCurrentUser(user);
+      setIsChangingPassword(true);
+    } else {
+      setCurrentUser(user);
+    }
+  };
+
+  const handlePasswordUpdate = (newPwd: string) => {
+    if (!currentUser) return;
+    const updatedUsers = users.map(u => u.id === currentUser.id ? { ...u, password: newPwd, needsPasswordChange: false } : u);
+    setUsers(updatedUsers);
+    setCurrentUser({ ...currentUser, password: newPwd, needsPasswordChange: false });
+    setIsChangingPassword(false);
+    alert('密码修改成功！');
+  };
+
   // Batch Operations Logic
   const toggleResourceSelection = (id: string) => {
     setSelectedResourceIds(prev => prev.includes(id) ? prev.filter(item => item !== id) : [...prev, id]);
@@ -350,28 +372,8 @@ const App: React.FC = () => {
     setSelectedUserIds([]);
   };
 
-  if (!currentUser) return (
-    <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6`}>
-      <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl w-full max-w-md animate-in zoom-in">
-        <div className="flex justify-center mb-6"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
-        <h1 className="text-2xl font-black text-center mb-10">智慧办公空间管理</h1>
-        <div className="space-y-3">
-          {users.map(u => (
-            <button key={u.id} onClick={() => setCurrentUser(u)} className={`w-full p-4 border border-gray-100 rounded-2xl hover:bg-${theme}-50 transition-all flex items-center justify-between group`}>
-              <div className="flex items-center space-x-4">
-                <div className={`w-10 h-10 bg-${theme}-100 rounded-full flex items-center justify-center font-bold text-${theme}-600`}>{u.name[0]}</div>
-                <div className="text-left">
-                  <p className="font-bold text-gray-800 text-sm">{u.name}</p>
-                  <p className="text-[10px] text-gray-400 font-bold uppercase">{u.department}</p>
-                </div>
-              </div>
-              <ArrowRight size={16} className="text-gray-300 group-hover:text-indigo-600" />
-            </button>
-          ))}
-        </div>
-      </div>
-    </div>
-  );
+  if (!currentUser) return <LoginView users={users} onLogin={handleLogin} theme={theme} />;
+  if (isChangingPassword) return <ForceChangePasswordView user={currentUser} onUpdate={handlePasswordUpdate} theme={theme} />;
 
   return (
     <div className="min-h-screen flex bg-gray-50 overflow-hidden font-sans">
@@ -462,6 +464,50 @@ const App: React.FC = () => {
 
               <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
               <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
+            </div>
+          )}
+
+          {view === 'DEPARTMENTS' && (
+            <div className="max-w-4xl mx-auto space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-end mb-8">
+                <div>
+                  <h3 className="text-2xl font-black">组织架构</h3>
+                  <p className="text-sm text-gray-400 mt-1">定义企业多维层级，支持跨级管理与流程路由。</p>
+                </div>
+                <div className="flex items-center space-x-3">
+                  <button 
+                    onClick={() => setAllExpanded(!allExpanded)} 
+                    className="bg-white border border-gray-200 text-gray-500 px-4 py-2.5 rounded-xl font-bold text-xs hover:bg-gray-50 transition-all flex items-center space-x-2"
+                  >
+                    <Layers size={14}/>
+                    <span>{allExpanded ? '收起全部' : '展开全部'}</span>
+                  </button>
+                  <button onClick={() => setShowImportModal('DEPARTMENTS')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50"><Upload size={18}/> <span>批量导入</span></button>
+                  <button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新一级部门' }])} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>创建根部门</span></button>
+                </div>
+              </div>
+              
+              <div className="bg-white p-10 rounded-[2.5rem] border border-gray-100 shadow-sm min-h-[500px] relative overflow-hidden">
+                <div className="absolute top-0 left-10 bottom-0 w-px bg-gray-50 z-0"></div>
+                {departments.filter(d => !d.parentId).map(root => (
+                  <DepartmentTreeNode 
+                    key={root.id} 
+                    department={root} 
+                    departments={departments} 
+                    forceExpand={allExpanded}
+                    onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '子部门', parentId: pid }])} 
+                    onDelete={(id: string) => { if(confirm('确定要删除该部门及其下属子部门吗？')) setDepartments(departments.filter(d => d.id !== id && d.parentId !== id)); }} 
+                    onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} 
+                    theme={theme} 
+                  />
+                ))}
+                {departments.filter(d => !d.parentId).length === 0 && (
+                  <div className="flex flex-col items-center justify-center py-32 space-y-4 opacity-30">
+                    <Building2 size={64}/>
+                    <p className="font-bold">暂无组织架构数据</p>
+                  </div>
+                )}
+              </div>
             </div>
           )}
 
@@ -631,7 +677,7 @@ const App: React.FC = () => {
                     resources={resources} 
                     theme={theme} 
                     onApprove={() => handleApprove(b)} 
-                    onReject={(c) => handleReject(b, c)} 
+                    onReject={(c: string) => handleReject(b, c)} 
                   />
                 ))}
                 {bookings.filter(b => canApprove(b)).length === 0 && (
@@ -680,21 +726,6 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 ))}
-              </div>
-            </div>
-          )}
-
-          {view === 'DEPARTMENTS' && (
-            <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-6">
-                <div><h3 className="text-2xl font-black">组织架构</h3></div>
-                <div className="flex items-center space-x-3">
-                  <button onClick={() => setShowImportModal('DEPARTMENTS')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50"><Upload size={18}/> <span>批量导入</span></button>
-                  <button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新一级部门' }])} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}>创建部门</button>
-                </div>
-              </div>
-              <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm min-h-[400px]">
-                {departments.filter(d => !d.parentId).map(root => (<DepartmentTreeNode key={root.id} department={root} departments={departments} onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '子部门', parentId: pid }])} onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} theme={theme} />))}
               </div>
             </div>
           )}
@@ -771,7 +802,7 @@ const App: React.FC = () => {
           users={users} 
           theme={theme} 
           onClose={() => setShowResourceCalendar(null)} 
-          onSelectDate={(date) => {
+          onSelectDate={(date: string) => {
             setCalendarDateForBooking(date);
             setSelectedResource(showResourceCalendar);
             setShowResourceCalendar(null);
@@ -799,10 +830,10 @@ const App: React.FC = () => {
                     </h5>
                   </div>
                   <div className="relative z-10">
-                    <p className="text-sm font-black text-gray-700导致-relaxed">
+                    <p className="text-sm font-black text-gray-700 leading-relaxed">
                       从: <span className="text-rose-600">{bookingConflict.requestedStart.replace('T', ' ')}</span>
                     </p>
-                    <p className="text-sm font-black text-gray-700导致-relaxed">
+                    <p className="text-sm font-black text-gray-700 leading-relaxed">
                       至: <span className="text-rose-600">{bookingConflict.requestedEnd.replace('T', ' ')}</span>
                     </p>
                   </div>
@@ -815,7 +846,7 @@ const App: React.FC = () => {
                   </h5>
                   <div className="space-y-3 max-h-32 overflow-y-auto custom-scrollbar pr-2">
                     {bookingConflict.resourceBookings.length > 0 ? (
-                      bookingConflict.resourceBookings.map((b, i) => (
+                      bookingConflict.resourceBookings.map((b) => (
                         <div key={b.id} className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
                            <p className="text-[10px] font-bold text-gray-700">
                              {b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}
@@ -874,6 +905,110 @@ const App: React.FC = () => {
   );
 };
 
+// --- Login & Password Components ---
+
+const LoginView = ({ users, onLogin, theme }: any) => {
+  const [id, setId] = useState('');
+  const [pwd, setPwd] = useState('');
+  const [error, setError] = useState('');
+
+  const handleLogin = (e: React.FormEvent) => {
+    e.preventDefault();
+    const user = users.find((u: User) => (u.email === id || u.mobile === id) && u.password === pwd);
+    if (user) {
+      onLogin(user);
+    } else {
+      setError('邮箱/手机号或密码不正确');
+    }
+  };
+
+  return (
+    <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6`}>
+      <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-md animate-in zoom-in">
+        <div className="flex justify-center mb-6"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
+        <h1 className="text-2xl font-black text-center mb-2">SmartOffice</h1>
+        <p className="text-gray-400 text-xs font-bold text-center mb-10 uppercase tracking-widest">智慧办公登录中心</p>
+        <form onSubmit={handleLogin} className="space-y-4">
+          <div className="relative">
+            <Mail className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
+            <input 
+              required
+              value={id} 
+              onChange={e => setId(e.target.value)}
+              placeholder="企业邮箱 / 手机号码" 
+              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition-all font-medium text-sm" 
+            />
+          </div>
+          <div className="relative">
+            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
+            <input 
+              required
+              type="password" 
+              value={pwd} 
+              onChange={e => setPwd(e.target.value)}
+              placeholder="请输入登录密码" 
+              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition-all font-medium text-sm" 
+            />
+          </div>
+          {error && <p className="text-rose-500 text-[10px] font-bold px-2">{error}</p>}
+          <button type="submit" className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg hover:shadow-xl transition-all active:scale-95 mt-4`}>登录系统</button>
+        </form>
+        <div className="mt-8 text-center"><p className="text-[10px] text-gray-300 font-bold">默认初始密码：123456</p></div>
+      </div>
+    </div>
+  );
+};
+
+const ForceChangePasswordView = ({ user, onUpdate, theme }: any) => {
+  const [pwd, setPwd] = useState('');
+  const [confirmPwd, setConfirmPwd] = useState('');
+  const [error, setError] = useState('');
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pwd === '123456') return setError('不能使用初始密码作为新密码');
+    if (pwd.length < 6) return setError('密码长度至少为 6 位');
+    if (pwd !== confirmPwd) return setError('两次输入的密码不一致');
+    onUpdate(pwd);
+  };
+
+  return (
+    <div className={`min-h-screen bg-gray-100 flex items-center justify-center p-6`}>
+      <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-md animate-in zoom-in border border-gray-100">
+        <div className="flex justify-center mb-6"><div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shadow-inner"><Shield size={32}/></div></div>
+        <h1 className="text-2xl font-black text-center mb-2">安全验证</h1>
+        <p className="text-gray-400 text-xs font-bold text-center mb-10 leading-relaxed">为了保障您的账户安全，初次登录或使用初始密码时必须修改密码。</p>
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="relative">
+            <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
+            <input 
+              required
+              type="password" 
+              value={pwd} 
+              onChange={e => setPwd(e.target.value)}
+              placeholder="设置新密码" 
+              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-amber-100 transition-all font-medium text-sm" 
+            />
+          </div>
+          <div className="relative">
+            <CheckCircle className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
+            <input 
+              required
+              type="password" 
+              value={confirmPwd} 
+              onChange={e => setConfirmPwd(e.target.value)}
+              placeholder="请再次输入新密码" 
+              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-amber-100 transition-all font-medium text-sm" 
+            />
+          </div>
+          {error && <p className="text-rose-500 text-[10px] font-bold px-2">{error}</p>}
+          <button type="submit" className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg mt-4`}>提交修改并进入系统</button>
+        </form>
+      </div>
+    </div>
+  );
+};
+
 // --- Specialized Components ---
 
 const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport }: any) => {
@@ -882,7 +1017,7 @@ const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const templates: any = {
-    USERS: "姓名,邮箱,部门,角色(用|隔开)\n张三,zhangsan@company.com,技术部,EMPLOYEE\n李四,lisi@company.com,市场部,EMPLOYEE|APPROVAL_ADMIN",
+    USERS: "姓名,邮箱,部门,角色(用|隔开),密码(可选),手机号(可选)\n张三,zhangsan@company.com,技术部,EMPLOYEE,123456,13800000000",
     RESOURCES: "资源名称,类型(ROOM/DESK),容量,位置,设施(用|隔开)\n会议室X,ROOM,10,2号楼,投屏|白板\n工位Z,DESK,1,A区,双显",
     DEPARTMENTS: "部门名称,上级部门名称(可选)\n财务部,集团总部\n研发中心,信息技术部"
   };
@@ -919,14 +1054,17 @@ const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport 
       rows.forEach((row, idx) => {
         const parts = row.split(',').map(p => p.trim());
         if (type === 'USERS') {
-          const [name, email, department, rolesStr] = parts;
+          const [name, email, department, rolesStr, password, mobile] = parts;
           if (!name || !email) throw new Error(`第 ${idx + 2} 行数据不完整`);
           importedData.push({
             id: `u-import-${Date.now()}-${idx}`,
             name,
             email,
+            password: password || '123456',
+            mobile: mobile || '',
             department: department || '未分配',
-            role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE']
+            role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE'],
+            needsPasswordChange: !password || password === '123456'
           });
         } else if (type === 'RESOURCES') {
           const [name, rType, capacity, location, featuresStr] = parts;
@@ -1181,7 +1319,7 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
               <p className="text-[9px] font-black text-gray-300 uppercase">申请人</p>
               <div className="flex items-center space-x-2">
                 <div className={`w-5 h-5 rounded-full bg-${theme}-100 flex items-center justify-center text-[8px] font-black text-${theme}-700`}>{user?.name?.[0]}</div>
-                <p className="text-xs font-bold text-gray-700">{user?.name}</p>
+                <p className="text-xs font-bold text-gray-700">{user?.name} · {user?.department}</p>
               </div>
             </div>
             <div className="space-y-1">
@@ -1273,7 +1411,7 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
 // --- Standard UI Components ---
 
 const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) => {
-  const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '' });
+  const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '', password: '123456', needsPasswordChange: true });
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
       <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
@@ -1281,6 +1419,7 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
         <div className="space-y-4">
           <input value={data.name} onChange={e => setData({...data, name: e.target.value})} placeholder="真实姓名" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
           <input value={data.email} onChange={e => setData({...data, email: e.target.value})} placeholder="企业邮箱" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <input value={data.mobile} onChange={e => setData({...data, mobile: e.target.value})} placeholder="手机号码" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
           <select value={data.department} onChange={e => setData({...data, department: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold">{departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}</select>
         </div>
         <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(data)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg`}>保存</button></div>
@@ -1330,7 +1469,7 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in">
+      <div className="bg-white p-10 rounded-[3rem] w-full max-lg shadow-2xl animate-in zoom-in">
         <h2 className="text-2xl font-black mb-1">资源预约</h2>
         <p className="text-xs text-gray-400 mb-8">目标: <span className={`text-${theme}-600 font-bold`}>{resource.name}</span> | {resource.type === 'ROOM' ? '时分预约' : '天数预约'}</p>
         <div className="space-y-6">
@@ -1364,7 +1503,7 @@ const WorkflowStepper = ({ booking, workflow, users, theme }: any) => (
     </div>
     <div className="flex flex-wrap gap-4">
       <div className="flex items-center space-x-2"><div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600"><Check size={12}/></div><span className="text-[10px] font-bold text-gray-500">已提交</span></div>
-      {workflow.map((node: any, index: any) => {
+      {workflow.map((node: any, index: number) => {
         const history = booking.approvalHistory[index];
         const isCurrent = booking.status === 'PENDING' && booking.currentNodeIndex === index;
         const isApproved = history?.status === 'APPROVED';
@@ -1417,22 +1556,92 @@ const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
   );
 };
 
-const DepartmentTreeNode = ({ department, departments, onAdd, onDelete, onRename, theme }: any) => {
+const DepartmentTreeNode = ({ department, departments, onAdd, onDelete, onRename, theme, forceExpand }: any) => {
   const children = departments.filter((d: any) => d.parentId === department.id);
   const [isExpanded, setIsExpanded] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
   const [newName, setNewName] = useState(department.name);
+
+  useEffect(() => {
+    setIsExpanded(forceExpand);
+  }, [forceExpand]);
+
   const handleRename = () => { if(newName.trim()) onRename(department.id, newName); setIsEditing(false); };
+  
+  const isRoot = !department.parentId;
+
   return (
-    <div className="ml-6 border-l-2 border-gray-100 pl-6 my-2">
-      <div className="flex items-center group">
-        <div className="flex items-center space-x-3 bg-white p-2 rounded-xl border border-gray-100 shadow-sm hover:border-indigo-200 transition-all flex-1 min-w-0">
-          <button onClick={() => setIsExpanded(!isExpanded)} className={`w-6 h-6 rounded-lg bg-${theme}-50 flex items-center justify-center text-${theme}-600 transition-colors`}>{children.length > 0 ? (isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <FolderTree size={12} />}</button>
-          {isEditing ? <input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onBlur={handleRename} onKeyDown={e => e.key === 'Enter' && handleRename()} className="flex-1 bg-gray-50 border-none outline-none text-xs font-bold p-1 rounded-md" /> : <span className="text-xs font-bold text-gray-700 truncate">{department.name}</span>}
-          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => setIsEditing(true)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={10}/></button><button onClick={() => onAdd(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-emerald-600 transition-colors"><Plus size={10}/></button><button onClick={() => onDelete(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={10}/></button></div>
+    <div className={`relative ${!isRoot ? 'ml-10' : ''}`}>
+      {/* Connector lines for non-root nodes */}
+      {!isRoot && (
+        <div className="absolute -left-[2.5rem] top-0 bottom-0 w-px bg-gray-100">
+           <div className="absolute top-6 left-0 w-6 h-px bg-gray-100 rounded-full"></div>
+        </div>
+      )}
+
+      <div className="flex items-center group relative z-10 py-1.5">
+        <div className={`flex items-center space-x-3 bg-white p-3 rounded-[1.25rem] border border-gray-100 shadow-sm hover:border-${theme}-300 transition-all flex-1 min-w-0 ${isRoot ? 'ring-2 ring-indigo-50 border-indigo-100' : ''}`}>
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)} 
+            className={`w-7 h-7 rounded-lg flex items-center justify-center transition-all ${
+              children.length > 0 ? `bg-${theme}-50 text-${theme}-600 hover:bg-${theme}-100` : 'bg-gray-50 text-gray-400 cursor-default'
+            }`}
+          >
+            {children.length > 0 ? (isExpanded ? <Minus size={14} /> : <Plus size={14} />) : <div className="w-1.5 h-1.5 rounded-full bg-gray-300"></div>}
+          </button>
+          
+          <div className="flex-1 flex items-center space-x-3 overflow-hidden">
+            <div className={`shrink-0 w-8 h-8 rounded-xl flex items-center justify-center ${isRoot ? `bg-${theme}-600 text-white shadow-md` : 'bg-gray-50 text-gray-400'}`}>
+              {isRoot ? <Building2 size={16} /> : children.length > 0 ? <FolderTree size={16} /> : <Layers size={14} />}
+            </div>
+
+            {isEditing ? (
+              <input 
+                autoFocus 
+                value={newName} 
+                onChange={e => setNewName(e.target.value)} 
+                onBlur={handleRename} 
+                onKeyDown={e => e.key === 'Enter' && handleRename()} 
+                className="flex-1 bg-gray-50 border-none outline-none text-sm font-black p-1 rounded-md" 
+              />
+            ) : (
+              <div className="flex flex-col min-w-0">
+                <span className={`text-sm font-black truncate ${isRoot ? 'text-gray-900' : 'text-gray-700'}`}>
+                  {department.name}
+                </span>
+                {children.length > 0 && (
+                  <span className="text-[10px] font-bold text-gray-400 uppercase tracking-tighter">
+                    包含 {children.length} 个子部门
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all">
+            <button onClick={() => setIsEditing(true)} className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-indigo-600 transition-colors" title="重命名"><Edit2 size={14}/></button>
+            <button onClick={() => onAdd(department.id)} className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-emerald-600 transition-colors" title="添加子部门"><Plus size={14}/></button>
+            <button onClick={() => onDelete(department.id)} className="p-2 hover:bg-gray-100 rounded-xl text-gray-400 hover:text-rose-500 transition-colors" title="删除"><Trash2 size={14}/></button>
+          </div>
         </div>
       </div>
-      {isExpanded && children.length > 0 && <div className="mt-1">{children.map((child: any) => (<DepartmentTreeNode key={child.id} department={child} departments={departments} onAdd={onAdd} onDelete={onDelete} onRename={onRename} theme={theme}/>))}</div>}
+
+      {isExpanded && children.length > 0 && (
+        <div className="animate-in slide-in-from-top-1 duration-200">
+          {children.map((child: any) => (
+            <DepartmentTreeNode 
+              key={child.id} 
+              department={child} 
+              departments={departments} 
+              onAdd={onAdd} 
+              onDelete={onDelete} 
+              onRename={onRename} 
+              theme={theme} 
+              forceExpand={forceExpand}
+            />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
