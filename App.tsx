@@ -568,11 +568,20 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
 
 const DepartmentNode = ({ dept, allDepts, level = 0, onEdit, onDelete, onAddSub, theme }: any) => {
   const children = allDepts.filter((d: any) => d.parentId === dept.id);
+  const [isExpanded, setIsExpanded] = useState(true);
+  const hasChildren = children.length > 0;
   
   return (
     <div className="space-y-1">
        <div className={`group flex items-center justify-between p-3 rounded-xl transition-all ${level === 0 ? 'bg-gray-50 border border-gray-100' : 'hover:bg-gray-50 border border-transparent hover:border-gray-100'}`} style={{ marginLeft: `${level * 24}px` }}>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-2">
+             <button 
+                onClick={() => setIsExpanded(!isExpanded)} 
+                className={`p-1 rounded-md text-gray-400 hover:text-${theme}-600 hover:bg-${theme}-50 transition-colors ${hasChildren ? '' : 'opacity-0 cursor-default'}`}
+             >
+                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+             </button>
+             
              {level === 0 ? (
                 <div className={`p-1.5 rounded-lg bg-${theme}-100 text-${theme}-700`}><FolderTree size={16} /></div>
              ) : (
@@ -587,7 +596,8 @@ const DepartmentNode = ({ dept, allDepts, level = 0, onEdit, onDelete, onAddSub,
              <button onClick={() => onDelete(dept.id)} className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="删除"><Trash2 size={14}/></button>
           </div>
        </div>
-       {children.map((child: any) => (
+       
+       {isExpanded && children.map((child: any) => (
           <DepartmentNode key={child.id} dept={child} allDepts={allDepts} level={level + 1} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} theme={theme} />
        ))}
     </div>
@@ -643,24 +653,84 @@ const ResourceCalendarModal = ({ resource, onClose }: any) => (
   </div>
 );
 
-const UserModal = ({ user, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState(user || { name: '', email: '', role: [], department: '', landline: '', mobile: '' });
+const UserModal = ({ user, onClose, onSave, theme, departments = [], roles = [] }: any) => {
+  const [formData, setFormData] = useState(user || { name: '', email: '', role: ['EMPLOYEE'], department: '', landline: '', mobile: '' });
+
+  const toggleRole = (roleId: string) => {
+    const currentRoles = formData.role || [];
+    if (currentRoles.includes(roleId)) {
+      setFormData({ ...formData, role: currentRoles.filter((id: string) => id !== roleId) });
+    } else {
+      setFormData({ ...formData, role: [...currentRoles, roleId] });
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full">
-        <h3 className="font-bold text-xl mb-6">{user ? '编辑成员' : '新增成员'}</h3>
+      <div className="bg-white rounded-3xl p-8 max-w-md w-full animate-in zoom-in">
+        <h3 className="font-bold text-xl mb-6 text-gray-800">{user ? '编辑成员' : '新增成员'}</h3>
         <div className="space-y-4">
-          <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="姓名" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-          <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="邮箱" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
-          <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="部门" value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} />
+          <div className="grid grid-cols-2 gap-4">
+             <div className="col-span-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">姓名</label>
+                <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-bold text-gray-800 transition-all" placeholder="输入姓名" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+             </div>
+             <div className="col-span-1">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">部门</label>
+                <div className="relative">
+                  <select 
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-bold text-gray-800 transition-all appearance-none" 
+                    value={formData.department} 
+                    onChange={e => setFormData({...formData, department: e.target.value})}
+                  >
+                    <option value="">选择部门...</option>
+                    {departments.map((d: any) => (
+                      <option key={d.id} value={d.name}>{d.name}</option>
+                    ))}
+                  </select>
+                  <ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={14} />
+                </div>
+             </div>
+          </div>
+          
+          <div>
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">电子邮箱</label>
+            <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-medium text-gray-600 transition-all" placeholder="name@company.com" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
+          </div>
+
+          <div>
+             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">系统角色 (多选)</label>
+             <div className="flex flex-wrap gap-2">
+                {roles.map((r: any) => {
+                   const isSelected = formData.role?.includes(r.id);
+                   return (
+                      <button 
+                        key={r.id} 
+                        onClick={() => toggleRole(r.id)}
+                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center space-x-1 ${isSelected ? `bg-${theme}-100 text-${theme}-700 border-${theme}-200` : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'}`}
+                      >
+                         {isSelected ? <CheckSquare size={14}/> : <Square size={14}/>}
+                         <span>{r.name}</span>
+                      </button>
+                   )
+                })}
+             </div>
+          </div>
+
           <div className="flex space-x-4">
-            <input className="flex-1 p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="办公电话" value={formData.landline || ''} onChange={e => setFormData({...formData, landline: e.target.value})} />
-            <input className="flex-1 p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 outline-none" placeholder="移动电话" value={formData.mobile || ''} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+            <div className="flex-1">
+               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">办公电话</label>
+               <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none text-sm" placeholder="010-..." value={formData.landline || ''} onChange={e => setFormData({...formData, landline: e.target.value})} />
+            </div>
+            <div className="flex-1">
+               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">移动电话</label>
+               <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none text-sm" placeholder="138..." value={formData.mobile || ''} onChange={e => setFormData({...formData, mobile: e.target.value})} />
+            </div>
           </div>
         </div>
         <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold`}>保存</button>
+          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
+          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all`}>保存</button>
         </div>
       </div>
     </div>
