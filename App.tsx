@@ -220,7 +220,7 @@ const App: React.FC = () => {
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
   
   // Import States
-  const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | null>(null);
+  const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | 'DEPARTMENTS' | null>(null);
 
   // Batch Selection States
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
@@ -686,7 +686,13 @@ const App: React.FC = () => {
 
           {view === 'DEPARTMENTS' && (
             <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">组织架构</h3></div><button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新一级部门' }])} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}>创建部门</button></div>
+              <div className="flex justify-between items-center mb-6">
+                <div><h3 className="text-2xl font-black">组织架构</h3></div>
+                <div className="flex items-center space-x-3">
+                  <button onClick={() => setShowImportModal('DEPARTMENTS')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50"><Upload size={18}/> <span>批量导入</span></button>
+                  <button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新一级部门' }])} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}>创建部门</button>
+                </div>
+              </div>
               <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm min-h-[400px]">
                 {departments.filter(d => !d.parentId).map(root => (<DepartmentTreeNode key={root.id} department={root} departments={departments} onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '子部门', parentId: pid }])} onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} theme={theme} />))}
               </div>
@@ -747,10 +753,12 @@ const App: React.FC = () => {
         <BatchImportModal 
           type={showImportModal} 
           theme={theme} 
+          existingDepartments={departments}
           onClose={() => setShowImportModal(null)} 
-          onImport={(data) => {
+          onImport={(data: any) => {
             if (showImportModal === 'USERS') setUsers(prev => [...prev, ...data]);
-            else setResources(prev => [...prev, ...data]);
+            else if (showImportModal === 'RESOURCES') setResources(prev => [...prev, ...data]);
+            else if (showImportModal === 'DEPARTMENTS') setDepartments(prev => [...prev, ...data]);
             setShowImportModal(null);
           }}
         />
@@ -791,10 +799,10 @@ const App: React.FC = () => {
                     </h5>
                   </div>
                   <div className="relative z-10">
-                    <p className="text-sm font-black text-gray-700 leading-relaxed">
+                    <p className="text-sm font-black text-gray-700导致-relaxed">
                       从: <span className="text-rose-600">{bookingConflict.requestedStart.replace('T', ' ')}</span>
                     </p>
-                    <p className="text-sm font-black text-gray-700 leading-relaxed">
+                    <p className="text-sm font-black text-gray-700导致-relaxed">
                       至: <span className="text-rose-600">{bookingConflict.requestedEnd.replace('T', ' ')}</span>
                     </p>
                   </div>
@@ -868,14 +876,15 @@ const App: React.FC = () => {
 
 // --- Specialized Components ---
 
-const BatchImportModal = ({ type, theme, onClose, onImport }: any) => {
+const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport }: any) => {
   const [importText, setImportText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const templates: any = {
     USERS: "姓名,邮箱,部门,角色(用|隔开)\n张三,zhangsan@company.com,技术部,EMPLOYEE\n李四,lisi@company.com,市场部,EMPLOYEE|APPROVAL_ADMIN",
-    RESOURCES: "资源名称,类型(ROOM/DESK),容量,位置,设施(用|隔开)\n会议室X,ROOM,10,2号楼,投屏|白板\n工位Z,DESK,1,A区,双显"
+    RESOURCES: "资源名称,类型(ROOM/DESK),容量,位置,设施(用|隔开)\n会议室X,ROOM,10,2号楼,投屏|白板\n工位Z,DESK,1,A区,双显",
+    DEPARTMENTS: "部门名称,上级部门名称(可选)\n财务部,集团总部\n研发中心,信息技术部"
   };
 
   const handleDownloadTemplate = () => {
@@ -919,7 +928,7 @@ const BatchImportModal = ({ type, theme, onClose, onImport }: any) => {
             department: department || '未分配',
             role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE']
           });
-        } else {
+        } else if (type === 'RESOURCES') {
           const [name, rType, capacity, location, featuresStr] = parts;
           if (!name || !rType) throw new Error(`第 ${idx + 2} 行数据不完整`);
           importedData.push({
@@ -930,6 +939,15 @@ const BatchImportModal = ({ type, theme, onClose, onImport }: any) => {
             location: location || '未定义',
             features: featuresStr ? featuresStr.split('|') : [],
             status: 'AVAILABLE'
+          });
+        } else if (type === 'DEPARTMENTS') {
+          const [name, parentName] = parts;
+          if (!name) throw new Error(`第 ${idx + 2} 行数据不完整`);
+          const parent = parentName ? existingDepartments.find((d: any) => d.name === parentName) : null;
+          importedData.push({
+            id: `d-import-${Date.now()}-${idx}`,
+            name,
+            parentId: parent?.id
           });
         }
       });
@@ -948,7 +966,7 @@ const BatchImportModal = ({ type, theme, onClose, onImport }: any) => {
               <FileUp size={28}/>
             </div>
             <div>
-              <h3 className="text-2xl font-black text-gray-800">批量导入{type === 'USERS' ? '成员' : '资源'}</h3>
+              <h3 className="text-2xl font-black text-gray-800">批量导入{type === 'USERS' ? '成员' : type === 'RESOURCES' ? '资源' : '部门'}</h3>
               <p className="text-xs text-gray-400 font-medium">支持 CSV 格式或纯文本粘贴。</p>
             </div>
           </div>

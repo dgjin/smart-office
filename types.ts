@@ -12,6 +12,7 @@ export interface User {
   id: string;
   name: string;
   email: string;
+  password?: string; // Added for login
   role: Role[]; 
   department: string;
   landline?: string;
