@@ -9,7 +9,7 @@ import {
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
-  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode
+  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -136,7 +136,7 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
   );
 };
 
-const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Resource[], bookings: Booking[], users: User[], theme: string }) => {
+const MonthlyUsageGrid = ({ resources, bookings, users, theme, onDayClick }: { resources: Resource[], bookings: Booking[], users: User[], theme: string, onDayClick: (resourceId: string, date: Date) => void }) => {
   const [startDate, setStartDate] = useState(new Date());
   
   const displayDays = useMemo(() => {
@@ -186,7 +186,11 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
                   const info = getDayStatus(res.id, date); 
                   return (
                     <td key={i} className={`p-1 border-b text-center ${date.getDay() === 0 || date.getDay() === 6 ? 'bg-rose-50/10' : ''}`}>
-                      <div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50/50'}`} title={info ? `${info.userName} (${info.userDept}): ${info.purpose}` : ''}/>
+                      <button 
+                        onClick={() => onDayClick(res.id, date)}
+                        className={`w-full h-8 rounded-md transition-all cursor-pointer ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm hover:scale-105` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse hover:scale-105' : 'bg-gray-50/50 hover:bg-gray-100'}`} 
+                        title={info ? `${info.userName} (${info.userDept}): ${info.purpose} (点击查看详情)` : '无预约记录'}
+                      />
                     </td>
                   ); 
                 })}
@@ -204,7 +208,6 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
 const App: React.FC = () => {
   const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [isChangingPassword, setIsChangingPassword] = useState(false);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
   // Data states
@@ -231,6 +234,7 @@ const App: React.FC = () => {
   const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
   const [allExpanded, setAllExpanded] = useState(true);
+  const [dayDetail, setDayDetail] = useState<{ resource: Resource, date: Date, bookings: Booking[] } | null>(null);
   
   // Import States
   const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | 'DEPARTMENTS' | null>(null);
@@ -330,21 +334,15 @@ const App: React.FC = () => {
   };
 
   const handleLogin = (user: User) => {
-    if (user.password === '123456' || user.needsPasswordChange) {
-      setCurrentUser(user);
-      setIsChangingPassword(true);
-    } else {
-      setCurrentUser(user);
-    }
+    setCurrentUser(user);
   };
 
-  const handlePasswordUpdate = (newPwd: string) => {
-    if (!currentUser) return;
-    const updatedUsers = users.map(u => u.id === currentUser.id ? { ...u, password: newPwd, needsPasswordChange: false } : u);
-    setUsers(updatedUsers);
-    setCurrentUser({ ...currentUser, password: newPwd, needsPasswordChange: false });
-    setIsChangingPassword(false);
-    alert('密码修改成功！');
+  const handleDayPanoramaClick = (resourceId: string, date: Date) => {
+    const resource = resources.find(r => r.id === resourceId);
+    if (!resource) return;
+    const dStr = date.toISOString().split('T')[0];
+    const dayBookings = bookings.filter(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING') && (dStr >= b.startTime.split('T')[0] && dStr <= b.endTime.split('T')[0]));
+    setDayDetail({ resource, date, bookings: dayBookings });
   };
 
   // Batch Operations Logic
@@ -383,7 +381,6 @@ const App: React.FC = () => {
   };
 
   if (!currentUser) return <LoginView users={users} onLogin={handleLogin} theme={theme} />;
-  if (isChangingPassword) return <ForceChangePasswordView user={currentUser} onUpdate={handlePasswordUpdate} theme={theme} />;
 
   return (
     <div className="min-h-screen flex bg-gray-50 overflow-hidden font-sans">
@@ -498,7 +495,7 @@ const App: React.FC = () => {
               </div>
 
               <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
-              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
+              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} onDayClick={handleDayPanoramaClick} />
             </div>
           )}
 
@@ -815,6 +812,15 @@ const App: React.FC = () => {
 
       {/* --- Modals --- */}
 
+      {dayDetail && (
+        <DayBookingDetailModal 
+          detail={dayDetail} 
+          users={users} 
+          theme={theme} 
+          onClose={() => setDayDetail(null)} 
+        />
+      )}
+
       {showImportModal && (
         <BatchImportModal 
           type={showImportModal} 
@@ -847,75 +853,12 @@ const App: React.FC = () => {
       )}
 
       {bookingConflict && (
-        <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in">
-            <div className="text-center mb-10">
-               <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50">
-                 <AlertTriangle size={40} />
-               </div>
-               <h3 className="text-3xl font-black text-gray-800 mb-2">预约时间冲突</h3>
-               <p className="text-gray-400 font-medium leading-relaxed">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold underline`}>{bookingConflict.resource.name}</span> 在此时段已被占用或不可用。</p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-10 text-left">
-               <div className="p-6 bg-rose-50/50 border border-rose-100 rounded-[2rem] space-y-4 relative overflow-hidden">
-                  <div className="flex items-center justify-between relative z-10">
-                    <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center space-x-2">
-                      <Zap size={14}/> <span>您的申请请求</span>
-                    </h5>
-                  </div>
-                  <div className="relative z-10">
-                    <p className="text-sm font-black text-gray-700 leading-relaxed">
-                      从: <span className="text-rose-600">{bookingConflict.requestedStart.replace('T', ' ')}</span>
-                    </p>
-                    <p className="text-sm font-black text-gray-700 leading-relaxed">
-                      至: <span className="text-rose-600">{bookingConflict.requestedEnd.replace('T', ' ')}</span>
-                    </p>
-                  </div>
-                  <CalendarDays className="absolute -right-4 -bottom-4 text-rose-200/30" size={80}/>
-               </div>
-
-               <div className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-4 relative overflow-hidden">
-                  <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-2">
-                    <History size={14}/> <span>该资源现有冲突项</span>
-                  </h5>
-                  <div className="space-y-3 max-h-40 overflow-y-auto custom-scrollbar pr-2">
-                    {bookingConflict.resourceBookings.length > 0 ? (
-                      bookingConflict.resourceBookings.map((b) => (
-                        <div key={b.id} className="p-3 bg-white rounded-xl border border-gray-100 shadow-sm">
-                           <div className="flex justify-between items-center">
-                             <p className="text-[10px] font-bold text-gray-700">
-                               {b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}
-                             </p>
-                             <span className="text-[9px] font-black bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded uppercase">预订中</span>
-                           </div>
-                           <p className="text-[9px] text-gray-400 mt-1 font-bold">由 {users.find(u => u.id === b.userId)?.name} 预订</p>
-                        </div>
-                      ))
-                    ) : (
-                      <p className="text-xs text-gray-300 italic">暂无确认的预订记录</p>
-                    )}
-                  </div>
-                  <Clock className="absolute -right-4 -bottom-4 text-gray-200/30" size={80}/>
-               </div>
-            </div>
-
-            <div className="flex space-x-4">
-              <button 
-                onClick={() => setBookingConflict(null)} 
-                className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all"
-              >
-                取消
-              </button>
-              <button 
-                onClick={() => setBookingConflict(null)} 
-                className={`flex-1 py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl shadow-${theme}-600/20 active:translate-y-1 transition-all`}
-              >
-                重新选择时间
-              </button>
-            </div>
-          </div>
-        </div>
+        <BookingConflictModal 
+          conflict={bookingConflict} 
+          users={users} 
+          theme={theme} 
+          onClose={() => setBookingConflict(null)} 
+        />
       )}
 
       {viewDetail && (
@@ -1055,16 +998,15 @@ const App: React.FC = () => {
 
 const LoginView = ({ users, onLogin, theme }: any) => {
   const [id, setId] = useState('');
-  const [pwd, setPwd] = useState('');
   const [error, setError] = useState('');
 
   const handleLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    const user = users.find((u: User) => (u.email === id || u.mobile === id) && u.password === pwd);
+    const user = users.find((u: User) => (u.email === id || u.mobile === id));
     if (user) {
       onLogin(user);
     } else {
-      setError('邮箱/手机号或密码不正确');
+      setError('未找到该邮箱或手机号关联的成员');
     }
   };
 
@@ -1085,71 +1027,17 @@ const LoginView = ({ users, onLogin, theme }: any) => {
               className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition-all font-medium text-sm" 
             />
           </div>
-          <div className="relative">
-            <Lock className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
-            <input 
-              required
-              type="password" 
-              value={pwd} 
-              onChange={e => setPwd(e.target.value)}
-              placeholder="请输入登录密码" 
-              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-indigo-100 transition-all font-medium text-sm" 
-            />
-          </div>
           {error && <p className="text-rose-500 text-[10px] font-bold px-2">{error}</p>}
-          <button type="submit" className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg hover:shadow-xl transition-all active:scale-95 mt-4`}>登录系统</button>
+          <button type="submit" className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg hover:shadow-xl transition-all active:scale-95 mt-4`}>一键登录</button>
         </form>
-        <div className="mt-8 text-center"><p className="text-[10px] text-gray-300 font-bold">默认初始密码：123456</p></div>
-      </div>
-    </div>
-  );
-};
-
-const ForceChangePasswordView = ({ user, onUpdate, theme }: any) => {
-  const [pwd, setPwd] = useState('');
-  const [confirmPwd, setConfirmPwd] = useState('');
-  const [error, setError] = useState('');
-
-  const handleSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (pwd === '123456') return setError('不能使用初始密码作为新密码');
-    if (pwd.length < 6) return setError('密码长度至少为 6 位');
-    if (pwd !== confirmPwd) return setError('两次输入的密码不一致');
-    onUpdate(pwd);
-  };
-
-  return (
-    <div className={`min-h-screen bg-gray-100 flex items-center justify-center p-6`}>
-      <div className="bg-white p-12 rounded-[3rem] shadow-2xl w-full max-w-md animate-in zoom-in border border-gray-100">
-        <div className="flex justify-center mb-6"><div className="w-16 h-16 bg-amber-50 text-amber-600 rounded-2xl flex items-center justify-center shadow-inner"><Shield size={32}/></div></div>
-        <h1 className="text-2xl font-black text-center mb-2">安全验证</h1>
-        <p className="text-gray-400 text-xs font-bold text-center mb-10 leading-relaxed">为了保障您的账户安全，初次登录或使用初始密码时必须修改密码。</p>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div className="relative">
-            <Key className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
-            <input 
-              required
-              type="password" 
-              value={pwd} 
-              onChange={e => setPwd(e.target.value)}
-              placeholder="设置新密码" 
-              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-amber-100 transition-all font-medium text-sm" 
-            />
+        <div className="mt-8 text-center">
+          <p className="text-[10px] text-gray-300 font-bold mb-2">演示账号：</p>
+          <div className="flex flex-col space-y-1">
+             <span className="text-[9px] text-indigo-400 font-mono">sysadmin@company.com</span>
+             <span className="text-[9px] text-indigo-400 font-mono">approver@company.com</span>
+             <span className="text-[9px] text-indigo-400 font-mono">li@company.com</span>
           </div>
-          <div className="relative">
-            <CheckCircle className="absolute left-4 top-1/2 -translate-y-1/2 text-gray-300" size={18}/>
-            <input 
-              required
-              type="password" 
-              value={confirmPwd} 
-              onChange={e => setConfirmPwd(e.target.value)}
-              placeholder="请再次输入新密码" 
-              className="w-full pl-12 pr-4 py-4 bg-gray-50 rounded-2xl outline-none focus:ring-2 focus:ring-amber-100 transition-all font-medium text-sm" 
-            />
-          </div>
-          {error && <p className="text-rose-500 text-[10px] font-bold px-2">{error}</p>}
-          <button type="submit" className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg mt-4`}>提交修改并进入系统</button>
-        </form>
+        </div>
       </div>
     </div>
   );
@@ -1157,13 +1045,138 @@ const ForceChangePasswordView = ({ user, onUpdate, theme }: any) => {
 
 // --- Specialized Components ---
 
+const BookingConflictModal = ({ conflict, users, theme, onClose }: any) => {
+  const [showDetails, setShowDetails] = useState(false);
+  
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in">
+        <div className="text-center mb-10">
+           <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50">
+             <AlertTriangle size={40} />
+           </div>
+           <h3 className="text-3xl font-black text-gray-800 mb-2">预约时间冲突</h3>
+           <p className="text-gray-400 font-medium leading-relaxed">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold underline`}>{conflict.resource.name}</span> 在此时段已被占用或不可用。</p>
+        </div>
+
+        <div className="p-6 bg-rose-50/50 border border-rose-100 rounded-[2rem] space-y-4 mb-6 relative overflow-hidden">
+           <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center space-x-2">
+             <Zap size={14}/> <span>您的申请请求</span>
+           </h5>
+           <p className="text-sm font-black text-gray-700 leading-relaxed">
+             从 {conflict.requestedStart.replace('T', ' ')} 到 {conflict.requestedEnd.replace('T', ' ')}
+           </p>
+        </div>
+
+        {!showDetails ? (
+          <button 
+            onClick={() => setShowDetails(true)}
+            className="w-full py-4 mb-8 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 rounded-2xl flex items-center justify-center space-x-2 transition-all font-bold"
+          >
+            <Eye size={18}/> <span>查看冲突详情</span>
+          </button>
+        ) : (
+          <div className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-4 mb-8 relative overflow-hidden animate-in slide-in-from-top-4">
+            <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-2">
+              <History size={14}/> <span>该资源现有冲突项</span>
+            </h5>
+            <div className="space-y-3 max-h-60 overflow-y-auto custom-scrollbar pr-2">
+              {conflict.resourceBookings.map((b: Booking) => {
+                const user = users.find((u: User) => u.id === b.userId);
+                return (
+                  <div key={b.id} className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
+                    <div className="flex justify-between items-start mb-2">
+                       <div>
+                         <p className="text-xs font-black text-gray-700">{user?.name} · {user?.department}</p>
+                         <p className="text-[10px] text-gray-400 font-medium">用途: {b.purpose}</p>
+                       </div>
+                       <StatusBadge status={b.status} theme={theme} />
+                    </div>
+                    <div className="flex items-center space-x-2 text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-1 rounded-lg w-fit">
+                      <Clock size={12}/>
+                      <span>{b.startTime.replace('T', ' ')} - {b.endTime.replace('T', ' ')}</span>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+
+        <div className="flex space-x-4">
+          <button onClick={onClose} className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all">取消</button>
+          <button onClick={onClose} className={`flex-1 py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl transition-all`}>重新选择时间</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DayBookingDetailModal = ({ detail, users, theme, onClose }: any) => {
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in overflow-hidden flex flex-col max-h-[85vh]">
+        <div className="flex items-center justify-between mb-8">
+          <div className="flex items-center space-x-4">
+            <div className={`w-14 h-14 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 border border-${theme}-100`}>
+              <CalendarDays size={28}/>
+            </div>
+            <div>
+              <h3 className="text-2xl font-black text-gray-800">{detail.resource.name}</h3>
+              <p className="text-xs text-gray-400 font-bold uppercase tracking-widest">{detail.date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' })} 预订分布</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500 transition-colors"><X size={20}/></button>
+        </div>
+
+        <div className="flex-1 overflow-y-auto custom-scrollbar pr-2 space-y-4">
+          {detail.bookings.length > 0 ? (
+            detail.bookings.sort((a: any, b: any) => a.startTime.localeCompare(b.startTime)).map((b: Booking) => {
+              const user = users.find((u: User) => u.id === b.userId);
+              return (
+                <div key={b.id} className="p-6 bg-gray-50 rounded-[2rem] border border-gray-100 flex flex-col md:flex-row md:items-center justify-between group hover:bg-white hover:shadow-lg transition-all">
+                  <div className="flex items-center space-x-4">
+                    <div className={`w-10 h-10 rounded-full bg-${theme}-100 flex items-center justify-center font-black text-${theme}-700 text-xs`}>{user?.name[0]}</div>
+                    <div>
+                      <h5 className="font-black text-gray-800">{user?.name} · {user?.department}</h5>
+                      <p className="text-xs text-gray-400 font-medium">用途：{b.purpose}</p>
+                    </div>
+                  </div>
+                  <div className="mt-4 md:mt-0 flex items-center space-x-6">
+                    <div className="text-right">
+                       <div className="flex items-center space-x-2 justify-end mb-1">
+                          <Clock size={12} className={`text-${theme}-600`}/>
+                          <span className="text-xs font-black text-gray-700">{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</span>
+                       </div>
+                       <StatusBadge status={b.status} theme={theme} />
+                    </div>
+                  </div>
+                </div>
+              );
+            })
+          ) : (
+            <div className="text-center py-20 bg-gray-50 rounded-[3rem] border border-dashed border-gray-200">
+               <Activity size={40} className="mx-auto text-gray-300 mb-4" />
+               <p className="text-gray-400 font-bold">该日期暂无任何核准中或已通过的预订记录</p>
+            </div>
+          )}
+        </div>
+
+        <div className="mt-8 pt-6 border-t border-gray-50">
+           <button onClick={onClose} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>关闭窗口</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport }: any) => {
   const [importText, setImportText] = useState('');
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const templates: any = {
-    USERS: "姓名,邮箱,部门,角色(用|隔开),密码(可选),手机号(可选)\n张三,zhangsan@company.com,技术部,EMPLOYEE,123456,13800000000",
+    USERS: "姓名,邮箱,部门,角色(用|隔开),手机号(可选)\n张三,zhangsan@company.com,技术部,EMPLOYEE,13800000000",
     RESOURCES: "资源名称,类型(ROOM/DESK),容量,位置,设施(用|隔开)\n会议室X,ROOM,10,2号楼,投屏|白板\n工位Z,DESK,1,A区,双显",
     DEPARTMENTS: "部门名称,上级部门名称(可选)\n财务部,集团总部\n研发中心,信息技术部"
   };
@@ -1200,17 +1213,15 @@ const BatchImportModal = ({ type, theme, existingDepartments, onClose, onImport 
       rows.forEach((row, idx) => {
         const parts = row.split(',').map(p => p.trim());
         if (type === 'USERS') {
-          const [name, email, department, rolesStr, password, mobile] = parts;
+          const [name, email, department, rolesStr, mobile] = parts;
           if (!name || !email) throw new Error(`第 ${idx + 2} 行数据不完整`);
           importedData.push({
             id: `u-import-${Date.now()}-${idx}`,
             name,
             email,
-            password: password || '123456',
             mobile: mobile || '',
             department: department || '未分配',
-            role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE'],
-            needsPasswordChange: !password || password === '123456'
+            role: rolesStr ? rolesStr.split('|') : ['EMPLOYEE']
           });
         } else if (type === 'RESOURCES') {
           const [name, rType, capacity, location, featuresStr] = parts;
@@ -1557,7 +1568,7 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
 // --- Standard UI Components ---
 
 const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) => {
-  const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '', password: '123456', needsPasswordChange: true });
+  const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '' });
   return (
     <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
       <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">

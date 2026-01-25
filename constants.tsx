@@ -18,9 +18,9 @@ export const INITIAL_DEPARTMENTS: Department[] = [
 ];
 
 export const INITIAL_USERS: User[] = [
-  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', password: '123456', role: ['SYSTEM_ADMIN'], department: '架构组', landline: '010-88886666', mobile: '13800000001', needsPasswordChange: true },
-  { id: '2', name: '审批负责人', email: 'approver@company.com', password: '123456', role: ['APPROVAL_ADMIN'], department: '行政部', landline: '010-88886667', mobile: '13800000002', needsPasswordChange: true },
-  { id: '3', name: '李员工', email: 'li@company.com', password: '123456', role: ['EMPLOYEE'], department: '市场部', landline: '010-88886668', mobile: '13800000003', needsPasswordChange: true },
+  { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN'], department: '架构组', landline: '010-88886666', mobile: '13800000001' },
+  { id: '2', name: '审批负责人', email: 'approver@company.com', role: ['APPROVAL_ADMIN'], department: '行政部', landline: '010-88886667', mobile: '13800000002' },
+  { id: '3', name: '李员工', email: 'li@company.com', role: ['EMPLOYEE'], department: '市场部', landline: '010-88886668', mobile: '13800000003' },
 ];
 
 export const INITIAL_RESOURCES: Resource[] = [
