@@ -62,6 +62,7 @@ export interface Booking {
   endTime: string;
   status: BookingStatus;
   purpose: string;
+  participants?: number;
   createdAt: string;
   currentNodeIndex: number; 
   approvalHistory: ApprovalRecord[];
