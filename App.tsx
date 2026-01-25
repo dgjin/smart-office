@@ -9,7 +9,7 @@ import {
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
-  Lock, Smartphone, Mail, Key, Minus, Layers
+  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -873,25 +873,127 @@ const App: React.FC = () => {
       )}
 
       {viewDetail && (
-        <div className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] w-full max-w-xl p-10 shadow-2xl animate-in zoom-in relative">
-            <button onClick={() => setViewDetail(null)} className="absolute top-8 right-8 p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500"><X size={20}/></button>
-            <div className="flex items-center space-x-6 mb-10">
-              <div className={`w-20 h-20 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}>{viewDetail.type === 'USER' ? <UserCircle size={40}/> : <MapPin size={40}/>}</div>
-              <div className="text-left"><h2 className="text-3xl font-black text-gray-800">{viewDetail.data.name}</h2><p className="text-gray-400 font-bold">{viewDetail.type === 'USER' ? viewDetail.data.department : viewDetail.data.location}</p></div>
+        <div className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+          <div className="bg-white rounded-[3rem] w-full max-w-4xl p-10 shadow-2xl animate-in zoom-in relative my-8">
+            <button onClick={() => setViewDetail(null)} className="absolute top-8 right-8 p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500 transition-all"><X size={20}/></button>
+            
+            <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+              {/* Left Column: Basic Info */}
+              <div className="lg:col-span-5 space-y-10">
+                <div className="flex items-center space-x-6">
+                  <div className={`w-20 h-20 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 shadow-sm`}>{viewDetail.type === 'USER' ? <UserCircle size={40}/> : <MapPin size={40}/>}</div>
+                  <div className="text-left"><h2 className="text-3xl font-black text-gray-800">{viewDetail.data.name}</h2><p className="text-gray-400 font-bold">{viewDetail.type === 'USER' ? viewDetail.data.department : viewDetail.data.location}</p></div>
+                </div>
+
+                <div className="grid grid-cols-1 gap-6 text-left">
+                  {viewDetail.type === 'USER' ? (<>
+                    <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">邮箱地址</p><p className="font-bold text-gray-700">{viewDetail.data.email}</p></div>
+                    <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">手机号码</p><p className="font-bold text-gray-700">{viewDetail.data.mobile || '--'}</p></div>
+                    <div className="space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">所属角色</p><div className="flex flex-wrap gap-1">{viewDetail.data.role.map((r: string) => <RoleTag key={r} roleId={r} roles={roles} theme={theme}/>)}</div></div>
+                  </>) : (<>
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">资源类型</p><p className="font-bold text-gray-700">{viewDetail.data.type === 'ROOM' ? '多功能会议室' : '独立办公工位'}</p></div>
+                      <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">额定人数</p><p className="font-bold text-gray-700">{viewDetail.data.capacity} 人</p></div>
+                    </div>
+                    <div className="space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">内置设施</p><div className="flex flex-wrap gap-2">{viewDetail.data.features.map((f: string) => <span key={f} className="px-3 py-1 bg-gray-50 border rounded-lg text-[10px] font-bold text-gray-500">{f}</span>)}</div></div>
+                  </>)}
+                </div>
+                <button onClick={() => setViewDetail(null)} className={`w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-2xl transition-all`}>关闭详情</button>
+              </div>
+
+              {/* Right Column: Dynamic Schedule */}
+              {viewDetail.type === 'RESOURCE' && (
+                <div className="lg:col-span-7 space-y-6">
+                  <div className="bg-gray-50/50 rounded-[2.5rem] p-8 border border-gray-100 shadow-inner">
+                    <div className="flex items-center justify-between mb-8">
+                       <h4 className="font-black text-gray-800 flex items-center space-x-2">
+                         <History className={`text-${theme}-600`} size={18}/>
+                         <span>排期看板 (今日/本周)</span>
+                       </h4>
+                       <div className="flex items-center space-x-2 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                          <Activity size={12} className="text-emerald-500 animate-pulse"/>
+                          <span className="text-[10px] font-bold text-gray-500 uppercase">实时同步中</span>
+                       </div>
+                    </div>
+
+                    <div className="space-y-6 overflow-y-auto custom-scrollbar max-h-[400px] pr-2">
+                       {/* Today's Focused View */}
+                       <div>
+                          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-4">今日实时占用</p>
+                          <div className="space-y-3">
+                            {(() => {
+                              const todayStr = new Date().toISOString().split('T')[0];
+                              const todayBookings = bookings.filter(b => b.resourceId === viewDetail.data.id && b.startTime.startsWith(todayStr) && (b.status === 'APPROVED' || b.status === 'PENDING'));
+                              
+                              if (todayBookings.length === 0) {
+                                return <div className="p-6 bg-white rounded-2xl border border-dashed border-gray-200 text-center"><p className="text-xs text-gray-400 font-bold italic">今日暂无预订排期</p></div>;
+                              }
+
+                              return todayBookings.sort((a, b) => a.startTime.localeCompare(b.startTime)).map(b => {
+                                const user = users.find(u => u.id === b.userId);
+                                const isNow = new Date() >= new Date(b.startTime) && new Date() <= new Date(b.endTime);
+                                return (
+                                  <div key={b.id} className={`p-4 bg-white rounded-2xl border transition-all ${isNow ? `ring-2 ring-${theme}-500/20 border-${theme}-500 shadow-lg scale-[1.02]` : 'border-gray-100 shadow-sm'}`}>
+                                     <div className="flex items-center justify-between">
+                                        <div className="flex items-center space-x-3">
+                                          <div className={`w-8 h-8 rounded-full bg-${theme}-50 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{user?.name[0]}</div>
+                                          <div>
+                                            <p className="text-xs font-black text-gray-800">{user?.name} · {user?.department}</p>
+                                            <p className="text-[10px] text-gray-400 font-medium">用途: {b.purpose}</p>
+                                          </div>
+                                        </div>
+                                        <div className="text-right">
+                                           <div className="flex items-center space-x-1.5 justify-end">
+                                              <Clock size={10} className={isNow ? `text-${theme}-600` : 'text-gray-300'}/>
+                                              <p className={`text-[11px] font-black ${isNow ? `text-${theme}-600` : 'text-gray-700'}`}>{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</p>
+                                           </div>
+                                           {isNow && <span className={`inline-block px-1.5 py-0.5 rounded bg-${theme}-600 text-white text-[8px] font-black mt-1 animate-pulse`}>使用中</span>}
+                                        </div>
+                                     </div>
+                                  </div>
+                                );
+                              });
+                            })()}
+                          </div>
+                       </div>
+
+                       {/* This Week's Overview */}
+                       <div className="pt-4 border-t border-gray-100">
+                          <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest mb-4">本周后续预览</p>
+                          <div className="grid grid-cols-1 gap-2">
+                             {(() => {
+                               const now = new Date();
+                               const endOfWeek = new Date();
+                               endOfWeek.setDate(now.getDate() + 7);
+                               const weekBookings = bookings.filter(b => {
+                                 const start = new Date(b.startTime);
+                                 return b.resourceId === viewDetail.data.id && start > now && start <= endOfWeek && (b.status === 'APPROVED' || b.status === 'PENDING');
+                               });
+
+                               if (weekBookings.length === 0) {
+                                 return <p className="text-[10px] text-gray-400 italic">本周余下时段暂无预约</p>;
+                               }
+
+                               return weekBookings.sort((a, b) => a.startTime.localeCompare(b.startTime)).map(b => (
+                                 <div key={b.id} className="flex items-center justify-between p-3 bg-white/50 rounded-xl border border-gray-50 hover:border-indigo-100 transition-colors group">
+                                    <div className="flex items-center space-x-3">
+                                       <div className="w-1.5 h-1.5 rounded-full bg-amber-400"></div>
+                                       <p className="text-[10px] font-bold text-gray-500">{b.startTime.replace('T', ' ').slice(5, 16)}</p>
+                                    </div>
+                                    <div className="flex items-center space-x-2">
+                                       <span className="text-[9px] font-black text-gray-400 group-hover:text-gray-700 transition-colors">{users.find(u => u.id === b.userId)?.name}</span>
+                                       <ChevronRight size={10} className="text-gray-200"/>
+                                    </div>
+                                 </div>
+                               ));
+                             })()}
+                          </div>
+                       </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="grid grid-cols-2 gap-8 mb-10 text-left">
-              {viewDetail.type === 'USER' ? (<>
-                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">邮箱地址</p><p className="font-bold text-gray-700">{viewDetail.data.email}</p></div>
-                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">手机号码</p><p className="font-bold text-gray-700">{viewDetail.data.mobile || '--'}</p></div>
-                <div className="col-span-2 space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">所属角色</p><div className="flex flex-wrap gap-1">{viewDetail.data.role.map((r: string) => <RoleTag key={r} roleId={r} roles={roles} theme={theme}/>)}</div></div>
-              </>) : (<>
-                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">资源类型</p><p className="font-bold text-gray-700">{viewDetail.data.type === 'ROOM' ? '多功能会议室' : '独立办公工位'}</p></div>
-                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">额定人数</p><p className="font-bold text-gray-700">{viewDetail.data.capacity} 人</p></div>
-                <div className="col-span-2 space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">内置设施</p><div className="flex flex-wrap gap-2">{viewDetail.data.features.map((f: string) => <span key={f} className="px-3 py-1 bg-gray-50 border rounded-lg text-[10px] font-bold text-gray-500">{f}</span>)}</div></div>
-              </>)}
-            </div>
-            <button onClick={() => setViewDetail(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl`}>返回</button>
           </div>
         </div>
       )}
@@ -1469,7 +1571,7 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white p-10 rounded-[3rem] w-full max-lg shadow-2xl animate-in zoom-in">
+      <div className="bg-white p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in">
         <h2 className="text-2xl font-black mb-1">资源预约</h2>
         <p className="text-xs text-gray-400 mb-8">目标: <span className={`text-${theme}-600 font-bold`}>{resource.name}</span> | {resource.type === 'ROOM' ? '时分预约' : '天数预约'}</p>
         <div className="space-y-6">
