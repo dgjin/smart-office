@@ -254,30 +254,68 @@ const TodayResourceUsage = ({ resources, bookings, theme }: any) => {
   );
 };
 
-const MonthlyUsageGrid = ({ onDayClick, bookings, theme }: any) => {
+const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
   const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000));
+
   return (
-    <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100">
-      <h3 className="font-black text-lg mb-6">未来30天热度</h3>
-      <div className="grid grid-cols-7 gap-2">
-        {days.map((d, i) => {
-          const dateStr = d.toISOString().split('T')[0];
-          // Check if there are any approved bookings for this day
-          const bookingCount = bookings ? bookings.filter((b: any) => 
-            b.status === 'APPROVED' && b.startTime.startsWith(dateStr)
-          ).length : 0;
-          
-          return (
-            <button 
-              key={i} 
-              onClick={() => onDayClick(null, d)} 
-              className={`aspect-square rounded-xl flex flex-col items-center justify-center text-xs font-bold transition-all hover:scale-105 ${bookingCount > 0 ? `bg-${theme}-50 text-${theme}-600 border border-${theme}-200` : 'bg-gray-50 text-gray-400 border border-transparent'}`}
-            >
-              <span className="text-sm">{d.getDate()}</span>
-              {bookingCount > 0 && <span className={`w-1.5 h-1.5 rounded-full bg-${theme}-500 mt-1`}></span>}
-            </button>
-          );
-        })}
+    <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col">
+      <h3 className="font-black text-lg mb-4">未来30天热度 (资源 x 日期)</h3>
+      <div className="overflow-x-auto custom-scrollbar pb-2">
+        <table className="border-collapse w-full min-w-[800px]">
+          <thead>
+            <tr>
+              <th className="sticky left-0 z-20 bg-white p-3 text-left text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 min-w-[140px]">资源名称</th>
+              {days.map((d, i) => {
+                const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                return (
+                  <th key={i} className={`p-2 text-[10px] font-bold text-gray-400 border-b border-gray-100 min-w-[40px] text-center ${isWeekend ? 'bg-gray-50/50 text-gray-300' : ''}`}>
+                    {d.getMonth() + 1}/{d.getDate()}
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            {resources.map((r: any) => (
+              <tr key={r.id} className="group hover:bg-gray-50/30 transition-colors">
+                <td className="sticky left-0 z-10 bg-white group-hover:bg-gray-50/30 p-3 text-xs font-bold text-gray-700 border-b border-gray-50 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] truncate max-w-[140px]" title={r.name}>
+                  <div className="flex items-center space-x-2">
+                    <span className={`w-2 h-2 rounded-full ${r.type === 'ROOM' ? 'bg-indigo-400' : 'bg-emerald-400'}`}></span>
+                    <span className="truncate">{r.name}</span>
+                  </div>
+                </td>
+                {days.map((d, i) => {
+                  const dateStr = d.toISOString().split('T')[0];
+                  const bookingCount = bookings.filter((b: any) => 
+                    b.resourceId === r.id && 
+                    b.status === 'APPROVED' && 
+                    b.startTime.startsWith(dateStr)
+                  ).length;
+                  const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+
+                  return (
+                    <td key={i} className={`p-1 border-b border-gray-50 text-center ${isWeekend ? 'bg-gray-50/30' : ''}`}>
+                      <button 
+                        onClick={() => onDayClick(r.id, d)}
+                        className={`w-full h-8 rounded-lg transition-all hover:scale-110 flex items-center justify-center ${bookingCount > 0 ? `bg-${theme}-500 shadow-sm` : 'hover:bg-gray-100'}`}
+                        title={bookingCount > 0 ? `${bookingCount} 项预订` : '空闲'}
+                      >
+                        {bookingCount > 0 && (
+                          <span className="text-[9px] font-bold text-white">{bookingCount}</span>
+                        )}
+                      </button>
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="mt-4 flex items-center space-x-4 text-[10px] text-gray-400 font-bold justify-end">
+        <div className="flex items-center space-x-1"><span className={`w-3 h-3 rounded bg-${theme}-500`}></span><span>已预订</span></div>
+        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-gray-100"></span><span>空闲</span></div>
+        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded border border-gray-200 bg-gray-50"></span><span>周末</span></div>
       </div>
     </div>
   );
@@ -536,194 +574,11 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
   );
 };
 
-const DetailViewModal = ({ viewDetail, theme, roles, users, bookings, onClose }: any) => {
-  const { type, data } = viewDetail;
-
-  return (
-    <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-2xl w-full relative animate-in zoom-in max-h-[90vh] overflow-y-auto custom-scrollbar">
-        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-xl text-gray-400 hover:text-rose-500"><X size={20}/></button>
-        
-        {type === 'USER' && (
-           <div className="flex flex-col items-center text-center">
-             <div className={`w-24 h-24 rounded-full bg-${theme}-50 flex items-center justify-center text-${theme}-600 font-black text-3xl mb-6`}>{data.name[0]}</div>
-             <h3 className="text-2xl font-black text-gray-800">{data.name}</h3>
-             <p className="text-gray-400 font-medium mt-1">{data.email}</p>
-             
-             <div className="grid grid-cols-2 gap-4 w-full mt-8">
-               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">所属部门</p>
-                 <p className="font-bold text-gray-700">{data.department}</p>
-               </div>
-               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">角色权限</p>
-                 <div className="flex flex-wrap justify-center gap-1">{data.role.map((rid: any) => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div>
-               </div>
-               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">联系电话</p>
-                 <p className="font-bold text-gray-700">{data.mobile || '未登记'}</p>
-               </div>
-               <div className="bg-gray-50 p-4 rounded-2xl border border-gray-100">
-                 <p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest mb-1">座机</p>
-                 <p className="font-bold text-gray-700">{data.landline || '未登记'}</p>
-               </div>
-             </div>
-
-             <div className="w-full mt-8 text-left">
-               <h4 className="font-black text-lg mb-4">近期活动</h4>
-               {bookings.filter((b: any) => b.userId === data.id).length > 0 ? (
-                 <div className="space-y-3">
-                   {bookings.filter((b: any) => b.userId === data.id).slice(0, 3).map((b: any) => (
-                      <div key={b.id} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-xl">
-                        <div>
-                          <p className="text-xs font-bold text-gray-700">{b.purpose}</p>
-                          <p className="text-[10px] text-gray-400">{b.startTime.replace('T', ' ')}</p>
-                        </div>
-                        <StatusBadge status={b.status} theme={theme} />
-                      </div>
-                   ))}
-                 </div>
-               ) : <p className="text-sm text-gray-400 text-center py-4">暂无活动记录</p>}
-             </div>
-           </div>
-        )}
-
-        {type === 'RESOURCE' && (
-           <div>
-             <div className="flex items-center space-x-6 mb-8">
-               <div className={`w-20 h-20 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 font-black text-2xl`}>{data.type === 'ROOM' ? <Monitor size={32}/> : <Coffee size={32}/>}</div>
-               <div>
-                 <h3 className="text-2xl font-black text-gray-800">{data.name}</h3>
-                 <p className="text-gray-400 font-medium mt-1 flex items-center space-x-2"><MapPin size={14}/> <span>{data.location}</span></p>
-               </div>
-             </div>
-
-             <div className="grid grid-cols-3 gap-4 mb-8">
-                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-100 text-center">
-                   <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">类型</p>
-                   <p className="font-bold text-gray-800">{data.type === 'ROOM' ? '会议室' : '工位'}</p>
-                </div>
-                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-100 text-center">
-                   <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">容量</p>
-                   <p className="font-bold text-gray-800">{data.capacity} 人</p>
-                </div>
-                <div className="p-4 rounded-2xl bg-gray-50 border border-gray-100 text-center">
-                   <p className="text-[10px] text-gray-400 font-bold uppercase mb-1">状态</p>
-                   <StatusBadge status={data.status} theme={theme} />
-                </div>
-             </div>
-             
-             <h4 className="font-black text-lg mb-4">配套设施</h4>
-             <div className="flex flex-wrap gap-2 mb-8">
-               {data.features && data.features.length > 0 ? data.features.map((f: string, i: number) => (
-                 <span key={i} className="px-3 py-1 bg-white border border-gray-200 rounded-lg text-xs font-bold text-gray-600">{f}</span>
-               )) : <span className="text-gray-400 text-sm">暂无标注设施</span>}
-             </div>
-
-             <h4 className="font-black text-lg mb-4">今日预订情况</h4>
-             <div className="space-y-3">
-                {bookings.filter((b: any) => b.resourceId === data.id && b.startTime.startsWith(new Date().toISOString().split('T')[0])).length > 0 ? (
-                   bookings.filter((b: any) => b.resourceId === data.id && b.startTime.startsWith(new Date().toISOString().split('T')[0])).map((b: any) => {
-                     const u = users.find((user: any) => user.id === b.userId);
-                     return (
-                       <div key={b.id} className="flex items-center justify-between p-3 bg-white border border-gray-100 rounded-xl">
-                          <div>
-                            <p className="text-xs font-bold text-gray-700">{b.startTime.split('T')[1].slice(0,5)} - {b.endTime.split('T')[1].slice(0,5)}</p>
-                            <p className="text-[10px] text-gray-400">{u?.name} · {b.purpose}</p>
-                          </div>
-                          <StatusBadge status={b.status} theme={theme} />
-                       </div>
-                     );
-                   })
-                ) : <div className="text-center py-8 bg-gray-50 rounded-2xl border border-dashed border-gray-200 text-gray-400 text-sm">今日暂无预订，空闲中</div>}
-             </div>
-           </div>
-        )}
-      </div>
-    </div>
-  );
-};
-
-const BookingConflictModal = ({ conflict, users, theme, onClose, onApplySuggestion }: any) => {
-  const { resource, requestedStart, requestedEnd, purpose, resourceBookings, errorType, suggestion } = conflict;
-  
-  const formatDateFull = (dateStr: string) => {
-     const d = new Date(dateStr);
-     return `${d.getMonth()+1}月${d.getDate()}日 ${d.getHours()}:${d.getMinutes().toString().padStart(2, '0')}`;
-  };
-
-  return (
-    <div className="fixed inset-0 z-[1050] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] w-full max-w-md p-8 shadow-2xl animate-in zoom-in-95">
-         <div className="flex items-start space-x-4 mb-6">
-            <div className="w-12 h-12 rounded-2xl bg-rose-50 flex items-center justify-center text-rose-500 shrink-0">
-               <AlertTriangle size={24}/>
-            </div>
-            <div>
-               <h3 className="text-xl font-black text-gray-800">预约冲突</h3>
-               <p className="text-sm text-gray-500 mt-1 leading-relaxed">
-                 {errorType === 'PAST_TIME' ? '您选择的时间已是过去时，无法进行预约。' : `该时间段 ${resource.name} 已被占用。`}
-               </p>
-            </div>
-         </div>
-
-         {errorType === 'CONFLICT' && (
-           <div className="bg-gray-50 rounded-2xl p-4 mb-6 border border-gray-100">
-              <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest mb-3">冲突时段占用情况</p>
-              <div className="space-y-3 max-h-32 overflow-y-auto pr-1 custom-scrollbar">
-                {resourceBookings.map((b: any) => {
-                   const u = users.find((user: any) => user.id === b.userId);
-                   return (
-                     <div key={b.id} className="flex justify-between items-center text-xs">
-                        <div>
-                           <span className="font-black text-gray-700">{b.startTime.split('T')[1].slice(0,5)} - {b.endTime.split('T')[1].slice(0,5)}</span>
-                           <span className="ml-2 text-gray-500">{u?.name}</span>
-                        </div>
-                        <span className="px-1.5 py-0.5 bg-rose-100 text-rose-600 rounded font-bold">已占用</span>
-                     </div>
-                   );
-                })}
-              </div>
-           </div>
-         )}
-
-         {suggestion ? (
-           <div className={`p-5 rounded-2xl bg-${theme}-50 border border-${theme}-100 mb-8`}>
-             <div className="flex items-center space-x-2 mb-2">
-               <Lightbulb size={16} className={`text-${theme}-600`}/>
-               <span className={`text-xs font-black text-${theme}-600 uppercase`}>智能建议</span>
-             </div>
-             <p className={`text-sm font-bold text-${theme}-800`}>
-               为您找到最近的可用时段：<br/>
-               <span className="text-lg">{formatDateFull(suggestion.start.toISOString())} - {formatDateFull(suggestion.end.toISOString())}</span>
-             </p>
-           </div>
-         ) : (
-           <div className="p-4 bg-gray-100 rounded-xl text-center text-gray-500 text-sm font-bold mb-8">暂无临近可用时段建议</div>
-         )}
-
-         <div className="flex space-x-3">
-            <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold hover:bg-gray-200 transition-colors">取消</button>
-            {suggestion && (
-              <button onClick={() => onApplySuggestion(suggestion.start, suggestion.end)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl transition-all`}>
-                采用建议并预约
-              </button>
-            )}
-         </div>
-      </div>
-    </div>
-  );
-};
-
-// --- Main App ---
-
 const App: React.FC = () => {
-  // ... (keep initial state definitions as is)
   const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
-  // Data states
   const [roles, setRoles] = useState<RoleDefinition[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).roles : INITIAL_ROLES; });
   const [users, setUsers] = useState<User[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).users : INITIAL_USERS; });
   const [resources, setResources] = useState<Resource[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).resources : INITIAL_RESOURCES; });
@@ -731,7 +586,6 @@ const App: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).departments || INITIAL_DEPARTMENTS) : INITIAL_DEPARTMENTS; });
   const [workflow, setWorkflow] = useState<ApprovalNode[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).workflow || DEFAULT_WORKFLOW) : DEFAULT_WORKFLOW; });
 
-  // UI / Interaction States
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
@@ -757,15 +611,12 @@ const App: React.FC = () => {
   } | null>(null);
   const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
-  const [allExpanded, setAllExpanded] = useState(true);
   const [dayDetail, setDayDetail] = useState<any | null>(null);
   
-  // Batch/Import States
   const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | 'DEPARTMENTS' | null>(null);
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
 
-  // ... (keep useEffects and helper functions like addNotification, handleBooking, etc. as is)
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
   useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
@@ -786,7 +637,6 @@ const App: React.FC = () => {
     return { totalResources, availableRooms, availableDesks, activeBookings };
   }, [resources, bookings]);
 
-  // Filters
   const filteredResources = resources.filter(r => 
     r.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
     r.location.toLowerCase().includes(searchQuery.toLowerCase())
@@ -863,7 +713,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen flex bg-gray-50 overflow-hidden font-sans">
-      {/* Toast Notifications */}
       <div className="fixed top-6 right-6 z-[1000] space-y-3 pointer-events-none">
         {notifications.map(n => (
           <div key={n.id} className="w-80 p-4 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-100 flex items-start space-x-3 animate-in slide-in-from-right-8 fade-in pointer-events-auto">
@@ -1000,21 +849,23 @@ const App: React.FC = () => {
 
               <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
               
-              {/* Refined Monthly Usage Grid usage */}
               <MonthlyUsageGrid 
                 resources={resources} 
                 bookings={bookings} 
                 users={users} 
                 theme={theme} 
-                onDayClick={(resId, date) => { 
-                  // When clicking a day in the global view, we show all bookings for that day
-                  // We simulate a "global" resource view by passing a dummy resource object if resId is null/generic
+                onDayClick={(resId: string | null, date: Date) => { 
                   const dateStr = date.toISOString().split('T')[0];
-                  const dayBookings = bookings.filter((b: any) => 
-                    b.status === 'APPROVED' && b.startTime.startsWith(dateStr)
+                  const targetResource = resId ? resources.find(r => r.id === resId) : { name: '全公司资源概览' };
+                  
+                  const dayBookings = bookings.filter(b => 
+                    b.status === 'APPROVED' && 
+                    b.startTime.startsWith(dateStr) &&
+                    (!resId || b.resourceId === resId) 
                   );
+                  
                   setDayDetail({ 
-                    resource: { name: '全公司资源概览' }, // Generic title for the modal
+                    resource: targetResource, 
                     date, 
                     bookings: dayBookings 
                   }); 
@@ -1023,8 +874,6 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {/* ... (rest of the views: RESOURCES, USERS, APPROVAL_CENTER, BOOKINGS, WORKFLOW_CONFIG, ROLES, DEPARTMENTS, DATA_CENTER) ... */}
-          {/* ... (Keep existing implementation for these views) ... */}
           {view === 'RESOURCES' && (
             <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-end mb-6">
@@ -1398,5 +1247,179 @@ const App: React.FC = () => {
     </div>
   );
 };
+
+// --- Additional Component Implementations ---
+
+/** UI to handle booking conflicts with AI-suggested alternatives */
+const BookingConflictModal = ({ conflict, users, theme, onClose, onApplySuggestion }: any) => {
+  const [showDetails, setShowDetails] = useState(false);
+  const isPastTime = conflict.errorType === 'PAST_TIME';
+  
+  return (
+    <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in overflow-hidden relative border-4 border-rose-100">
+        <div className="text-center mb-8">
+           <div className={`w-20 h-20 bg-rose-50 ${isPastTime ? 'text-amber-500' : 'text-rose-500'} rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50`}>
+             <AlertTriangle size={40} />
+           </div>
+           <h3 className="text-3xl font-black text-gray-800 mb-2">
+             {isPastTime ? '无法预约过去的时间' : '预约时段冲突'}
+           </h3>
+           <p className="text-gray-400 font-medium leading-relaxed px-4">
+             {isPastTime 
+               ? '您选择的开始时间早于当前时刻，系统无法处理该请求。' 
+               : `资源 ${conflict.resource.name} 在您申请的时段已被占用。`}
+           </p>
+        </div>
+
+        {/* Suggestion Box */}
+        <div className={`p-6 bg-${theme}-50 border-2 border-${theme}-100 rounded-[2.5rem] mb-8 relative overflow-hidden group`}>
+           <div className="flex items-center justify-between mb-4">
+              <h5 className={`text-[11px] font-black text-${theme}-600 uppercase tracking-widest flex items-center space-x-2`}>
+                <Lightbulb size={16} className="animate-bounce" /> <span>智能预订建议</span>
+              </h5>
+              <span className={`text-[10px] font-bold text-${theme}-400`}>为您匹配到最近空档</span>
+           </div>
+           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-black text-gray-800 leading-tight">
+                  {formatDate(conflict.suggestion.start) === formatDate(new Date()) ? '今日' : '明日'} {formatTime(conflict.suggestion.start)} - {formatTime(conflict.suggestion.end)}
+                </p>
+                <p className="text-[10px] text-gray-400 font-bold mt-1 uppercase tracking-tighter">
+                   {conflict.resource.name} · {conflict.resource.location}
+                </p>
+              </div>
+              <button 
+                onClick={() => onApplySuggestion(conflict.suggestion.start, conflict.suggestion.end)}
+                className={`px-6 py-3 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg hover:scale-105 transition-all text-xs flex items-center space-x-2 cursor-pointer z-50 relative`}
+              >
+                <Check size={14}/> <span>采用此建议</span>
+              </button>
+           </div>
+           <Zap className={`absolute -right-4 -bottom-4 text-${theme}-600/5 group-hover:scale-110 transition-transform`} size={120}/>
+        </div>
+
+        {/* Conflicting Request Info */}
+        {!isPastTime && (
+          <div className="mb-8">
+            <button 
+              onClick={() => setShowDetails(!showDetails)}
+              className="w-full py-4 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 rounded-2xl flex items-center justify-center space-x-2 transition-all font-bold text-sm"
+            >
+              <Eye size={18}/> <span>{showDetails ? '隐藏冲突详情' : '查看具体冲突项'}</span>
+            </button>
+            
+            {showDetails && (
+              <div className="mt-4 p-4 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-3 max-h-48 overflow-y-auto custom-scrollbar animate-in slide-in-from-top-2">
+                {conflict.resourceBookings.filter((b: Booking) => {
+                   const bStart = new Date(b.startTime);
+                   const bEnd = new Date(b.endTime);
+                   const rStart = new Date(conflict.requestedStart);
+                   const rEnd = new Date(conflict.requestedEnd);
+                   return (rStart < bEnd && rEnd > bStart);
+                }).map((b: Booking) => {
+                  const user = users.find((u: User) => u.id === b.userId);
+                  return (
+                    <div key={b.id} className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex justify-between items-start">
+                      <div>
+                        <p className="text-xs font-black text-gray-700">{user?.name} · {user?.department}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">用途: {b.purpose}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] font-black text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded mb-1 inline-block">占用中</span>
+                        <p className="text-[10px] font-bold text-gray-500">{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        <div className="flex space-x-4">
+          <button onClick={onClose} className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all cursor-pointer">取消预订</button>
+          <button onClick={onClose} className={`flex-1 py-5 bg-${theme}-600/10 text-${theme}-600 font-black rounded-3xl border border-${theme}-200 transition-all cursor-pointer`}>手动调整时间</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const DetailViewModal = ({ viewDetail, theme, roles, users, bookings, onClose }: any) => (
+  <div className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4 overflow-y-auto">
+    <div className="bg-white rounded-[3rem] w-full max-w-4xl p-10 shadow-2xl animate-in zoom-in relative my-8">
+      <button onClick={onClose} className="absolute top-8 right-8 p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500 transition-all"><X size={20}/></button>
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
+        <div className="lg:col-span-5 space-y-10">
+          <div className="flex items-center space-x-6">
+            <div className={`w-20 h-20 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 shadow-sm border border-${theme}-100`}>
+              {viewDetail.type === 'USER' ? <UserCircle size={40}/> : <MapPin size={40}/>}
+            </div>
+            <div className="text-left">
+              <h2 className="text-3xl font-black text-gray-800 tracking-tight">{viewDetail.data.name}</h2>
+              <p className="text-gray-400 font-bold mt-1 uppercase text-xs tracking-widest">{viewDetail.type === 'USER' ? viewDetail.data.department : viewDetail.data.location}</p>
+            </div>
+          </div>
+          <div className="grid grid-cols-1 gap-6 text-left">
+            {viewDetail.type === 'USER' ? (
+              <>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">邮箱地址</p><p className="font-bold text-gray-700">{viewDetail.data.email}</p></div>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">手机号码</p><p className="font-bold text-gray-700">{viewDetail.data.mobile || '--'}</p></div>
+                <div className="space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">所属角色</p><div className="flex flex-wrap gap-1">{viewDetail.data.role.map((r: string) => <RoleTag key={r} roleId={r} roles={roles} theme={theme}/>)}</div></div>
+              </>
+            ) : (
+              <>
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">资源类型</p><p className="font-bold text-gray-700">{viewDetail.data.type === 'ROOM' ? '会议室' : '独立工位'}</p></div>
+                  <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">额定人数</p><p className="font-bold text-gray-700">{viewDetail.data.capacity} 人</p></div>
+                </div>
+                <div className="space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">内置设施</p><div className="flex flex-wrap gap-2">{viewDetail.data.features.map((f: string) => <span key={f} className="px-3 py-1 bg-gray-50 border border-gray-100 rounded-lg text-[10px] font-bold text-gray-500 shadow-sm">{f}</span>)}</div></div>
+              </>
+            )}
+          </div>
+          <button onClick={onClose} className={`w-full py-4 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-2xl transition-all`}>关闭详情窗口</button>
+        </div>
+        {viewDetail.type === 'RESOURCE' && (
+          <div className="lg:col-span-7 space-y-6">
+            <div className="bg-gray-50/50 rounded-[2.5rem] p-8 border border-gray-100 shadow-inner">
+              <div className="flex items-center justify-between mb-8">
+                 <h4 className="font-black text-gray-800 flex items-center space-x-2">
+                   <History className={`text-${theme}-600`} size={18}/>
+                   <span>实时排期分布</span>
+                 </h4>
+                 <div className="flex items-center space-x-2 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                    <Activity size={12} className="text-emerald-500 animate-pulse"/>
+                    <span className="text-[10px] font-bold text-gray-500 uppercase">实时更新</span>
+                 </div>
+              </div>
+              <div className="space-y-6 overflow-y-auto custom-scrollbar max-h-[400px] pr-2">
+                 {bookings.filter(b => b.resourceId === viewDetail.data.id && b.startTime.startsWith(new Date().toISOString().split('T')[0]) && (b.status === 'APPROVED' || b.status === 'PENDING')).length === 0 ? (
+                    <div className="p-10 bg-white rounded-3xl border border-dashed border-gray-200 text-center text-gray-300 font-bold text-xs italic">今日暂无预约</div>
+                 ) : (
+                    bookings.filter(b => b.resourceId === viewDetail.data.id && b.startTime.startsWith(new Date().toISOString().split('T')[0])).map(b => (
+                      <div key={b.id} className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex justify-between items-center group hover:border-indigo-100 transition-all">
+                        <div className="flex items-center space-x-3">
+                           <div className={`w-8 h-8 rounded-full bg-${theme}-50 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{users.find(u => u.id === b.userId)?.name[0]}</div>
+                           <div>
+                              <p className="text-xs font-black text-gray-800">{users.find(u => u.id === b.userId)?.name} · {users.find(u => u.id === b.userId)?.department}</p>
+                              <p className="text-[10px] text-gray-400 font-medium">用途: {b.purpose}</p>
+                           </div>
+                        </div>
+                        <div className="text-right">
+                           <p className="text-[11px] font-black text-gray-700">{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</p>
+                           <StatusBadge status={b.status} theme={theme} />
+                        </div>
+                      </div>
+                    ))
+                 )}
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  </div>
+);
 
 export default App;
