@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
   Cpu, Monitor, Coffee, Edit2, Trash2, UserPlus, RefreshCw,
@@ -7,7 +7,7 @@ import {
   Layers, Zap, ShieldCheck, Check, X, FileText, Building2, Palette, 
   PieChart, Activity, ChevronLeft, Sparkles, SendHorizontal, BellRing, 
   History, Timer, Briefcase, Shield, FolderTree, ArrowRightCircle,
-  Settings2, MoveUp, MoveDown, UserCircle, AlertTriangle
+  Settings2, MoveUp, MoveDown, UserCircle, AlertTriangle, Download, Upload, Database
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalRecord, Notification, Department, RoleDefinition } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -48,36 +48,101 @@ const SidebarItem = ({ icon: Icon, label, id, active, onClick, theme, badge }: a
   </button>
 );
 
-// --- 审批流可视化组件 ---
+// --- 今日实时看板组件 ---
 
-const WorkflowStepper = ({ booking, workflow, users, theme }: { booking: Booking, workflow: ApprovalNode[], users: User[], theme: string }) => {
+const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: Resource[], bookings: Booking[], users: User[], theme: string }) => {
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+  const startHour = 8;
+  const endHour = 20;
+  const totalHours = endHour - startHour;
+
+  const getTodayBookings = (resourceId: string) => {
+    return bookings.filter(b => {
+      if (b.resourceId !== resourceId || !['APPROVED', 'PENDING'].includes(b.status)) return false;
+      return b.startTime.startsWith(todayStr) || b.endTime.startsWith(todayStr);
+    });
+  };
+
+  const calculatePosition = (timeStr: string) => {
+    const date = new Date(timeStr);
+    const hour = date.getHours() + date.getMinutes() / 60;
+    const pos = ((hour - startHour) / totalHours) * 100;
+    return Math.max(0, Math.min(100, pos));
+  };
+
   return (
-    <div className="flex items-start justify-between relative pt-4 pb-8">
-      <div className="absolute top-[34px] left-0 right-0 h-0.5 bg-gray-100 z-0" />
-      <div 
-        className={`absolute top-[34px] left-0 h-0.5 bg-${theme}-500 transition-all duration-500 z-0`} 
-        style={{ width: booking.status === 'REJECTED' ? '0%' : booking.status === 'APPROVED' ? '100%' : workflow.length > 0 ? `${(booking.currentNodeIndex / workflow.length) * 100}%` : '0%' }}
-      />
-      {workflow.map((node, index) => {
-        const isCompleted = index < booking.currentNodeIndex || booking.status === 'APPROVED';
-        const isActive = index === booking.currentNodeIndex && booking.status === 'PENDING';
-        const isRejected = booking.status === 'REJECTED' && index === booking.currentNodeIndex;
-        const approverNames = users.filter(u => u.role.includes(node.approverRole)).map(u => u.name).join(', ');
-        return (
-          <div key={node.id} className="relative z-10 flex flex-col items-center flex-1">
-            <div className={`w-10 h-10 rounded-full flex items-center justify-center border-4 border-white shadow-md transition-all ${
-              isCompleted ? `bg-${theme}-600 text-white` : isRejected ? 'bg-rose-500 text-white' : isActive ? 'bg-white border-amber-400 text-amber-500 animate-pulse' : 'bg-white text-gray-300'
-            }`}>
-              {isCompleted ? <Check size={18} /> : isRejected ? <X size={18} /> : isActive ? <Clock size={18} /> : <span>{index + 1}</span>}
+    <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm">
+      <div className="flex justify-between items-center mb-8">
+        <h4 className="font-black flex items-center space-x-2 text-lg">
+          <Timer className={`text-${theme}-600`} size={20}/> 
+          <span>今日实时动态 (08:00 - 20:00)</span>
+        </h4>
+        <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-400">
+           <div className="flex items-center space-x-1"><div className={`w-2 h-2 rounded-full bg-${theme}-500`}></div><span>已核准</span></div>
+           <div className="flex items-center space-x-1"><div className="w-2 h-2 rounded-full bg-amber-400"></div><span>审批中</span></div>
+        </div>
+      </div>
+
+      <div className="space-y-6">
+        {resources.map(res => {
+          const todayBookings = getTodayBookings(res.id);
+          const isCurrentlyOccupied = todayBookings.some(b => {
+            const start = new Date(b.startTime).getTime();
+            const end = new Date(b.endTime).getTime();
+            const currentTime = now.getTime();
+            return b.status === 'APPROVED' && currentTime >= start && currentTime <= end;
+          });
+
+          return (
+            <div key={res.id} className="group">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-3">
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${res.type === 'ROOM' ? 'bg-indigo-50 text-indigo-500' : 'bg-emerald-50 text-emerald-500'}`}>
+                    {res.type === 'ROOM' ? <Monitor size={14}/> : <Coffee size={14}/>}
+                  </div>
+                  <span className="text-xs font-black text-gray-700">{res.name}</span>
+                  {isCurrentlyOccupied && <span className="flex h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>}
+                </div>
+                <span className="text-[10px] font-bold text-gray-300 italic">{res.location}</span>
+              </div>
+              <div className="relative h-6 bg-gray-50 rounded-xl overflow-hidden border border-gray-100/50">
+                {/* 时间轴刻度线 */}
+                {Array.from({ length: totalHours + 1 }).map((_, i) => (
+                  <div key={i} className="absolute top-0 bottom-0 w-px bg-gray-200/40" style={{ left: `${(i / totalHours) * 100}%` }} />
+                ))}
+                
+                {/* 预订区块 */}
+                {todayBookings.map(b => {
+                  const left = calculatePosition(b.startTime);
+                  const right = calculatePosition(b.endTime);
+                  const user = users.find(u => u.id === b.userId);
+                  return (
+                    <div 
+                      key={b.id}
+                      className={`absolute top-1 bottom-1 rounded-md shadow-sm transition-all cursor-help z-10 ${b.status === 'APPROVED' ? `bg-${theme}-500 hover:bg-${theme}-600` : 'bg-amber-400 hover:bg-amber-500'}`}
+                      style={{ left: `${left}%`, width: `${right - left}%`, minWidth: '4px' }}
+                    >
+                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-900 text-white p-4 rounded-xl text-[10px] invisible group-hover:visible z-30 shadow-2xl pointer-events-none transition-all">
+                        <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
+                           <span className="font-black text-indigo-300">{user?.name || '未知用户'}</span>
+                           <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-bold">{user?.department || '暂无部门'}</span>
+                        </div>
+                        <p className="opacity-80 leading-relaxed mb-1"><span className="text-gray-400">用途:</span> {b.purpose}</p>
+                        <div className="flex items-center space-x-1 text-gray-400 text-[9px]">
+                           <Clock size={10}/>
+                           <span>{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</span>
+                        </div>
+                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"/>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
-            <div className="mt-3 text-center">
-              <p className={`text-[11px] font-bold ${isActive ? 'text-amber-600' : isCompleted ? 'text-gray-800' : 'text-gray-400'}`}>{node.name}</p>
-              <p className="text-[9px] text-gray-400 font-bold truncate max-w-[80px] mt-0.5">{approverNames || '待定'}</p>
-            </div>
-          </div>
-        );
-      })}
-      {workflow.length === 0 && <div className="w-full text-center py-4 text-xs text-gray-400 italic">未配置审批流程</div>}
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -99,7 +164,6 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
     const dayStr = day.toString().padStart(2, '0');
     const datePrefix = `${year}-${month}-${dayStr}`;
     
-    // 检查是否有预订覆盖该日期
     const booking = bookings.find(b => {
       if (b.resourceId !== resourceId || !['APPROVED', 'PENDING'].includes(b.status)) return false;
       const bStart = b.startTime.split('T')[0];
@@ -189,7 +253,7 @@ const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Re
 // --- 主程序 ---
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG'>('DASHBOARD');
+  const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
@@ -231,6 +295,9 @@ const App: React.FC = () => {
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [editingWorkflowNode, setEditingWorkflowNode] = useState<ApprovalNode | null>(null);
+  
+  // 冲突提示状态
+  const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, conflictingBooking: Booking, user: User } | null>(null);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow }));
@@ -245,12 +312,48 @@ const App: React.FC = () => {
   };
   const pendingApprovalsCount = bookings.filter(b => canApprove(b)).length;
 
+  // 数据导出
+  const exportData = () => {
+    const data = { roles, users, resources, bookings, departments, workflow };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `SmartOffice_Backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  // 数据导入
+  const importData = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const data = JSON.parse(event.target?.result as string);
+        if (data.users && data.resources && data.bookings) {
+          setRoles(data.roles || INITIAL_ROLES);
+          setUsers(data.users);
+          setResources(data.resources);
+          setBookings(data.bookings);
+          setDepartments(data.departments || INITIAL_DEPARTMENTS);
+          setWorkflow(data.workflow || DEFAULT_WORKFLOW);
+          alert('数据恢复成功！');
+          window.location.reload();
+        }
+      } catch (err) {
+        alert('导入失败：文件格式不正确。');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   // 处理函数
   const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string) => {
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
 
-    // --- 预订冲突检测逻辑 ---
     const newStart = new Date(startTime).getTime();
     const newEnd = new Date(endTime).getTime();
 
@@ -259,19 +362,18 @@ const App: React.FC = () => {
       return;
     }
 
-    const hasConflict = bookings.some(b => {
-      // 仅检查同一资源且状态为已通过或审批中的预订
+    const conflictingBooking = bookings.find(b => {
       if (b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING')) {
         const existStart = new Date(b.startTime).getTime();
         const existEnd = new Date(b.endTime).getTime();
-        // 时间重叠判定: (StartA < EndB) 且 (EndA > StartB)
         return newStart < existEnd && newEnd > existStart;
       }
       return false;
     });
 
-    if (hasConflict) {
-      alert(`抱歉，${resource.name} 在所选时间段内已被预订或正在审批中，请尝试其他时段。`);
+    if (conflictingBooking) {
+      const conflictingUser = users.find(u => u.id === conflictingBooking.userId) || { name: '未知用户', department: '暂无部门' } as User;
+      setBookingConflict({ resource, conflictingBooking, user: conflictingUser });
       return;
     }
 
@@ -410,6 +512,7 @@ const App: React.FC = () => {
               <SidebarItem icon={Building2} label="部门管理" id="DEPARTMENTS" active={view === 'DEPARTMENTS'} onClick={setView} theme={theme} />
               <SidebarItem icon={Shield} label="角色管理" id="ROLES" active={view === 'ROLES'} onClick={setView} theme={theme} />
               <SidebarItem icon={Users} label="成员中心" id="USERS" active={view === 'USERS'} onClick={setView} theme={theme} />
+              <SidebarItem icon={Database} label="数据中心" id="DATA_CENTER" active={view === 'DATA_CENTER'} onClick={setView} theme={theme} />
             </>
           )}
         </nav>
@@ -433,6 +536,7 @@ const App: React.FC = () => {
             {view === 'APPROVAL_CENTER' && '审批工作台'}
             {view === 'ROLES' && '角色管理'}
             {view === 'DEPARTMENTS' && '部门管理'}
+            {view === 'DATA_CENTER' && '数据持久化中心'}
           </h2>
         </header>
 
@@ -464,74 +568,84 @@ const App: React.FC = () => {
                 ))}
               </div>
 
-              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
+              <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
 
-              <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm">
-                 <div className="flex justify-between items-center mb-10">
-                   <h4 className="font-bold flex items-center space-x-2 text-lg">
-                     <Clock className={`text-${theme}-600`} size={20}/> 
-                     <span>今日资源预订动态</span>
-                   </h4>
-                 </div>
-                 <div className="relative ml-4 border-l-2 border-dashed border-gray-100 pl-10 space-y-8 max-h-[500px] overflow-y-auto custom-scrollbar pr-4">
-                    {bookings.filter(b => {
-                      const today = new Date().toISOString().split('T')[0];
-                      const bStart = b.startTime.split('T')[0];
-                      const bEnd = b.endTime.split('T')[0];
-                      return today >= bStart && today <= bEnd;
-                    }).length > 0 ? (
-                      bookings.filter(b => {
-                        const today = new Date().toISOString().split('T')[0];
-                        const bStart = b.startTime.split('T')[0];
-                        const bEnd = b.endTime.split('T')[0];
-                        return today >= bStart && today <= bEnd;
-                      }).map(b => {
-                        const user = users.find(u => u.id === b.userId);
-                        const resource = resources.find(r => r.id === b.resourceId);
-                        return (
-                          <div key={b.id} className="relative group">
-                            <div className={`absolute -left-[49px] top-1.5 w-6 h-6 rounded-full border-4 border-white shadow-md z-10 flex items-center justify-center transition-all ${b.status === 'APPROVED' ? `bg-${theme}-600 text-white` : 'bg-amber-400 text-white'}`}>{b.status === 'APPROVED' ? <Check size={12}/> : <Clock size={12}/>}</div>
-                            <div className="bg-gray-50/50 p-6 rounded-[2rem] border border-transparent hover:border-indigo-100 hover:bg-white hover:shadow-xl transition-all duration-300">
-                               <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                                  <div className="flex items-center space-x-4">
-                                     <div className="text-center min-w-[60px]">
-                                       <p className="text-lg font-black text-gray-800 leading-none">{new Date(b.startTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
-                                       <p className="text-[10px] text-gray-400 mt-1 uppercase">START</p>
-                                     </div>
-                                     <div className={`h-10 w-1 bg-${theme}-100 rounded-full opacity-50`}/>
-                                     <div>
-                                       <h5 className="font-bold text-sm text-gray-800">{b.purpose}</h5>
-                                       <div className="flex items-center space-x-2 mt-1">
-                                         <span className="px-2 py-0.5 rounded-md bg-gray-100 text-[9px] font-black text-gray-500 uppercase">{resource?.name}</span>
-                                       </div>
-                                     </div>
-                                  </div>
-                                  <div className="flex items-center space-x-3 bg-white p-3 rounded-2xl border border-gray-100 shadow-sm self-start md:self-center">
-                                     <div className={`w-8 h-8 rounded-full bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><UserCircle size={18}/></div>
-                                     <div className="min-w-0">
-                                       <p className="text-xs font-bold text-gray-800 truncate">{user?.name || '未知用户'}</p>
-                                       <p className="text-[9px] text-gray-400 font-bold truncate uppercase">{user?.department || '未分配部门'}</p>
-                                     </div>
-                                  </div>
-                                  <StatusBadge status={b.status} theme={theme} />
-                               </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    ) : (
-                      <div className="py-20 text-center">
-                        <Calendar size={48} className="text-gray-100 mx-auto mb-4"/>
-                        <p className="text-gray-300 font-bold italic">今日暂无空间占用记录</p>
-                      </div>
-                    )}
-                 </div>
+              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
+            </div>
+          )}
+
+          {view === 'DATA_CENTER' && (
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
+              <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-xl overflow-hidden relative">
+                <div className={`absolute top-0 right-0 p-12 text-${theme}-600/5`}><Database size={120}/></div>
+                <div className="relative z-10">
+                  <h3 className="text-3xl font-black mb-2">数据备份与迁移</h3>
+                  <p className="text-gray-400 text-sm mb-10 max-w-lg">本地部署版本将数据存储于浏览器。为了防止意外丢失或在多台设备间同步，请定期导出数据备份文件。</p>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="bg-gray-50 p-8 rounded-[2rem] border border-gray-100 space-y-4">
+                      <div className={`w-12 h-12 rounded-2xl bg-${theme}-600 text-white flex items-center justify-center shadow-lg`}><Download size={24}/></div>
+                      <h5 className="font-black text-lg">导出本地数据</h5>
+                      <p className="text-xs text-gray-400 leading-relaxed font-medium">将当前系统中的资源、成员、流程及所有预订记录打包为 `.json` 文件并下载到您的磁盘。</p>
+                      <button onClick={exportData} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all`}>立即导出备份</button>
+                    </div>
+
+                    <div className="bg-gray-50 p-8 rounded-[2rem] border border-gray-100 space-y-4 relative">
+                      <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg"><Upload size={24}/></div>
+                      <h5 className="font-black text-lg">恢复数据快照</h5>
+                      <p className="text-xs text-gray-400 leading-relaxed font-medium">通过选择之前导出的备份文件，一键恢复系统状态。注意：此操作将覆盖当前所有本地数据。</p>
+                      <label className="block w-full cursor-pointer">
+                        <input type="file" accept=".json" onChange={importData} className="hidden" />
+                        <div className="w-full py-4 bg-white border-2 border-dashed border-emerald-200 text-emerald-600 font-black rounded-2xl text-center hover:bg-emerald-50 transition-all">上传备份文件</div>
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-8 bg-amber-50 rounded-[2.5rem] border border-amber-100 flex items-start space-x-4">
+                <div className="p-3 bg-white rounded-2xl shadow-sm text-amber-500"><AlertTriangle size={20}/></div>
+                <div>
+                  <h6 className="font-black text-amber-800 text-sm">重要安全提示</h6>
+                  <p className="text-xs text-amber-700/70 mt-1 leading-relaxed">备份文件包含公司成员的邮箱、部门等敏感信息，请妥善保管导出的 JSON 文件，不要通过非加密途径传播。</p>
+                </div>
               </div>
             </div>
           )}
 
-          {view === 'WORKFLOW_CONFIG' && (
-            <div className="space-y-8 animate-in fade-in">
+          {view === 'RESOURCES' && (
+             <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-center mb-8">
+                <div><h3 className="text-2xl font-black">空间资源库</h3><p className="text-sm text-gray-400 mt-1">管理维护所有会议空间与工位资产。</p></div>
+                {currentUser.role.includes('SYSTEM_ADMIN') && (
+                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 transition-all active:scale-95`}><Plus size={20}/> <span>录入资产</span></button>
+                )}
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                {resources.map(r => (
+                  <div key={r.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:border-indigo-100 transition-all group relative">
+                    <div className={`w-14 h-14 rounded-2xl bg-${theme}-50 flex items-center justify-center mb-6`}>{r.type === 'ROOM' ? <Monitor className={`text-${theme}-600`} /> : <Coffee className="text-emerald-600" />}</div>
+                    <div className="absolute top-8 right-8 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                      {currentUser.role.includes('SYSTEM_ADMIN') && (
+                        <>
+                          <button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={14}/></button>
+                          <button onClick={() => setResources(resources.filter(res => res.id !== r.id))} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
+                        </>
+                      )}
+                    </div>
+                    <h5 className="text-lg font-bold mb-1">{r.name}</h5>
+                    <p className="text-xs text-gray-400 mb-6 flex items-center space-x-1"><MapPin size={10}/> <span>{r.location} · {r.capacity}人</span></p>
+                    <div className="flex justify-between items-center pt-6 border-t border-gray-50">
+                       <StatusBadge status={r.status} theme={theme} />
+                       <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`text-xs font-bold text-${theme}-600 hover:underline transition-all`}>立即预约</button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {view === 'WORKFLOW_CONFIG' && <div className="space-y-8 animate-in fade-in">
               <div className="flex justify-between items-center">
                 <div>
                   <h3 className="text-2xl font-black">审批流程引擎</h3>
@@ -569,18 +683,10 @@ const App: React.FC = () => {
                     </div>
                   </div>
                 ))}
-                {workflow.length === 0 && (
-                  <div className="py-24 text-center bg-white rounded-[2.5rem] border-2 border-dashed border-gray-100">
-                    <Settings2 size={48} className="text-gray-100 mx-auto mb-4"/>
-                    <p className="text-gray-400 font-bold italic">尚未配置流程环节，提交申请将自动通过</p>
-                  </div>
-                )}
               </div>
-            </div>
-          )}
+            </div>}
 
-          {view === 'ROLES' && (
-            <div className="space-y-6 animate-in fade-in">
+          {view === 'ROLES' && <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-center mb-8">
                 <div><h3 className="text-2xl font-black">角色管理</h3><p className="text-sm text-gray-400 mt-1">自定义系统角色，配置其描述与视觉标识色。</p></div>
                 <button onClick={() => { setEditingRole(null); setShowRoleModal(true); }} className={`flex items-center space-x-2 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg transition-all active:scale-95`}><Plus size={20}/> <span>定义新角色</span></button>
@@ -602,69 +708,29 @@ const App: React.FC = () => {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            </div>}
 
-          {view === 'DEPARTMENTS' && (
-            <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
+          {view === 'DEPARTMENTS' && <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
               <div className="flex justify-between items-center mb-8">
                 <div><h3 className="text-2xl font-black">部门管理</h3><p className="text-sm text-gray-400 mt-1">管理维护企业的组织架构与各级职能部门。</p></div>
                 <button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新部门' }])} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg transition-all active:scale-95`}><Plus size={20}/> <span>创建一级部门</span></button>
               </div>
               <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm min-h-[400px]">
-                {departments.filter(d => !d.parentId).length > 0 ? (
-                  departments.filter(d => !d.parentId).map(root => (
-                    <DepartmentTreeNode 
-                      key={root.id} 
-                      department={root} 
-                      departments={departments} 
-                      onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新子部门', parentId: pid }])} 
-                      onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} 
-                      onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} 
-                      theme={theme} 
-                    />
-                  ))
-                ) : (
-                   <div className="py-20 text-center text-gray-300 italic">暂未定义任何部门</div>
-                )}
-              </div>
-            </div>
-          )}
-
-          {view === 'RESOURCES' && (
-             <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-8">
-                <div><h3 className="text-2xl font-black">空间资源库</h3><p className="text-sm text-gray-400 mt-1">管理维护所有会议空间与工位资产。</p></div>
-                {currentUser.role.includes('SYSTEM_ADMIN') && (
-                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 transition-all active:scale-95`}><Plus size={20}/> <span>录入资产</span></button>
-                )}
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {resources.map(r => (
-                  <div key={r.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:border-indigo-100 transition-all group relative">
-                    <div className={`w-14 h-14 rounded-2xl bg-${theme}-50 flex items-center justify-center mb-6`}>{r.type === 'ROOM' ? <Monitor className={`text-${theme}-600`} /> : <Coffee className="text-emerald-600" />}</div>
-                    <div className="absolute top-8 right-8 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {currentUser.role.includes('SYSTEM_ADMIN') && (
-                        <>
-                          <button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={14}/></button>
-                          <button onClick={() => setResources(resources.filter(res => res.id !== r.id))} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
-                        </>
-                      )}
-                    </div>
-                    <h5 className="text-lg font-bold mb-1">{r.name}</h5>
-                    <p className="text-xs text-gray-400 mb-6 flex items-center space-x-1"><MapPin size={10}/> <span>{r.location} · {r.capacity}人</span></p>
-                    <div className="flex justify-between items-center pt-6 border-t border-gray-50">
-                       <StatusBadge status={r.status} theme={theme} />
-                       <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`text-xs font-bold text-${theme}-600 hover:underline transition-all`}>立即预约</button>
-                    </div>
-                  </div>
+                {departments.filter(d => !d.parentId).map(root => (
+                  <DepartmentTreeNode 
+                    key={root.id} 
+                    department={root} 
+                    departments={departments} 
+                    onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新子部门', parentId: pid }])} 
+                    onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} 
+                    onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} 
+                    theme={theme} 
+                  />
                 ))}
               </div>
-            </div>
-          )}
+            </div>}
 
-          {view === 'USERS' && (
-            <div className="space-y-6 animate-in fade-in">
+          {view === 'USERS' && <div className="space-y-6 animate-in fade-in">
               <div className="flex justify-between items-center mb-8">
                 <div><h3 className="text-2xl font-black">成员中心</h3><p className="text-sm text-gray-400 mt-1">管理企业员工资料、部门隶属及系统角色权限。</p></div>
                 <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 active:scale-95 transition-all`}><UserPlus size={20}/> <span>录入成员</span></button>
@@ -687,11 +753,9 @@ const App: React.FC = () => {
                   </div>
                 ))}
               </div>
-            </div>
-          )}
+            </div>}
 
-          {view === 'APPROVAL_CENTER' && (
-            <div className="space-y-6 animate-in fade-in">
+          {view === 'APPROVAL_CENTER' && <div className="space-y-6 animate-in fade-in">
               <div className="mb-8">
                 <h3 className="text-2xl font-black">审批工作台</h3>
                 <p className="text-sm text-gray-400 mt-1">作为流程负责人，您需要对以下申请进行合规性核准。</p>
@@ -704,24 +768,14 @@ const App: React.FC = () => {
                         <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={18}/></div>
                         <h5 className="text-lg font-bold">{b.purpose}</h5>
                       </div>
-                      <div className="flex items-center space-x-6 text-[11px] font-bold text-gray-500">
-                         <span className="flex items-center space-x-1"><Users size={12}/> <span>{users.find(u => u.id === b.userId)?.name} ({users.find(u => u.id === b.userId)?.department})</span></span>
-                         <span className="flex items-center space-x-1"><Monitor size={12}/> <span>{resources.find(r => r.id === b.resourceId)?.name}</span></span>
-                         <span className="flex items-center space-x-1"><Calendar size={12}/> <span>{new Date(b.startTime).toLocaleString()}</span></span>
-                      </div>
                     </div>
                     <button onClick={() => setShowApprovalActionModal(b)} className={`mt-4 md:mt-0 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg hover:shadow-indigo-200 transition-all active:scale-95 flex items-center space-x-2`}><ShieldCheck size={18}/> <span>处理核准单</span></button>
                   </div>
                 ))}
-                {bookings.filter(b => canApprove(b)).length === 0 && (
-                  <div className="py-32 text-center bg-white rounded-[2.5rem] border-2 border-dashed border-gray-100"><CheckCircle size={48} className="text-emerald-500 mx-auto mb-4 opacity-30"/><p className="text-gray-400 font-bold italic">目前暂无待处理的审批事项</p></div>
-                )}
               </div>
-            </div>
-          )}
+            </div>}
 
-          {view === 'BOOKINGS' && (
-            <div className="space-y-8 animate-in fade-in">
+          {view === 'BOOKINGS' && <div className="space-y-8 animate-in fade-in">
               {bookings.filter(b => b.userId === currentUser.id).map(b => (
                 <div key={b.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm p-8 space-y-6">
                   <div className="flex items-start justify-between">
@@ -729,18 +783,52 @@ const App: React.FC = () => {
                         <h4 className="text-xl font-black">{b.purpose}</h4>
                         <div className="flex items-center space-x-3"><StatusBadge status={b.status} theme={theme} /><p className="text-xs text-gray-400 font-bold uppercase tracking-tighter">单据标识: {b.id}</p></div>
                      </div>
-                     {b.status === 'PENDING' && <button onClick={() => setBookings(bookings.map(book => book.id === b.id ? {...book, status: 'CANCELLED'} : book))} className="text-xs font-bold text-rose-500 bg-rose-50 px-4 py-2 rounded-xl hover:bg-rose-100 transition-colors">终止流程</button>}
                   </div>
                   <div className="bg-gray-50/50 p-6 rounded-3xl border border-gray-100"><WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} /></div>
                 </div>
               ))}
-              {bookings.filter(b => b.userId === currentUser.id).length === 0 && (
-                <div className="py-32 text-center bg-white rounded-[2.5rem] border border-gray-100 shadow-sm"><FileText size={48} className="text-gray-200 mx-auto mb-4"/><p className="text-gray-400 font-bold italic">暂无历史申请记录</p></div>
-              )}
-            </div>
-          )}
+            </div>}
         </div>
       </main>
+
+      {/* 冲突提示模态框 */}
+      {bookingConflict && (
+        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-md flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in">
+            <div className="flex justify-center mb-6">
+               <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center border-4 border-rose-100">
+                  <AlertTriangle size={32} />
+               </div>
+            </div>
+            <h3 className="text-2xl font-black text-center mb-2">预约冲突提醒</h3>
+            <p className="text-gray-400 text-center text-sm mb-8">抱歉，您选择的时间段与现有预约存在冲突，请调整申请计划。</p>
+            
+            <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100 mb-8 space-y-4">
+               <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">冲突资源</span>
+                  <span className={`text-sm font-bold text-${theme}-600`}>{bookingConflict.resource.name}</span>
+               </div>
+               <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">占用人员</span>
+                  <div className="flex items-center space-x-2">
+                     <span className="text-sm font-bold text-gray-800">{bookingConflict.user.name}</span>
+                     <span className="px-1.5 py-0.5 rounded bg-gray-200 text-[8px] font-bold text-gray-500">{bookingConflict.user.department}</span>
+                  </div>
+               </div>
+               <div className="flex items-center justify-between">
+                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">冲突时段</span>
+                  <span className="text-sm font-bold text-rose-500">
+                     {bookingConflict.conflictingBooking.startTime.split('T')[1].slice(0, 5)} - {bookingConflict.conflictingBooking.endTime.split('T')[1].slice(0, 5)}
+                  </span>
+               </div>
+            </div>
+
+            <button onClick={() => setBookingConflict(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all`}>
+               返回修改
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 模态框管理 */}
       {showRoleModal && (
@@ -782,6 +870,7 @@ const App: React.FC = () => {
       )}
 
       {showUserModal && <UserModal user={editingUser} departments={departments} roles={roles} onClose={() => setShowUserModal(false)} onSave={handleSaveUser} theme={theme} />}
+      
       {showResourceModal && (
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
@@ -794,7 +883,7 @@ const App: React.FC = () => {
               </div>
               <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">物理空间位置</label><input value={editingResource?.location || ''} onChange={e => setEditingResource(prev => ({ ...prev!, location: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="例如：北塔 22F" /></div>
             </div>
-            <div className="mt-10 flex space-x-4"><button onClick={() => setShowResourceModal(false)} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => handleSaveResource(editingResource || {})} className={`flex-1 py-4 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
+            <div className="mt-10 flex space-x-4"><button onClick={() => setShowResourceModal(false)} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => handleSaveResource(editingResource || {})} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
           </div>
         </div>
       )}
@@ -826,7 +915,7 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
           <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">挂靠部门</label><select value={formData.department} onChange={e => setFormData({ ...formData, department: e.target.value })} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold">{departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}</select></div>
           <div className="space-y-2"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">系统角色分配</label><div className="flex flex-wrap gap-2 pt-2">{roles.map((r: any) => { const isSelected = formData.role?.includes(r.id); return (<button key={r.id} type="button" onClick={() => { const current = formData.role || []; const next = current.includes(r.id) ? current.filter(id => id !== r.id) : [...current, r.id]; setFormData({...formData, role: next}); }} className={`px-3 py-2 rounded-xl text-[10px] font-bold transition-all ${isSelected ? `bg-${theme}-600 text-white shadow-md` : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>{r.name}</button>); })}</div></div>
         </div>
-        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(formData)} className={`flex-1 py-4 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(formData)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
       </div>
     </div>
   );
@@ -841,11 +930,10 @@ const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResour
   const [loadingAI, setLoadingAI] = useState(false);
   const [recommendation, setRecommendation] = useState('');
 
-  // 快捷时间段选择
   const setQuickTime = (start: string, end: string) => {
     setStartTime(start);
     setEndTime(end);
-    setEndDate(startDate); // 快捷选择默认针对单日
+    setEndDate(startDate);
   };
 
   return (
@@ -854,7 +942,6 @@ const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResour
         <h2 className="text-2xl font-black mb-1">预约资源申请</h2>
         <p className="text-xs text-gray-400 mb-8 flex items-center space-x-1"><span>目标资源: <span className={`text-${theme}-600 font-black`}>{resource.name}</span></span></p>
         <div className="space-y-6">
-           {/* 日期范围选择 */}
            <div className="grid grid-cols-2 gap-4">
               <div className="space-y-1">
                  <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">开始日期</label>
@@ -869,7 +956,6 @@ const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResour
               </div>
            </div>
            
-           {/* 时间段选择 */}
            <div className="space-y-4">
               <div className="flex justify-between items-center">
                  <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">选择时段</label>
@@ -898,8 +984,91 @@ const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResour
               <p className="text-[10px] text-indigo-700/70 italic min-h-[1.5em] leading-relaxed">{loadingAI ? 'AI 正在深度分析中...' : recommendation || '在此输入用途后，点击上方 AI 按钮可获取选址优化建议。'}</p>
            </div>
         </div>
-        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onConfirm(resource.id, purpose, `${startDate}T${startTime}`, `${endDate}T${endTime}`)} className={`flex-1 py-4 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg transition-all active:scale-95`}>提交流程申请</button></div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onConfirm(resource.id, purpose, `${startDate}T${startTime}`, `${endDate}T${endTime}`)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>提交流程申请</button></div>
       </div>
+    </div>
+  );
+};
+
+// Component to display the progress of a booking through its approval workflow
+const WorkflowStepper = ({ booking, workflow, users, theme }: { booking: Booking, workflow: ApprovalNode[], users: User[], theme: string }) => {
+  return (
+    <div className="space-y-6">
+      {/* Starting point: Submission */}
+      <div className="relative flex items-start space-x-4">
+        <div className="absolute left-4 top-8 bottom-0 w-0.5 bg-gray-100 z-0" />
+        <div className={`w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 z-10 shadow-sm border border-emerald-200`}>
+          <Check size={16} />
+        </div>
+        <div className="flex-1 pb-4">
+          <p className="text-xs font-black text-gray-800">申请已提交</p>
+          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{new Date(booking.createdAt).toLocaleString()}</p>
+        </div>
+      </div>
+
+      {/* Workflow nodes */}
+      {workflow.map((node, index) => {
+        const history = booking.approvalHistory[index];
+        const isCurrent = booking.status === 'PENDING' && booking.currentNodeIndex === index;
+        const isApproved = history?.status === 'APPROVED';
+        const isRejected = history?.status === 'REJECTED';
+        
+        return (
+          <div key={node.id} className="relative flex items-start space-x-4">
+            {index < workflow.length - 1 && (
+              <div className="absolute left-4 top-8 bottom-0 w-0.5 bg-gray-100 z-0" />
+            )}
+            <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 border transition-all ${
+              isRejected ? 'bg-rose-100 text-rose-600 border-rose-200 shadow-sm shadow-rose-100' :
+              isApproved ? `bg-emerald-100 text-emerald-600 border-emerald-200 shadow-sm shadow-emerald-100` :
+              isCurrent ? `bg-amber-100 text-amber-600 border-amber-200 animate-pulse shadow-md shadow-amber-100` :
+              'bg-gray-50 text-gray-300 border-gray-100'
+            }`}>
+              {isRejected ? <X size={14} /> : 
+               isApproved ? <Check size={14} /> : 
+               isCurrent ? <Clock size={14} /> :
+               <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
+            </div>
+            <div className="flex-1 pb-6">
+              <div className="flex justify-between items-start">
+                <div>
+                  <h6 className={`text-xs font-black ${isCurrent ? `text-amber-600` : isRejected ? 'text-rose-600' : isApproved ? 'text-emerald-600' : 'text-gray-400'}`}>
+                    {node.name}
+                  </h6>
+                  <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">节点负责人: {node.approverRole}</p>
+                </div>
+                {history && (
+                  <div className="text-right">
+                    <p className="text-[10px] font-black text-gray-600">{history.approverName}</p>
+                    <p className="text-[9px] text-gray-400">{new Date(history.timestamp).toLocaleString()}</p>
+                  </div>
+                )}
+              </div>
+              {history?.comment && (
+                <div className="mt-3 p-3 bg-white rounded-xl border border-gray-100 text-[10px] text-gray-500 italic shadow-sm relative">
+                  <div className="absolute -top-2 left-4 w-0 h-0 border-8 border-transparent border-b-gray-100" />
+                  备注: {history.comment}
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      {/* End state summary */}
+      {(booking.status === 'APPROVED' || booking.status === 'REJECTED') && (
+        <div className="flex items-center space-x-4">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white shadow-lg ${booking.status === 'APPROVED' ? `bg-indigo-600 shadow-indigo-200` : 'bg-rose-600 shadow-rose-200'}`}>
+            {booking.status === 'APPROVED' ? <CheckCircle size={16} /> : <XCircle size={16} />}
+          </div>
+          <div className="flex-1">
+            <p className="text-xs font-black text-gray-800">流程已终结</p>
+            <p className={`text-[10px] font-black uppercase tracking-widest ${booking.status === 'APPROVED' ? 'text-emerald-600' : 'text-rose-600'}`}>
+              最终结果: {booking.status === 'APPROVED' ? '已核准' : '已驳回'}
+            </p>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
