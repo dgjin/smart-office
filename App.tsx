@@ -1,22 +1,21 @@
-
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
   Cpu, Monitor, Coffee, Edit2, Trash2, UserPlus, RefreshCw,
   Clock, GitMerge, ChevronRight, ArrowRight, ChevronDown, ChevronUp,
-  Layers, Zap, ShieldCheck, Check, X, FileText, Building2, Palette, 
-  PieChart, Activity, ChevronLeft, Sparkles, SendHorizontal, BellRing, 
-  History, Timer, Briefcase, Shield, FolderTree, ArrowRightCircle,
-  Settings2, MoveUp, MoveDown, UserCircle, AlertTriangle, Download, Upload, Database
+  Zap, ShieldCheck, Check, X, Building2, 
+  PieChart, ChevronLeft, Timer, Briefcase, Shield, FolderTree,
+  UserCircle, AlertTriangle, Download, Upload, Database,
+  Info, MoreHorizontal, Activity, ArrowRightCircle
 } from 'lucide-react';
-import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalRecord, Notification, Department, RoleDefinition } from './types';
+import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
 import { getSmartRecommendation } from './services/geminiService';
 
-const STORAGE_KEY = 'SMART_OFFICE_DATA_V23';
+const STORAGE_KEY = 'SMART_OFFICE_DATA_V26';
 const THEME_KEY = 'SMART_OFFICE_THEME';
 
-// --- 通用子组件 ---
+// --- Helper Components ---
 
 const StatusBadge = ({ status, theme }: any) => {
   const styles: any = { 
@@ -25,10 +24,9 @@ const StatusBadge = ({ status, theme }: any) => {
     OCCUPIED: 'bg-rose-50 text-rose-600 border-rose-100', 
     APPROVED: `bg-${theme}-50 text-${theme}-600 border-${theme}-100`, 
     REJECTED: 'bg-rose-50 text-rose-600 border-rose-100', 
-    COMPLETED: 'bg-gray-100 text-gray-400 border-gray-200',
-    CANCELLED: 'bg-gray-50 text-gray-400 border-gray-100'
+    COMPLETED: 'bg-gray-100 text-gray-400 border-gray-200'
   };
-  const labels: any = { AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', OCCUPIED: '占用', COMPLETED: '结束', CANCELLED: '已取消' };
+  const labels: any = { AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', OCCUPIED: '占用', COMPLETED: '结束' };
   return <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
 };
 
@@ -48,7 +46,20 @@ const SidebarItem = ({ icon: Icon, label, id, active, onClick, theme, badge }: a
   </button>
 );
 
-// --- 今日实时看板组件 ---
+// --- Data Dashboard Components ---
+
+const StatCard = ({ title, value, icon: Icon, trend, color, onClick }: any) => (
+  <button onClick={onClick} className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between group hover:border-indigo-200 transition-all text-left">
+    <div className="space-y-1">
+      <p className="text-[10px] font-black text-gray-400 uppercase tracking-widest">{title}</p>
+      <h3 className="text-2xl font-black text-gray-800">{value}</h3>
+      {trend && <p className={`text-[10px] font-bold ${trend.startsWith('+') ? 'text-emerald-500' : 'text-rose-500'}`}>{trend} <span className="text-gray-300">较上周</span></p>}
+    </div>
+    <div className={`w-12 h-12 rounded-2xl bg-${color}-50 flex items-center justify-center text-${color}-600 group-hover:scale-110 transition-transform`}>
+      <Icon size={24} />
+    </div>
+  </button>
+);
 
 const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: Resource[], bookings: Booking[], users: User[], theme: string }) => {
   const now = new Date();
@@ -57,12 +68,11 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
   const endHour = 20;
   const totalHours = endHour - startHour;
 
-  const getTodayBookings = (resourceId: string) => {
-    return bookings.filter(b => {
-      if (b.resourceId !== resourceId || !['APPROVED', 'PENDING'].includes(b.status)) return false;
-      return b.startTime.startsWith(todayStr) || b.endTime.startsWith(todayStr);
-    });
-  };
+  const currentPos = useMemo(() => {
+    const currentHour = now.getHours() + now.getMinutes() / 60;
+    if (currentHour < startHour || currentHour > endHour) return -1;
+    return ((currentHour - startHour) / totalHours) * 100;
+  }, [now]);
 
   const calculatePosition = (timeStr: string) => {
     const date = new Date(timeStr);
@@ -72,69 +82,35 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
   };
 
   return (
-    <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm">
-      <div className="flex justify-between items-center mb-8">
-        <h4 className="font-black flex items-center space-x-2 text-lg">
-          <Timer className={`text-${theme}-600`} size={20}/> 
-          <span>今日实时动态 (08:00 - 20:00)</span>
-        </h4>
-        <div className="flex items-center space-x-2 text-[10px] font-bold text-gray-400">
-           <div className="flex items-center space-x-1"><div className={`w-2 h-2 rounded-full bg-${theme}-500`}></div><span>已核准</span></div>
-           <div className="flex items-center space-x-1"><div className="w-2 h-2 rounded-full bg-amber-400"></div><span>审批中</span></div>
+    <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm overflow-hidden mb-8 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center mb-10">
+        <div className="space-y-1">
+          <h4 className="font-black flex items-center space-x-2 text-lg"><Timer className={`text-${theme}-600`} size={20}/> <span>今日实时动态</span></h4>
+          <p className="text-[10px] text-gray-400 font-bold uppercase pl-7">资源占用时间轴 (08:00 - 20:00)</p>
+        </div>
+        <div className="flex items-center space-x-4 bg-gray-50 px-4 py-2 rounded-2xl border border-gray-100">
+           <div className="flex items-center space-x-1.5"><div className={`w-2 h-2 rounded-full bg-${theme}-500`}></div><span className="text-[10px] font-black text-gray-500">已核准</span></div>
+           <div className="flex items-center space-x-1.5"><div className="w-2 h-2 rounded-full bg-amber-400"></div><span className="text-[10px] font-black text-gray-500">审批中</span></div>
         </div>
       </div>
-
-      <div className="space-y-6">
+      <div className="relative mb-4 flex"><div className="w-32 shrink-0"></div><div className="flex-1 flex justify-between relative px-1">{Array.from({ length: totalHours + 1 }).map((_, i) => (<span key={i} className="text-[9px] font-black text-gray-300 transform -translate-x-1/2">{(startHour + i).toString().padStart(2, '0')}:00</span>))}</div></div>
+      <div className="space-y-3 relative">
+        {currentPos !== -1 && (<div className="absolute top-0 bottom-0 w-px bg-rose-500 z-30 pointer-events-none" style={{ left: `calc(8rem + (100% - 8rem) * ${currentPos / 100})` }}><div className="absolute top-0 left-1/2 -translate-x-1/2 w-2 h-2 bg-rose-500 rounded-full shadow-sm" /></div>)}
         {resources.map(res => {
-          const todayBookings = getTodayBookings(res.id);
-          const isCurrentlyOccupied = todayBookings.some(b => {
-            const start = new Date(b.startTime).getTime();
-            const end = new Date(b.endTime).getTime();
-            const currentTime = now.getTime();
-            return b.status === 'APPROVED' && currentTime >= start && currentTime <= end;
-          });
-
+          const todayBookings = bookings.filter(b => b.resourceId === res.id && (b.status === 'APPROVED' || b.status === 'PENDING') && (b.startTime.startsWith(todayStr) || b.endTime.startsWith(todayStr)));
           return (
-            <div key={res.id} className="group">
-              <div className="flex items-center justify-between mb-2">
-                <div className="flex items-center space-x-3">
-                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center ${res.type === 'ROOM' ? 'bg-indigo-50 text-indigo-500' : 'bg-emerald-50 text-emerald-500'}`}>
-                    {res.type === 'ROOM' ? <Monitor size={14}/> : <Coffee size={14}/>}
-                  </div>
-                  <span className="text-xs font-black text-gray-700">{res.name}</span>
-                  {isCurrentlyOccupied && <span className="flex h-2 w-2 rounded-full bg-rose-500 animate-ping"></span>}
-                </div>
-                <span className="text-[10px] font-bold text-gray-300 italic">{res.location}</span>
-              </div>
-              <div className="relative h-6 bg-gray-50 rounded-xl overflow-hidden border border-gray-100/50">
-                {/* 时间轴刻度线 */}
-                {Array.from({ length: totalHours + 1 }).map((_, i) => (
-                  <div key={i} className="absolute top-0 bottom-0 w-px bg-gray-200/40" style={{ left: `${(i / totalHours) * 100}%` }} />
-                ))}
-                
-                {/* 预订区块 */}
+            <div key={res.id} className="flex items-center group">
+              <div className="w-32 shrink-0 pr-4"><div className="flex items-center space-x-2"><div className={`w-7 h-7 rounded-lg flex items-center justify-center shrink-0 ${res.type === 'ROOM' ? 'bg-indigo-50 text-indigo-500' : 'bg-emerald-50 text-emerald-500'}`}>{res.type === 'ROOM' ? <Monitor size={12}/> : <Coffee size={12}/>}</div><span className="text-[11px] font-black text-gray-700 truncate">{res.name}</span></div></div>
+              <div className="flex-1 relative h-12 bg-gray-50/50 rounded-xl border border-gray-100/50 overflow-hidden">
+                {Array.from({ length: totalHours + 1 }).map((_, i) => (<div key={i} className="absolute top-0 bottom-0 w-px bg-gray-200/20" style={{ left: `${(i / totalHours) * 100}%` }} />))}
                 {todayBookings.map(b => {
                   const left = calculatePosition(b.startTime);
                   const right = calculatePosition(b.endTime);
+                  const dur = Math.max(2, right - left);
                   const user = users.find(u => u.id === b.userId);
                   return (
-                    <div 
-                      key={b.id}
-                      className={`absolute top-1 bottom-1 rounded-md shadow-sm transition-all cursor-help z-10 ${b.status === 'APPROVED' ? `bg-${theme}-500 hover:bg-${theme}-600` : 'bg-amber-400 hover:bg-amber-500'}`}
-                      style={{ left: `${left}%`, width: `${right - left}%`, minWidth: '4px' }}
-                    >
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-56 bg-gray-900 text-white p-4 rounded-xl text-[10px] invisible group-hover:visible z-30 shadow-2xl pointer-events-none transition-all">
-                        <div className="flex items-center justify-between border-b border-white/10 pb-2 mb-2">
-                           <span className="font-black text-indigo-300">{user?.name || '未知用户'}</span>
-                           <span className="px-1.5 py-0.5 rounded bg-white/10 text-[8px] font-bold">{user?.department || '暂无部门'}</span>
-                        </div>
-                        <p className="opacity-80 leading-relaxed mb-1"><span className="text-gray-400">用途:</span> {b.purpose}</p>
-                        <div className="flex items-center space-x-1 text-gray-400 text-[9px]">
-                           <Clock size={10}/>
-                           <span>{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</span>
-                        </div>
-                        <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-gray-900"/>
-                      </div>
+                    <div key={b.id} className={`absolute top-1 bottom-1 rounded-lg shadow-sm transition-all cursor-help z-10 flex flex-col justify-center px-3 border-l-4 ${b.status === 'APPROVED' ? `bg-${theme}-500/10 border-${theme}-500 text-${theme}-700` : 'bg-amber-400/10 border-amber-400 text-amber-700'}`} style={{ left: `${left}%`, width: `${dur}%` }} title={`${user?.name}: ${b.purpose}`}>
+                      {dur > 12 && (<div className="truncate pointer-events-none text-[9px]"><p className="font-black leading-tight truncate">{user?.name}</p><p className="opacity-70">{b.startTime.split('T')[1].slice(0, 5)}-{b.endTime.split('T')[1].slice(0, 5)}</p></div>)}
                     </div>
                   );
                 })}
@@ -147,367 +123,194 @@ const TodayResourceUsage = ({ resources, bookings, users, theme }: { resources: 
   );
 };
 
-// --- 月度使用全景表 ---
-
 const MonthlyUsageGrid = ({ resources, bookings, users, theme }: { resources: Resource[], bookings: Booking[], users: User[], theme: string }) => {
   const [currentDate, setCurrentDate] = useState(new Date());
+  const daysInMonth = useMemo(() => Array.from({ length: new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 0).getDate() }, (_, i) => i + 1), [currentDate]);
   
-  const daysInMonth = useMemo(() => {
-    const year = currentDate.getFullYear();
-    const month = currentDate.getMonth();
-    return Array.from({ length: new Date(year, month + 1, 0).getDate() }, (_, i) => i + 1);
-  }, [currentDate]);
-
   const getDayStatus = (resourceId: string, day: number) => {
-    const year = currentDate.getFullYear();
-    const month = (currentDate.getMonth() + 1).toString().padStart(2, '0');
-    const dayStr = day.toString().padStart(2, '0');
-    const datePrefix = `${year}-${month}-${dayStr}`;
-    
-    const booking = bookings.find(b => {
-      if (b.resourceId !== resourceId || !['APPROVED', 'PENDING'].includes(b.status)) return false;
-      const bStart = b.startTime.split('T')[0];
-      const bEnd = b.endTime.split('T')[0];
-      return datePrefix >= bStart && datePrefix <= bEnd;
-    });
-
+    const dStr = `${currentDate.getFullYear()}-${(currentDate.getMonth() + 1).toString().padStart(2, '0')}-${day.toString().padStart(2, '0')}`;
+    const booking = bookings.find(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING') && (dStr >= b.startTime.split('T')[0] && dStr <= b.endTime.split('T')[0]));
     if (!booking) return null;
-    const user = users.find(u => u.id === booking.userId);
-    return { ...booking, userName: user?.name, userDept: user?.department };
+    return { ...booking, userName: users.find(u => u.id === booking.userId)?.name };
   };
 
   return (
-    <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm overflow-hidden">
+    <div className="bg-white rounded-[2.5rem] p-8 border border-gray-100 shadow-sm overflow-hidden animate-in fade-in duration-700">
       <div className="flex justify-between items-center mb-8">
-        <h4 className="font-bold flex items-center space-x-2 text-lg">
-          <PieChart className={`text-${theme}-600`} size={20}/> 
-          <span>月度资源使用全景</span>
-        </h4>
+        <h4 className="font-bold flex items-center space-x-2 text-lg"><PieChart className={`text-${theme}-600`} size={20}/> <span>月度资源全景</span></h4>
         <div className="flex items-center bg-gray-50 p-1 rounded-2xl border">
           <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronLeft size={18}/></button>
           <span className="px-6 text-sm font-black min-w-[140px] text-center">{currentDate.getFullYear()}年 {currentDate.getMonth() + 1}月</span>
           <button onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))} className="p-2 hover:bg-white rounded-xl text-gray-400 transition-colors"><ChevronRight size={18}/></button>
         </div>
       </div>
-
       <div className="overflow-x-auto custom-scrollbar pb-4">
         <table className="w-full border-collapse">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest min-w-[200px] border-b">资源名称</th>
-              {daysInMonth.map(day => (
-                <th key={day} className="p-2 text-center border-b min-w-[40px] font-bold text-gray-400 text-[10px]">{day}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {resources.map(res => (
-              <tr key={res.id} className="hover:bg-gray-50 group">
-                <td className="sticky left-0 z-10 bg-white group-hover:bg-gray-50 transition-colors p-4 border-b text-xs font-bold text-gray-700">
-                  <div className="flex items-center space-x-2">
-                    {res.type === 'ROOM' ? <Monitor size={12} className="text-indigo-400"/> : <Coffee size={12} className="text-emerald-400"/>}
-                    <span>{res.name}</span>
-                  </div>
-                </td>
-                {daysInMonth.map(day => {
-                  const info = getDayStatus(res.id, day);
-                  return (
-                    <td key={day} className="p-1 border-b text-center relative group/cell">
-                      <div className={`w-full h-10 rounded-lg flex items-center justify-center transition-all ${
-                        info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm shadow-${theme}-100` : 
-                        info?.status === 'PENDING' ? 'bg-amber-100 animate-pulse' : 
-                        'bg-gray-50/50'
-                      }`}>
-                        {info && <span className="text-[10px] text-white font-black drop-shadow-sm pointer-events-none">{info.userName?.slice(0, 1)}</span>}
-                      </div>
-                      
-                      {info && (
-                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-3 w-56 bg-gray-900 text-white p-4 rounded-2xl text-[11px] invisible group-hover/cell:visible z-30 shadow-2xl animate-in zoom-in pointer-events-none">
-                          <div className="space-y-2">
-                            <p className="font-black text-indigo-300 flex items-center justify-between">
-                              <span>{info.userName}</span>
-                              <span className={`px-1.5 py-0.5 rounded text-[8px] bg-white/10 ${info.status === 'APPROVED' ? 'text-emerald-400' : 'text-amber-400'}`}>
-                                {info.status === 'APPROVED' ? '已核准' : '审批中'}
-                              </span>
-                            </p>
-                            <div className="space-y-1 opacity-80">
-                              <p className="flex items-center space-x-2"><Briefcase size={10}/> <span>{info.userDept}</span></p>
-                              <p className="flex items-center space-x-2"><FileText size={10}/> <span>{info.purpose}</span></p>
-                            </div>
-                          </div>
-                          <div className="absolute top-full left-1/2 -translate-x-1/2 border-8 border-transparent border-t-gray-900"/>
-                        </div>
-                      )}
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
+          <thead><tr><th className="sticky left-0 z-20 bg-white text-left p-4 text-[10px] font-black text-gray-400 uppercase min-w-[180px] border-b">资源名称</th>{daysInMonth.map(day => (<th key={day} className="p-2 text-center border-b min-w-[36px] font-bold text-gray-400 text-[10px]">{day}</th>))}</tr></thead>
+          <tbody>{resources.map(res => (<tr key={res.id} className="hover:bg-gray-50 transition-colors"><td className="sticky left-0 z-10 bg-white p-4 border-b text-xs font-bold text-gray-700 truncate">{res.name}</td>{daysInMonth.map(day => { const info = getDayStatus(res.id, day); return (<td key={day} className="p-1 border-b text-center"><div className={`w-full h-8 rounded-md transition-all ${info?.status === 'APPROVED' ? `bg-${theme}-600 shadow-sm` : info?.status === 'PENDING' ? 'bg-amber-300 animate-pulse' : 'bg-gray-50'}`} title={info ? `${info.userName}: ${info.purpose}` : ''}/></td>); })}</tr>))}</tbody>
         </table>
       </div>
     </div>
   );
 };
 
-// --- 主程序 ---
+// --- Main App ---
 
 const App: React.FC = () => {
   const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
+  const [theme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
-  // 数据状态
-  const [roles, setRoles] = useState<RoleDefinition[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved).roles : INITIAL_ROLES;
-  });
-  const [users, setUsers] = useState<User[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved).users : INITIAL_USERS;
-  });
-  const [resources, setResources] = useState<Resource[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved).resources : INITIAL_RESOURCES;
-  });
-  const [bookings, setBookings] = useState<Booking[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? JSON.parse(saved).bookings : INITIAL_BOOKINGS;
-  });
-  const [departments, setDepartments] = useState<Department[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? (JSON.parse(saved).departments || INITIAL_DEPARTMENTS) : INITIAL_DEPARTMENTS;
-  });
-  const [workflow, setWorkflow] = useState<ApprovalNode[]>(() => {
-    const saved = localStorage.getItem(STORAGE_KEY);
-    return saved ? (JSON.parse(saved).workflow || DEFAULT_WORKFLOW) : DEFAULT_WORKFLOW;
-  });
+  // Data states
+  const [roles, setRoles] = useState<RoleDefinition[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).roles : INITIAL_ROLES; });
+  const [users, setUsers] = useState<User[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).users : INITIAL_USERS; });
+  const [resources, setResources] = useState<Resource[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).resources : INITIAL_RESOURCES; });
+  const [bookings, setBookings] = useState<Booking[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).bookings : INITIAL_BOOKINGS; });
+  const [departments, setDepartments] = useState<Department[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).departments || INITIAL_DEPARTMENTS) : INITIAL_DEPARTMENTS; });
+  const [workflow, setWorkflow] = useState<ApprovalNode[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).workflow || DEFAULT_WORKFLOW) : DEFAULT_WORKFLOW; });
 
-  // 模态框状态
-  const [showRoleModal, setShowRoleModal] = useState(false);
-  const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
+  // UI States
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
+  const [showResourceModal, setShowResourceModal] = useState(false);
+  const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [showApprovalActionModal, setShowApprovalActionModal] = useState<Booking | null>(null);
-  const [showResourceModal, setShowResourceModal] = useState(false);
-  const [editingResource, setEditingResource] = useState<Resource | null>(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [editingWorkflowNode, setEditingWorkflowNode] = useState<ApprovalNode | null>(null);
-  
-  // 冲突提示状态
+  const [showRoleModal, setShowRoleModal] = useState(false);
+  const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
+  const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
   const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, conflictingBooking: Booking, user: User } | null>(null);
 
-  useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow }));
-  }, [roles, users, resources, bookings, departments, workflow]);
+  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
 
-  // 计算属性
-  const canApprove = (booking: Booking) => {
-    if (booking.status !== 'PENDING') return false;
-    const currentNode = workflow[booking.currentNodeIndex];
-    if (!currentNode) return false;
-    return currentUser?.role.includes(currentNode.approverRole);
-  };
-  const pendingApprovalsCount = bookings.filter(b => canApprove(b)).length;
+  const canApprove = (booking: Booking) => booking.status === 'PENDING' && currentUser?.role.includes(workflow[booking.currentNodeIndex]?.approverRole);
+  const pendingCount = bookings.filter(b => canApprove(b)).length;
 
-  // 数据导出
-  const exportData = () => {
-    const data = { roles, users, resources, bookings, departments, workflow };
-    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `SmartOffice_Backup_${new Date().toISOString().split('T')[0]}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
+  const stats = useMemo(() => {
+    const totalResources = resources.length;
+    const availableRooms = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE').length;
+    const availableDesks = resources.filter(r => r.type === 'DESK' && r.status === 'AVAILABLE').length;
+    const activeBookings = bookings.filter(b => b.status === 'APPROVED').length;
+    return { totalResources, availableRooms, availableDesks, activeBookings };
+  }, [resources, bookings]);
 
-  // 数据导入
-  const importData = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      try {
-        const data = JSON.parse(event.target?.result as string);
-        if (data.users && data.resources && data.bookings) {
-          setRoles(data.roles || INITIAL_ROLES);
-          setUsers(data.users);
-          setResources(data.resources);
-          setBookings(data.bookings);
-          setDepartments(data.departments || INITIAL_DEPARTMENTS);
-          setWorkflow(data.workflow || DEFAULT_WORKFLOW);
-          alert('数据恢复成功！');
-          window.location.reload();
-        }
-      } catch (err) {
-        alert('导入失败：文件格式不正确。');
-      }
-    };
-    reader.readAsText(file);
-  };
-
-  // 处理函数
   const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string) => {
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
+    
+    const start = new Date(startTime).getTime();
+    const end = new Date(endTime).getTime();
 
-    const newStart = new Date(startTime).getTime();
-    const newEnd = new Date(endTime).getTime();
-
-    if (newEnd <= newStart) {
-      alert("结束时间必须晚于开始时间，请重新选择。");
+    if (end <= start) {
+      alert("提交失败：结束时间必须晚于开始时间，请检查您的选择。");
       return;
     }
 
-    const conflictingBooking = bookings.find(b => {
-      if (b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING')) {
-        const existStart = new Date(b.startTime).getTime();
-        const existEnd = new Date(b.endTime).getTime();
-        return newStart < existEnd && newEnd > existStart;
-      }
-      return false;
-    });
+    const conflict = bookings.find(b => 
+      b.resourceId === resourceId && 
+      (b.status === 'APPROVED' || b.status === 'PENDING') && 
+      (start < new Date(b.endTime).getTime() && end > new Date(b.startTime).getTime())
+    );
 
-    if (conflictingBooking) {
-      const conflictingUser = users.find(u => u.id === conflictingBooking.userId) || { name: '未知用户', department: '暂无部门' } as User;
-      setBookingConflict({ resource, conflictingBooking, user: conflictingUser });
+    if (conflict) {
+      setBookingConflict({ 
+        resource, 
+        conflictingBooking: conflict, 
+        user: users.find(u => u.id === conflict.userId) || { name: '未知人员', department: '--' } as any 
+      });
       return;
     }
 
-    const newBooking: Booking = {
-      id: `bk-${Date.now()}`,
-      userId: currentUser.id,
-      resourceId,
-      type: resource.type,
-      startTime,
-      endTime,
-      status: 'PENDING',
-      purpose,
-      createdAt: new Date().toISOString(),
-      currentNodeIndex: 0,
-      approvalHistory: [],
+    const newBooking: Booking = { 
+      id: `bk-${Date.now()}`, 
+      userId: currentUser.id, 
+      resourceId, 
+      type: resource.type, 
+      startTime, 
+      endTime, 
+      status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
+      purpose, 
+      createdAt: new Date().toISOString(), 
+      currentNodeIndex: 0, 
+      approvalHistory: [] 
     };
-    if (workflow.length === 0) {
-      newBooking.status = 'APPROVED';
-    }
     setBookings([newBooking, ...bookings]);
     setShowBookingModal(false);
-    setSelectedResource(null);
-  };
-
-  const handleSaveUser = (data: Partial<User>) => {
-    if (editingUser) {
-      setUsers(users.map(u => u.id === editingUser.id ? { ...u, ...data } as User : u));
-    } else {
-      setUsers([...users, { id: 'u-' + Date.now(), role: ['EMPLOYEE'], ...data } as User]);
-    }
-    setShowUserModal(false);
-    setEditingUser(null);
-  };
-
-  const handleSaveRole = (data: Partial<RoleDefinition>) => {
-    if (editingRole) {
-      setRoles(roles.map(r => r.id === editingRole.id ? { ...r, ...data } as RoleDefinition : r));
-    } else {
-      setRoles([...roles, { id: 'r-' + Date.now(), ...data } as RoleDefinition]);
-    }
-    setShowRoleModal(false);
-    setEditingRole(null);
-  };
-
-  const handleSaveResource = (data: Partial<Resource>) => {
-    if (editingResource) setResources(resources.map(r => r.id === editingResource.id ? { ...r, ...data } as Resource : r));
-    else setResources([...resources, { id: 'res-' + Date.now(), status: 'AVAILABLE', features: [], ...data } as Resource]);
-    setShowResourceModal(false);
-    setEditingResource(null);
-  };
-
-  const handleSaveWorkflowNode = (data: Partial<ApprovalNode>) => {
-    if (editingWorkflowNode) {
-      setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? { ...n, ...data } as ApprovalNode : n));
-    } else {
-      setWorkflow([...workflow, { id: 'node-' + Date.now(), ...data } as ApprovalNode]);
-    }
-    setShowWorkflowModal(false);
-    setEditingWorkflowNode(null);
   };
 
   const handleApprove = (booking: Booking) => {
-    const isLastNode = booking.currentNodeIndex === workflow.length - 1;
-    setBookings(bookings.map(b => b.id === booking.id ? {
-      ...b,
-      currentNodeIndex: isLastNode ? b.currentNodeIndex : b.currentNodeIndex + 1,
-      status: isLastNode ? 'APPROVED' as BookingStatus : 'PENDING' as BookingStatus,
-      approvalHistory: [...b.approvalHistory, {
-        nodeName: workflow[b.currentNodeIndex].name,
-        approverName: currentUser?.name || '未知',
-        status: 'APPROVED' as any,
-        timestamp: new Date().toISOString()
-      }]
+    const isLast = booking.currentNodeIndex === workflow.length - 1;
+    setBookings(bookings.map(b => b.id === booking.id ? { 
+      ...b, 
+      currentNodeIndex: isLast ? b.currentNodeIndex : b.currentNodeIndex + 1, 
+      status: isLast ? 'APPROVED' : 'PENDING', 
+      approvalHistory: [...b.approvalHistory, { 
+        nodeName: workflow[b.currentNodeIndex].name, 
+        approverName: currentUser?.name || '未知', 
+        status: 'APPROVED', 
+        timestamp: new Date().toISOString() 
+      }] 
     } : b));
     setShowApprovalActionModal(null);
   };
 
   const handleReject = (booking: Booking, comment: string) => {
-    setBookings(bookings.map(b => b.id === booking.id ? {
-      ...b,
-      status: 'REJECTED' as BookingStatus,
-      approvalHistory: [...b.approvalHistory, {
-        nodeName: workflow[b.currentNodeIndex].name,
-        approverName: currentUser?.name || '未知',
-        status: 'REJECTED' as any,
-        timestamp: new Date().toISOString(),
-        comment
-      }]
+    setBookings(bookings.map(b => b.id === booking.id ? { 
+      ...b, 
+      status: 'REJECTED', 
+      approvalHistory: [...b.approvalHistory, { 
+        nodeName: workflow[b.currentNodeIndex].name, 
+        approverName: currentUser?.name || '未知', 
+        status: 'REJECTED', 
+        comment, 
+        timestamp: new Date().toISOString() 
+      }] 
     } : b));
     setShowApprovalActionModal(null);
   };
 
-  const moveWorkflowNode = (index: number, direction: 'UP' | 'DOWN') => {
-    const newWorkflow = [...workflow];
-    const targetIndex = direction === 'UP' ? index - 1 : index + 1;
-    if (targetIndex < 0 || targetIndex >= newWorkflow.length) return;
-    [newWorkflow[index], newWorkflow[targetIndex]] = [newWorkflow[targetIndex], newWorkflow[index]];
-    setWorkflow(newWorkflow);
-  };
-
-  if (!currentUser) {
-    return (
-      <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6`}>
-        <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl w-full max-w-md animate-in zoom-in">
-          <div className="flex justify-center mb-6"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
-          <h1 className="text-2xl font-black text-center mb-10">SmartOffice 登录</h1>
-          <div className="space-y-3">
-            {users.map(u => (
-              <button key={u.id} onClick={() => setCurrentUser(u)} className={`w-full p-4 border border-gray-100 rounded-2xl hover:bg-${theme}-50 transition-all flex items-center justify-between group`}>
-                <div className="flex items-center space-x-4"><div className={`w-10 h-10 bg-${theme}-100 rounded-full flex items-center justify-center font-bold text-${theme}-600`}>{u.name[0]}</div><div><p className="font-bold text-gray-800 text-sm">{u.name}</p><p className="text-[10px] text-gray-400">{u.department}</p></div></div>
-                <ArrowRight size={16} className="text-gray-300 group-hover:text-indigo-600" />
-              </button>
-            ))}
-          </div>
+  if (!currentUser) return (
+    <div className={`min-h-screen bg-${theme}-600 flex items-center justify-center p-6`}>
+      <div className="bg-white p-10 rounded-[2.5rem] shadow-2xl w-full max-w-md animate-in zoom-in">
+        <div className="flex justify-center mb-6"><div className={`w-16 h-16 bg-${theme}-600 rounded-2xl flex items-center justify-center text-white shadow-xl`}><Cpu size={32}/></div></div>
+        <h1 className="text-2xl font-black text-center mb-10">智慧办公空间管理</h1>
+        <div className="space-y-3">
+          {users.map(u => (
+            <button key={u.id} onClick={() => setCurrentUser(u)} className={`w-full p-4 border border-gray-100 rounded-2xl hover:bg-${theme}-50 transition-all flex items-center justify-between group`}>
+              <div className="flex items-center space-x-4">
+                <div className={`w-10 h-10 bg-${theme}-100 rounded-full flex items-center justify-center font-bold text-${theme}-600`}>{u.name[0]}</div>
+                <div className="text-left">
+                  <p className="font-bold text-gray-800 text-sm">{u.name}</p>
+                  <p className="text-[10px] text-gray-400 font-bold uppercase">{u.department}</p>
+                </div>
+              </div>
+              <ArrowRight size={16} className="text-gray-300 group-hover:text-indigo-600" />
+            </button>
+          ))}
         </div>
       </div>
-    );
-  }
+    </div>
+  );
 
   return (
-    <div className="min-h-screen flex bg-gray-50 overflow-hidden">
-      <aside className="w-64 bg-white border-r hidden lg:flex flex-col p-6 sticky top-0 h-screen">
-        <div className="flex items-center space-x-3 mb-10 px-2 shrink-0"><div className={`w-8 h-8 bg-${theme}-600 rounded-lg flex items-center justify-center text-white shadow-lg`}><Cpu size={18}/></div><span className="text-lg font-black tracking-tight">SmartOffice</span></div>
+    <div className="min-h-screen flex bg-gray-50 overflow-hidden font-sans">
+      <aside className="w-64 bg-white border-r hidden lg:flex flex-col p-6 h-screen sticky top-0 shrink-0">
+        <div className="flex items-center space-x-3 mb-10 px-2 shrink-0">
+          <div className={`w-8 h-8 bg-${theme}-600 rounded-lg flex items-center justify-center text-white shadow-lg`}><Cpu size={18}/></div>
+          <span className="text-lg font-black tracking-tight italic">SmartOffice</span>
+        </div>
         <nav className="flex-1 space-y-2 overflow-y-auto custom-scrollbar">
-          <SidebarItem icon={LayoutDashboard} label="数据仪表盘" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} theme={theme} />
+          <SidebarItem icon={LayoutDashboard} label="数据全景看板" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} theme={theme} />
           <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} theme={theme} />
           <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} theme={theme} />
-          
-          <div className="pt-6 pb-2 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">流程中心</div>
-          <SidebarItem icon={ShieldCheck} label="审批任务" id="APPROVAL_CENTER" active={view === 'APPROVAL_CENTER'} onClick={setView} theme={theme} badge={pendingApprovalsCount} />
-
+          <div className="pt-6 pb-2 px-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">流程与中心</div>
+          <SidebarItem icon={ShieldCheck} label="审批工作台" id="APPROVAL_CENTER" active={view === 'APPROVAL_CENTER'} onClick={setView} theme={theme} badge={pendingCount} />
           {currentUser.role.includes('SYSTEM_ADMIN') && (
             <>
-              <div className="pt-6 pb-2 px-4 text-[10px] font-bold text-gray-400 uppercase tracking-widest">系统设置</div>
+              <div className="pt-6 pb-2 px-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">系统管理</div>
               <SidebarItem icon={GitMerge} label="流程配置" id="WORKFLOW_CONFIG" active={view === 'WORKFLOW_CONFIG'} onClick={setView} theme={theme} />
               <SidebarItem icon={Building2} label="部门管理" id="DEPARTMENTS" active={view === 'DEPARTMENTS'} onClick={setView} theme={theme} />
               <SidebarItem icon={Shield} label="角色管理" id="ROLES" active={view === 'ROLES'} onClick={setView} theme={theme} />
@@ -517,127 +320,170 @@ const App: React.FC = () => {
           )}
         </nav>
         <div className="mt-6 pt-6 border-t shrink-0 flex items-center justify-between">
-           <div className="flex items-center space-x-2 truncate">
-              <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs`}>{currentUser.name[0]}</div>
-              <p className="text-xs font-bold truncate">{currentUser.name}</p>
-           </div>
-           <button onClick={() => setCurrentUser(null)} className="text-gray-400 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
+          <div className="flex items-center space-x-2 truncate">
+            <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner`}>{currentUser.name[0]}</div>
+            <p className="text-xs font-bold truncate">{currentUser.name}</p>
+          </div>
+          <button onClick={() => setCurrentUser(null)} className="text-gray-400 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
         </div>
       </aside>
 
-      <main className="flex-1 min-w-0 overflow-auto">
+      <main className="flex-1 min-w-0 overflow-auto relative bg-gray-50">
         <header className="h-16 bg-white/80 backdrop-blur-md border-b px-8 flex items-center justify-between sticky top-0 z-40">
           <h2 className="text-lg font-bold">
-            {view === 'DASHBOARD' && '数据仪表盘'} 
-            {view === 'WORKFLOW_CONFIG' && '审批流程配置'}
-            {view === 'RESOURCES' && '空间资源库'} 
-            {view === 'BOOKINGS' && '申请记录动态'}
-            {view === 'USERS' && '成员管理中心'}
-            {view === 'APPROVAL_CENTER' && '审批工作台'}
-            {view === 'ROLES' && '角色管理'}
-            {view === 'DEPARTMENTS' && '部门管理'}
-            {view === 'DATA_CENTER' && '数据持久化中心'}
+            {view === 'DASHBOARD' && '数据全景看板'}
+            {view === 'RESOURCES' && '空间资源库'}
+            {view === 'USERS' && '成员中心'}
+            {view === 'BOOKINGS' && '我的申请记录'}
+            {view === 'APPROVAL_CENTER' && '审批中心'}
+            {view === 'WORKFLOW_CONFIG' && '审批引擎配置'}
+            {view === 'DEPARTMENTS' && '组织架构'}
+            {view === 'ROLES' && '角色权限集'}
+            {view === 'DATA_CENTER' && '数据维护中心'}
           </h2>
         </header>
 
         <div className="p-8 max-w-7xl mx-auto">
           {view === 'DASHBOARD' && (
-            <div className="space-y-8 animate-in fade-in">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <button onClick={() => setView('RESOURCES')} className="p-8 bg-indigo-600 rounded-[2.5rem] text-white shadow-xl hover:scale-[1.02] transition-all flex items-center justify-between group relative overflow-hidden">
-                   <div className="relative z-10 text-left"><p className="text-indigo-200 text-[10px] font-black uppercase mb-1">快捷入口</p><h3 className="text-2xl font-black">会议室预订</h3></div>
-                   <Monitor size={56} className="text-white/10 absolute -right-4 top-1/2 -translate-y-1/2 group-hover:scale-125 transition-all" />
-                </button>
-                <button onClick={() => setView('RESOURCES')} className="p-8 bg-emerald-600 rounded-[2.5rem] text-white shadow-xl hover:scale-[1.02] transition-all flex items-center justify-between group relative overflow-hidden">
-                   <div className="relative z-10 text-left"><p className="text-emerald-200 text-[10px] font-black uppercase mb-1">快捷入口</p><h3 className="text-2xl font-black">流动工位申请</h3></div>
-                   <Coffee size={56} className="text-white/10 absolute -right-4 top-1/2 -translate-y-1/2 group-hover:scale-125 transition-all" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-                {[
-                  { label: '空闲会议室', value: resources.filter(r => r.status === 'AVAILABLE' && r.type === 'ROOM').length, icon: Monitor, color: 'text-indigo-600', target: 'RESOURCES' },
-                  { label: '可用工作位', value: resources.filter(r => r.status === 'AVAILABLE' && r.type === 'DESK').length, icon: Coffee, color: 'text-emerald-600', target: 'RESOURCES' },
-                  { label: '待我审批', value: pendingApprovalsCount, icon: ShieldCheck, color: 'text-amber-600', target: 'APPROVAL_CENTER' },
-                  { label: '累计预订数', value: bookings.length, icon: Calendar, color: `text-${theme}-600`, target: 'BOOKINGS' },
-                ].map((s, i) => (
-                  <button key={i} onClick={() => setView(s.target as any)} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center space-x-4 hover:shadow-md transition-all text-left group">
-                    <div className={`w-12 h-12 rounded-2xl bg-gray-50 flex items-center justify-center ${s.color} group-hover:bg-gray-100 transition-colors`}><s.icon size={20}/></div>
-                    <div><p className="text-[10px] text-gray-400 font-bold uppercase tracking-widest">{s.label}</p><p className="text-2xl font-black">{s.value}</p></div>
-                  </button>
-                ))}
-              </div>
-
-              <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
-
-              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
-            </div>
-          )}
-
-          {view === 'DATA_CENTER' && (
-            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
-              <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-xl overflow-hidden relative">
-                <div className={`absolute top-0 right-0 p-12 text-${theme}-600/5`}><Database size={120}/></div>
-                <div className="relative z-10">
-                  <h3 className="text-3xl font-black mb-2">数据备份与迁移</h3>
-                  <p className="text-gray-400 text-sm mb-10 max-w-lg">本地部署版本将数据存储于浏览器。为了防止意外丢失或在多台设备间同步，请定期导出数据备份文件。</p>
-                  
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                    <div className="bg-gray-50 p-8 rounded-[2rem] border border-gray-100 space-y-4">
-                      <div className={`w-12 h-12 rounded-2xl bg-${theme}-600 text-white flex items-center justify-center shadow-lg`}><Download size={24}/></div>
-                      <h5 className="font-black text-lg">导出本地数据</h5>
-                      <p className="text-xs text-gray-400 leading-relaxed font-medium">将当前系统中的资源、成员、流程及所有预订记录打包为 `.json` 文件并下载到您的磁盘。</p>
-                      <button onClick={exportData} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all`}>立即导出备份</button>
+            <div className="space-y-6 animate-in fade-in">
+              {/* Top Section: Compact Quick Action Row */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button onClick={() => setView('RESOURCES')} className={`flex items-center justify-between p-5 bg-${theme}-600 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]`}>
+                  <div className="flex items-center space-x-4 relative z-10">
+                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
+                      <Monitor size={24} />
                     </div>
-
-                    <div className="bg-gray-50 p-8 rounded-[2rem] border border-gray-100 space-y-4 relative">
-                      <div className="w-12 h-12 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg"><Upload size={24}/></div>
-                      <h5 className="font-black text-lg">恢复数据快照</h5>
-                      <p className="text-xs text-gray-400 leading-relaxed font-medium">通过选择之前导出的备份文件，一键恢复系统状态。注意：此操作将覆盖当前所有本地数据。</p>
-                      <label className="block w-full cursor-pointer">
-                        <input type="file" accept=".json" onChange={importData} className="hidden" />
-                        <div className="w-full py-4 bg-white border-2 border-dashed border-emerald-200 text-emerald-600 font-black rounded-2xl text-center hover:bg-emerald-50 transition-all">上传备份文件</div>
-                      </label>
+                    <div className="text-left">
+                      <h3 className="font-black text-lg leading-tight">预订会议室</h3>
+                      <p className="text-[10px] text-white/70 font-bold uppercase mt-1">当前可用: <span className="text-white">{stats.availableRooms}</span></p>
                     </div>
                   </div>
-                </div>
+                  <ArrowRightCircle className="relative z-10 text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all" size={24} />
+                  <Monitor className="absolute -right-4 -bottom-4 text-white/10 opacity-50 group-hover:scale-125 transition-all pointer-events-none" size={100} />
+                </button>
+
+                <button onClick={() => setView('RESOURCES')} className="flex items-center justify-between p-5 bg-emerald-600 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]">
+                  <div className="flex items-center space-x-4 relative z-10">
+                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
+                      <Coffee size={24} />
+                    </div>
+                    <div className="text-left">
+                      <h3 className="font-black text-lg leading-tight">申请工位</h3>
+                      <p className="text-[10px] text-white/70 font-bold uppercase mt-1">当前可用: <span className="text-white">{stats.availableDesks}</span></p>
+                    </div>
+                  </div>
+                  <ArrowRightCircle className="relative z-10 text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all" size={24} />
+                  <Coffee className="absolute -right-4 -bottom-4 text-white/10 opacity-50 group-hover:scale-125 transition-all pointer-events-none" size={100} />
+                </button>
               </div>
 
-              <div className="p-8 bg-amber-50 rounded-[2.5rem] border border-amber-100 flex items-start space-x-4">
-                <div className="p-3 bg-white rounded-2xl shadow-sm text-amber-500"><AlertTriangle size={20}/></div>
+              {/* Stats Grid */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend="+2" color="indigo" onClick={() => setView('RESOURCES')} />
+                <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="+12%" color="emerald" onClick={() => setView('BOOKINGS')} />
+                <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setView('APPROVAL_CENTER')} />
+              </div>
+
+              {/* Gantt View */}
+              <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
+
+              {/* Monthly Grid */}
+              <MonthlyUsageGrid resources={resources} bookings={bookings} users={users} theme={theme} />
+              
+              {/* Quick Navigation Footer */}
+              <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-wrap items-center justify-between gap-6">
                 <div>
-                  <h6 className="font-black text-amber-800 text-sm">重要安全提示</h6>
-                  <p className="text-xs text-amber-700/70 mt-1 leading-relaxed">备份文件包含公司成员的邮箱、部门等敏感信息，请妥善保管导出的 JSON 文件，不要通过非加密途径传播。</p>
+                  <h4 className="font-black text-gray-800">系统管理快捷导航</h4>
+                  <p className="text-xs text-gray-400 mt-1">点击图标可快速跳转至对应管理面板</p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={() => setView('RESOURCES')} className="px-5 py-2.5 bg-gray-50 hover:bg-indigo-50 text-[11px] font-black text-gray-500 hover:text-indigo-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
+                    <MapPin size={16}/> <span>资源库</span>
+                  </button>
+                  <button onClick={() => setView('USERS')} className="px-5 py-2.5 bg-gray-50 hover:bg-emerald-50 text-[11px] font-black text-gray-500 hover:text-emerald-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
+                    <Users size={16}/> <span>员工管理</span>
+                  </button>
+                  <button onClick={() => setView('APPROVAL_CENTER')} className="px-5 py-2.5 bg-gray-50 hover:bg-amber-50 text-[11px] font-black text-gray-500 hover:text-amber-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
+                    <ShieldCheck size={16}/> <span>审批台</span>
+                  </button>
+                  {currentUser.role.includes('SYSTEM_ADMIN') && (
+                    <button onClick={() => setView('WORKFLOW_CONFIG')} className="px-5 py-2.5 bg-gray-50 hover:bg-indigo-50 text-[11px] font-black text-gray-500 hover:text-indigo-600 rounded-2xl transition-all border border-gray-100 flex items-center space-x-2 active:scale-95">
+                      <GitMerge size={16}/> <span>流程配置</span>
+                    </button>
+                  )}
                 </div>
               </div>
             </div>
           )}
 
           {view === 'RESOURCES' && (
-             <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-8">
-                <div><h3 className="text-2xl font-black">空间资源库</h3><p className="text-sm text-gray-400 mt-1">管理维护所有会议空间与工位资产。</p></div>
-                {currentUser.role.includes('SYSTEM_ADMIN') && (
-                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 transition-all active:scale-95`}><Plus size={20}/> <span>录入资产</span></button>
-                )}
+            <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-end mb-6">
+                <div><h3 className="text-2xl font-black">空间资产</h3><p className="text-sm text-gray-400 mt-1">查看及预约全公司物理空间资源。</p></div>
+                <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增资源</span></button>
               </div>
+              <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+                <table className="w-full text-left">
+                  <thead><tr className="bg-gray-50 border-b"><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">资源标识</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">物理位置</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">类型/容量</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">状态</th><th className="px-6 py-4 text-right">操作</th></tr></thead>
+                  <tbody className="divide-y divide-gray-50">{resources.map(r => (
+                    <tr key={r.id} className="hover:bg-indigo-50/20 transition-colors">
+                      <td className="px-6 py-4 font-bold text-gray-800">{r.name}</td>
+                      <td className="px-6 py-4 text-xs font-medium text-gray-500">{r.location}</td>
+                      <td className="px-6 py-4 text-xs text-gray-500">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
+                      <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
+                      <td className="px-6 py-4 text-right space-x-2">
+                        <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
+                        <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[10px] font-black shadow-md`}>预约</button>
+                        {currentUser.role.includes('SYSTEM_ADMIN') && (<button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>)}
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {view === 'USERS' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-end mb-6">
+                <div><h3 className="text-2xl font-black">成员名录</h3><p className="text-sm text-gray-400 mt-1">管理企业员工信息及其系统角色。</p></div>
+                <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><UserPlus size={18}/> <span>录入成员</span></button>
+              </div>
+              <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+                <table className="w-full text-left">
+                  <thead><tr className="bg-gray-50 border-b"><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">基本信息</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">部门</th><th className="px-6 py-4 text-[10px] font-black text-gray-400 uppercase tracking-widest">系统角色</th><th className="px-6 py-4 text-right">操作</th></tr></thead>
+                  <tbody className="divide-y divide-gray-50">{users.map(u => (
+                    <tr key={u.id} className="hover:bg-indigo-50/20 transition-colors">
+                      <td className="px-6 py-4 flex items-center space-x-3">
+                        <div className={`w-8 h-8 rounded-full bg-${theme}-100 flex items-center justify-center font-black text-${theme}-600 text-[10px]`}>{u.name[0]}</div>
+                        <div><p className="font-bold text-gray-800 text-sm">{u.name}</p><p className="text-[10px] text-gray-400">{u.email}</p></div>
+                      </td>
+                      <td className="px-6 py-4 text-xs font-bold text-gray-500 uppercase">{u.department}</td>
+                      <td className="px-6 py-4"><div className="flex flex-wrap gap-1">{u.role.map(rid => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div></td>
+                      <td className="px-6 py-4 text-right">
+                        <button onClick={() => setViewDetail({ type: 'USER', data: u })} className="p-2 text-gray-300 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
+                        <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600"><Edit2 size={16}/></button>
+                        <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="p-2 text-gray-200 hover:text-rose-500"><Trash2 size={16}/></button>
+                      </td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {view === 'ROLES' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">角色权限定义</h3></div><button onClick={() => { setEditingRole(null); setShowRoleModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}><Plus size={18}/> <span>新增角色</span></button></div>
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {resources.map(r => (
-                  <div key={r.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:border-indigo-100 transition-all group relative">
-                    <div className={`w-14 h-14 rounded-2xl bg-${theme}-50 flex items-center justify-center mb-6`}>{r.type === 'ROOM' ? <Monitor className={`text-${theme}-600`} /> : <Coffee className="text-emerald-600" />}</div>
-                    <div className="absolute top-8 right-8 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      {currentUser.role.includes('SYSTEM_ADMIN') && (
-                        <>
-                          <button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={14}/></button>
-                          <button onClick={() => setResources(resources.filter(res => res.id !== r.id))} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
-                        </>
-                      )}
-                    </div>
-                    <h5 className="text-lg font-bold mb-1">{r.name}</h5>
-                    <p className="text-xs text-gray-400 mb-6 flex items-center space-x-1"><MapPin size={10}/> <span>{r.location} · {r.capacity}人</span></p>
-                    <div className="flex justify-between items-center pt-6 border-t border-gray-50">
-                       <StatusBadge status={r.status} theme={theme} />
-                       <button onClick={() => { setSelectedResource(r); setShowBookingModal(true); }} className={`text-xs font-bold text-${theme}-600 hover:underline transition-all`}>立即预约</button>
+                {roles.map(r => (
+                  <div key={r.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm relative group">
+                    <div className={`w-10 h-10 rounded-xl bg-${r.color}-50 flex items-center justify-center text-${r.color}-600 mb-4`}><Shield size={20}/></div>
+                    <h5 className="font-black text-gray-800">{r.name}</h5>
+                    <p className="text-xs text-gray-400 mt-2 leading-relaxed">{r.description}</p>
+                    <div className="mt-4 pt-4 border-t border-gray-50 flex justify-between items-center">
+                      <span className="text-[9px] font-black text-gray-300 uppercase">ID: {r.id}</span>
+                      <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-all"><button onClick={() => { setEditingRole(r); setShowRoleModal(true); }} className="p-1.5 text-gray-400 hover:text-indigo-600"><Edit2 size={14}/></button></div>
                     </div>
                   </div>
                 ))}
@@ -645,277 +491,181 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {view === 'WORKFLOW_CONFIG' && <div className="space-y-8 animate-in fade-in">
-              <div className="flex justify-between items-center">
-                <div>
-                  <h3 className="text-2xl font-black">审批流程引擎</h3>
-                  <p className="text-sm text-gray-400 mt-1">定义资源申请的流转逻辑，支持多级串行审核。</p>
-                </div>
-                <button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 active:scale-95 transition-all`}><Plus size={20}/> <span>新增环节</span></button>
+          {view === 'DEPARTMENTS' && (
+            <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">组织架构</h3></div><button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新一级部门' }])} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}>创建部门</button></div>
+              <div className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm min-h-[400px]">
+                {departments.filter(d => !d.parentId).map(root => (<DepartmentTreeNode key={root.id} department={root} departments={departments} onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '子部门', parentId: pid }])} onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} theme={theme} />))}
               </div>
+            </div>
+          )}
 
-              <div className="relative space-y-4">
+          {view === 'WORKFLOW_CONFIG' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">审批流程</h3></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg`}><Plus size={18}/> <span>新增节点</span></button></div>
+              <div className="space-y-4">
                 {workflow.map((node, index) => (
-                  <div key={node.id} className="relative group">
-                    {index < workflow.length - 1 && (
-                      <div className="absolute left-10 top-full h-4 w-0.5 bg-gray-100 z-0 flex items-center justify-center">
-                        <ChevronDown size={14} className="text-gray-200 mt-2" />
-                      </div>
-                    )}
-                    <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between group-hover:border-indigo-200 transition-all z-10 relative">
-                       <div className="flex items-center space-x-6">
-                          <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center font-black text-${theme}-600 border border-gray-100 shadow-inner`}>{index + 1}</div>
-                          <div>
-                             <h5 className="font-black text-gray-800">{node.name}</h5>
-                             <div className="flex items-center space-x-2 mt-1">
-                                <RoleTag roleId={node.approverRole} roles={roles} theme={theme} />
-                                <span className="text-[10px] text-gray-400 font-bold uppercase tracking-tighter">负责此环节核准</span>
-                             </div>
-                          </div>
-                       </div>
-                       <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button onClick={() => moveWorkflowNode(index, 'UP')} disabled={index === 0} className="p-2 text-gray-400 hover:text-indigo-600 disabled:opacity-20"><MoveUp size={16}/></button>
-                          <button onClick={() => moveWorkflowNode(index, 'DOWN')} disabled={index === workflow.length - 1} className="p-2 text-gray-400 hover:text-indigo-600 disabled:opacity-20"><MoveDown size={16}/></button>
-                          <div className="w-px h-4 bg-gray-100 mx-2"/>
-                          <button onClick={() => { setEditingWorkflowNode(node); setShowWorkflowModal(true); }} className="p-2 text-gray-400 hover:text-indigo-600"><Edit2 size={16}/></button>
-                          <button onClick={() => setWorkflow(workflow.filter(n => n.id !== node.id))} className="p-2 text-gray-400 hover:text-rose-500"><Trash2 size={16}/></button>
-                       </div>
+                  <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-indigo-200 transition-all">
+                    <div className="flex items-center space-x-6">
+                      <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center font-black text-${theme}-600`}>{index + 1}</div>
+                      <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-400 mt-1">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p></div>
+                    </div>
+                    <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-all">
+                      <button onClick={() => { const nw = [...workflow]; if(index > 0) { [nw[index], nw[index-1]] = [nw[index-1], nw[index]]; setWorkflow(nw); } }} disabled={index === 0} className="p-2 text-gray-400 hover:text-indigo-600 disabled:opacity-30"><ChevronUp size={16}/></button>
+                      <button onClick={() => { const nw = [...workflow]; if(index < nw.length-1) { [nw[index], nw[index+1]] = [nw[index+1], nw[index]]; setWorkflow(nw); } }} disabled={index === workflow.length-1} className="p-2 text-gray-400 hover:text-indigo-600 disabled:opacity-30"><ChevronDown size={16}/></button>
+                      <button onClick={() => { setEditingWorkflowNode(node); setShowWorkflowModal(true); }} className="p-2 text-gray-400 hover:text-indigo-600"><Edit2 size={16}/></button>
+                      <button onClick={() => setWorkflow(workflow.filter(n => n.id !== node.id))} className="p-2 text-gray-400 hover:text-rose-500"><Trash2 size={16}/></button>
                     </div>
                   </div>
                 ))}
               </div>
-            </div>}
+            </div>
+          )}
 
-          {view === 'ROLES' && <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-8">
-                <div><h3 className="text-2xl font-black">角色管理</h3><p className="text-sm text-gray-400 mt-1">自定义系统角色，配置其描述与视觉标识色。</p></div>
-                <button onClick={() => { setEditingRole(null); setShowRoleModal(true); }} className={`flex items-center space-x-2 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg transition-all active:scale-95`}><Plus size={20}/> <span>定义新角色</span></button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {roles.map(r => (
-                  <div key={r.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm hover:border-indigo-100 transition-all group relative">
-                    <div className={`w-12 h-12 rounded-2xl bg-${r.color}-50 flex items-center justify-center mb-6`}><Shield className={`text-${r.color}-600`} /></div>
-                    <div className="absolute top-8 right-8 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                      <button onClick={() => { setEditingRole(r); setShowRoleModal(true); }} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={14}/></button>
-                      <button onClick={() => setRoles(roles.filter(role => role.id !== r.id))} className="p-2 bg-gray-50 rounded-xl text-gray-400 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
-                    </div>
-                    <h5 className="text-lg font-bold mb-2">{r.name}</h5>
-                    <p className="text-xs text-gray-400 leading-relaxed min-h-[40px] mb-6 font-medium">{r.description}</p>
-                    <div className="pt-6 border-t border-gray-50 flex justify-between items-center">
-                       <span className="text-[10px] font-bold text-gray-300 uppercase tracking-widest">UID: {r.id}</span>
-                       <div className={`w-3 h-3 rounded-full bg-${r.color}-500 shadow-lg shadow-${r.color}-200`}/>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>}
-
-          {view === 'DEPARTMENTS' && <div className="max-w-3xl mx-auto space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-8">
-                <div><h3 className="text-2xl font-black">部门管理</h3><p className="text-sm text-gray-400 mt-1">管理维护企业的组织架构与各级职能部门。</p></div>
-                <button onClick={() => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新部门' }])} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg transition-all active:scale-95`}><Plus size={20}/> <span>创建一级部门</span></button>
-              </div>
-              <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm min-h-[400px]">
-                {departments.filter(d => !d.parentId).map(root => (
-                  <DepartmentTreeNode 
-                    key={root.id} 
-                    department={root} 
-                    departments={departments} 
-                    onAdd={(pid: string) => setDepartments([...departments, { id: 'dpt-' + Date.now(), name: '新子部门', parentId: pid }])} 
-                    onDelete={(id: string) => setDepartments(departments.filter(d => d.id !== id))} 
-                    onRename={(id: string, name: string) => setDepartments(departments.map(d => d.id === id ? {...d, name} : d))} 
-                    theme={theme} 
-                  />
-                ))}
-              </div>
-            </div>}
-
-          {view === 'USERS' && <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-center mb-8">
-                <div><h3 className="text-2xl font-black">成员中心</h3><p className="text-sm text-gray-400 mt-1">管理企业员工资料、部门隶属及系统角色权限。</p></div>
-                <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2 active:scale-95 transition-all`}><UserPlus size={20}/> <span>录入成员</span></button>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-                {users.map(u => (
-                  <div key={u.id} className="bg-white p-6 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col hover:border-indigo-100 transition-all">
-                    <div className="flex items-center space-x-4 mb-6">
-                       <div className={`w-14 h-14 bg-${theme}-50 rounded-2xl flex items-center justify-center text-${theme}-600 font-black text-xl shadow-inner`}>{u.name[0]}</div>
-                       <div className="min-w-0 flex-1"><h6 className="font-bold text-gray-800 truncate">{u.name}</h6><p className="text-[10px] text-gray-400 font-bold uppercase truncate">{u.department}</p></div>
-                    </div>
-                    <div className="flex-1 space-y-2">
-                       <p className="text-[9px] font-black text-gray-300 uppercase tracking-widest">系统角色集</p>
-                       <div className="flex flex-wrap gap-1.5">{u.role.map(rid => <RoleTag key={rid} roleId={rid} roles={roles} theme={theme}/>)}</div>
-                    </div>
-                    <div className="mt-6 pt-6 border-t border-gray-50 flex justify-between items-center">
-                       <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="text-xs font-bold text-gray-400 hover:text-indigo-600 flex items-center space-x-1 transition-colors"><Edit2 size={12}/> <span>资料配置</span></button>
-                       <button onClick={() => setUsers(users.filter(user => user.id !== u.id))} className="p-2 text-gray-300 hover:text-rose-600 transition-colors"><Trash2 size={14}/></button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>}
-
-          {view === 'APPROVAL_CENTER' && <div className="space-y-6 animate-in fade-in">
-              <div className="mb-8">
-                <h3 className="text-2xl font-black">审批工作台</h3>
-                <p className="text-sm text-gray-400 mt-1">作为流程负责人，您需要对以下申请进行合规性核准。</p>
-              </div>
+          {view === 'APPROVAL_CENTER' && (
+            <div className="space-y-6 animate-in fade-in">
+              <div className="mb-6"><h3 className="text-2xl font-black">审批工作台</h3><p className="text-sm text-gray-400 mt-1">处理待您核准的各类资源申请。</p></div>
               <div className="grid grid-cols-1 gap-4">
                 {bookings.filter(b => canApprove(b)).map(b => (
-                  <div key={b.id} className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between group hover:border-indigo-200 transition-all">
-                    <div className="flex-1 space-y-3">
-                      <div className="flex items-center space-x-3">
-                        <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={18}/></div>
-                        <h5 className="text-lg font-bold">{b.purpose}</h5>
-                      </div>
+                  <div key={b.id} className="bg-white p-8 rounded-3xl border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between group hover:border-indigo-200 transition-all">
+                    <div className="space-y-2">
+                      <div className="flex items-center space-x-3"><div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={18}/></div><h5 className="text-lg font-bold">{b.purpose}</h5></div>
+                      <p className="text-xs text-gray-400 pl-13">申请人：{users.find(u => u.id === b.userId)?.name} · 资源：{resources.find(r => r.id === b.resourceId)?.name}</p>
                     </div>
-                    <button onClick={() => setShowApprovalActionModal(b)} className={`mt-4 md:mt-0 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg hover:shadow-indigo-200 transition-all active:scale-95 flex items-center space-x-2`}><ShieldCheck size={18}/> <span>处理核准单</span></button>
+                    <button onClick={() => setShowApprovalActionModal(b)} className={`mt-4 md:mt-0 bg-${theme}-600 text-white px-6 py-3 rounded-2xl font-bold shadow-lg flex items-center space-x-2`}><ShieldCheck size={18}/> <span>处理</span></button>
                   </div>
                 ))}
+                {bookings.filter(b => canApprove(b)).length === 0 && <div className="text-center py-20 bg-white rounded-3xl border border-dashed text-gray-400 font-medium">当前无待处理任务</div>}
               </div>
-            </div>}
+            </div>
+          )}
 
-          {view === 'BOOKINGS' && <div className="space-y-8 animate-in fade-in">
-              {bookings.filter(b => b.userId === currentUser.id).map(b => (
-                <div key={b.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm p-8 space-y-6">
-                  <div className="flex items-start justify-between">
-                     <div className="space-y-1">
-                        <h4 className="text-xl font-black">{b.purpose}</h4>
-                        <div className="flex items-center space-x-3"><StatusBadge status={b.status} theme={theme} /><p className="text-xs text-gray-400 font-bold uppercase tracking-tighter">单据标识: {b.id}</p></div>
-                     </div>
+          {view === 'DATA_CENTER' && (
+            <div className="max-w-4xl mx-auto space-y-8 animate-in fade-in">
+              <div className="bg-white p-10 rounded-[3rem] border border-gray-100 shadow-xl relative overflow-hidden">
+                <div className={`absolute top-0 right-0 p-12 text-${theme}-600/5`}><Database size={120}/></div>
+                <div className="relative z-10">
+                  <h3 className="text-3xl font-black mb-2">数据维护</h3>
+                  <p className="text-gray-400 text-sm mb-10 max-w-lg">本地存储数据管理，支持一键重置及备份导出。</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                    <div className="bg-gray-50 p-8 rounded-3xl border border-gray-100 space-y-4">
+                      <div className={`w-12 h-12 rounded-2xl bg-${theme}-600 text-white flex items-center justify-center shadow-lg`}><Download size={24}/></div>
+                      <h5 className="font-black text-lg">导出备份</h5>
+                      <button onClick={() => { const data = { roles, users, resources, bookings, departments, workflow }; const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `SmartOffice_Backup.json`; a.click(); }} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>导出 JSON</button>
+                    </div>
+                    <div className="bg-gray-50 p-8 rounded-3xl border border-gray-100 space-y-4">
+                      <div className="w-12 h-12 rounded-2xl bg-rose-500 text-white flex items-center justify-center shadow-lg"><RefreshCw size={24}/></div>
+                      <h5 className="font-black text-lg">重置系统</h5>
+                      <button onClick={() => { if(confirm('重置将清空所有数据，确定吗？')) { localStorage.removeItem(STORAGE_KEY); window.location.reload(); } }} className="w-full py-4 bg-rose-500 text-white font-black rounded-2xl shadow-xl">重置数据</button>
+                    </div>
                   </div>
-                  <div className="bg-gray-50/50 p-6 rounded-3xl border border-gray-100"><WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} /></div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {view === 'BOOKINGS' && (
+            <div className="space-y-4 animate-in fade-in">
+              <h3 className="text-2xl font-black mb-4">我的申请动态</h3>
+              {bookings.filter(b => b.userId === currentUser.id).map(b => (
+                <div key={b.id} className="bg-white rounded-[2rem] border border-gray-100 shadow-sm overflow-hidden p-6 hover:border-indigo-200 transition-all">
+                  <div className="flex items-center justify-between mb-6">
+                    <div className="flex items-center space-x-4">
+                      <div className={`w-10 h-10 rounded-xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={20}/></div>
+                      <div><h4 className="font-black text-gray-800">{b.purpose}</h4><p className="text-[10px] text-gray-400 font-bold uppercase">{resources.find(r => r.id === b.resourceId)?.name} · {b.startTime.replace('T', ' ')}</p></div>
+                    </div>
+                    <StatusBadge status={b.status} theme={theme} />
+                  </div>
+                  <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
                 </div>
               ))}
-            </div>}
+              {bookings.filter(b => b.userId === currentUser.id).length === 0 && <div className="text-center py-20 bg-white rounded-[2.5rem] border border-dashed text-gray-400 font-medium">暂无预约申请记录</div>}
+            </div>
+          )}
         </div>
       </main>
 
-      {/* 冲突提示模态框 */}
+      {/* --- Modals --- */}
+
       {bookingConflict && (
-        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in">
-            <div className="flex justify-center mb-6">
-               <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center border-4 border-rose-100">
-                  <AlertTriangle size={32} />
-               </div>
-            </div>
-            <h3 className="text-2xl font-black text-center mb-2">预约冲突提醒</h3>
-            <p className="text-gray-400 text-center text-sm mb-8">抱歉，您选择的时间段与现有预约存在冲突，请调整申请计划。</p>
-            
-            <div className="bg-gray-50 rounded-3xl p-6 border border-gray-100 mb-8 space-y-4">
-               <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">冲突资源</span>
-                  <span className={`text-sm font-bold text-${theme}-600`}>{bookingConflict.resource.name}</span>
-               </div>
-               <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">占用人员</span>
-                  <div className="flex items-center space-x-2">
-                     <span className="text-sm font-bold text-gray-800">{bookingConflict.user.name}</span>
-                     <span className="px-1.5 py-0.5 rounded bg-gray-200 text-[8px] font-bold text-gray-500">{bookingConflict.user.department}</span>
-                  </div>
-               </div>
-               <div className="flex items-center justify-between">
-                  <span className="text-[10px] font-black text-gray-400 uppercase tracking-widest">冲突时段</span>
-                  <span className="text-sm font-bold text-rose-500">
-                     {bookingConflict.conflictingBooking.startTime.split('T')[1].slice(0, 5)} - {bookingConflict.conflictingBooking.endTime.split('T')[1].slice(0, 5)}
-                  </span>
-               </div>
-            </div>
-
-            <button onClick={() => setBookingConflict(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl hover:scale-[1.02] active:scale-95 transition-all`}>
-               返回修改
-            </button>
+        <div className="fixed inset-0 z-[200] bg-black/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-lg p-10 shadow-2xl animate-in zoom-in text-center">
+            <div className="w-16 h-16 bg-rose-50 text-rose-500 rounded-full flex items-center justify-center border-4 border-rose-100 mx-auto mb-6"><AlertTriangle size={32} /></div>
+            <h3 className="text-2xl font-black mb-2">时间冲突</h3>
+            <p className="text-gray-400 text-sm mb-8">抱歉，该时段已被 <span className="text-rose-500 font-bold">{bookingConflict.user.name}</span> 占用。</p>
+            <button onClick={() => setBookingConflict(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>关闭</button>
           </div>
         </div>
       )}
 
-      {/* 模态框管理 */}
-      {showRoleModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
-            <h2 className="text-2xl font-black mb-6">{editingRole ? '编辑角色配置' : '定义新型角色'}</h2>
-            <div className="space-y-4">
-              <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">角色名称</label><input value={editingRole?.name || ''} onChange={e => setEditingRole(prev => ({ ...prev!, name: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="例如：首席执行官" /></div>
-              <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">权责描述</label><textarea value={editingRole?.description || ''} onChange={e => setEditingRole(prev => ({ ...prev!, description: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none min-h-[100px] resize-none" placeholder="描述该角色的权限..." /></div>
+      {viewDetail && (
+        <div className="fixed inset-0 z-[150] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-[3rem] w-full max-w-xl p-10 shadow-2xl animate-in zoom-in relative">
+            <button onClick={() => setViewDetail(null)} className="absolute top-8 right-8 p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500"><X size={20}/></button>
+            <div className="flex items-center space-x-6 mb-10">
+              <div className={`w-20 h-20 rounded-3xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}>{viewDetail.type === 'USER' ? <UserCircle size={40}/> : <MapPin size={40}/>}</div>
+              <div className="text-left"><h2 className="text-3xl font-black text-gray-800">{viewDetail.data.name}</h2><p className="text-gray-400 font-bold">{viewDetail.type === 'USER' ? viewDetail.data.department : viewDetail.data.location}</p></div>
             </div>
-            <div className="mt-10 flex space-x-4"><button onClick={() => setShowRoleModal(false)} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => handleSaveRole(editingRole || {})} className={`flex-1 py-4 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg transition-all`}>保存设置</button></div>
+            <div className="grid grid-cols-2 gap-8 mb-10 text-left">
+              {viewDetail.type === 'USER' ? (<>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">邮箱地址</p><p className="font-bold text-gray-700">{viewDetail.data.email}</p></div>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">手机号码</p><p className="font-bold text-gray-700">{viewDetail.data.mobile || '--'}</p></div>
+                <div className="col-span-2 space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">所属角色</p><div className="flex flex-wrap gap-1">{viewDetail.data.role.map((r: string) => <RoleTag key={r} roleId={r} roles={roles} theme={theme}/>)}</div></div>
+              </>) : (<>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">资源类型</p><p className="font-bold text-gray-700">{viewDetail.data.type === 'ROOM' ? '多功能会议室' : '独立办公工位'}</p></div>
+                <div className="space-y-1"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">额定人数</p><p className="font-bold text-gray-700">{viewDetail.data.capacity} 人</p></div>
+                <div className="col-span-2 space-y-2"><p className="text-[10px] font-black text-gray-300 uppercase tracking-widest">内置设施</p><div className="flex flex-wrap gap-2">{viewDetail.data.features.map((f: string) => <span key={f} className="px-3 py-1 bg-gray-50 border rounded-lg text-[10px] font-bold text-gray-500">{f}</span>)}</div></div>
+              </>)}
+            </div>
+            <button onClick={() => setViewDetail(null)} className={`w-full py-4 bg-${theme}-600 text-white font-black rounded-2xl`}>返回</button>
           </div>
         </div>
       )}
 
-      {showWorkflowModal && (
-        <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
-            <h2 className="text-2xl font-black mb-6">{editingWorkflowNode ? '修改环节' : '新增环节'}</h2>
-            <div className="space-y-6">
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">环节名称</label>
-                <input value={editingWorkflowNode?.name || ''} onChange={e => setEditingWorkflowNode(prev => ({ ...prev!, name: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="例如：部门经理初审" />
-              </div>
-              <div className="space-y-1">
-                <label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">负责角色</label>
-                <select value={editingWorkflowNode?.approverRole || ''} onChange={e => setEditingWorkflowNode(prev => ({ ...prev!, approverRole: e.target.value as Role }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold">
-                  <option value="">请选择审批角色</option>
-                  {roles.map(r => <option key={r.id} value={r.id}>{r.name}</option>)}
-                </select>
-              </div>
-            </div>
-            <div className="mt-10 flex space-x-4">
-              <button onClick={() => setShowWorkflowModal(false)} className="flex-1 py-4 font-bold text-gray-400">取消</button>
-              <button onClick={() => handleSaveWorkflowNode(editingWorkflowNode || {})} disabled={!editingWorkflowNode?.name || !editingWorkflowNode?.approverRole} className={`flex-1 py-4 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg disabled:opacity-50 transition-all`}>保存环节</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showUserModal && <UserModal user={editingUser} departments={departments} roles={roles} onClose={() => setShowUserModal(false)} onSave={handleSaveUser} theme={theme} />}
-      
-      {showResourceModal && (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
-            <h2 className="text-2xl font-black mb-6">{editingResource ? '修改资产参数' : '录入办公资产'}</h2>
-            <div className="space-y-4">
-              <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">资产标识</label><input value={editingResource?.name || ''} onChange={e => setEditingResource(prev => ({ ...prev!, name: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="例如：Alpha 会议室" /></div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">资源品类</label><select value={editingResource?.type || 'ROOM'} onChange={e => setEditingResource(prev => ({ ...prev!, type: e.target.value as ResourceType }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold"><option value="ROOM">会议空间</option><option value="DESK">办公工位</option></select></div>
-                <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">额定人数</label><input type="number" value={editingResource?.capacity || 0} onChange={e => setEditingResource(prev => ({ ...prev!, capacity: parseInt(e.target.value) }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" /></div>
-              </div>
-              <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">物理空间位置</label><input value={editingResource?.location || ''} onChange={e => setEditingResource(prev => ({ ...prev!, location: e.target.value }))} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="例如：北塔 22F" /></div>
-            </div>
-            <div className="mt-10 flex space-x-4"><button onClick={() => setShowResourceModal(false)} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => handleSaveResource(editingResource || {})} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
-          </div>
-        </div>
-      )}
-
-      {showApprovalActionModal && (
-        <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
-           <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in">
-              <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-black">工作流核准</h2><button onClick={() => setShowApprovalActionModal(null)} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500 transition-colors"><X size={24}/></button></div>
-              <div className="bg-gray-50/50 p-8 rounded-[2.5rem] border border-gray-100 mb-8"><WorkflowStepper booking={showApprovalActionModal} workflow={workflow} users={users} theme={theme} /></div>
-              <div className="flex space-x-4"><button onClick={() => { const comment = prompt('请输入驳回理由:'); if(comment !== null) handleReject(showApprovalActionModal, comment); }} className="flex-1 py-5 bg-rose-50 text-rose-600 font-bold rounded-2xl transition-all hover:bg-rose-100">驳回申请</button><button onClick={() => handleApprove(showApprovalActionModal)} className={`flex-[2] py-5 bg-${theme}-600 text-white font-bold rounded-2xl shadow-lg transition-all active:scale-95`}>核准通过</button></div>
-           </div>
-        </div>
-      )}
-
+      {showUserModal && <UserModal user={editingUser} departments={departments} roles={roles} onClose={() => setShowUserModal(false)} onSave={(data: any) => { if(editingUser) setUsers(users.map(u => u.id === editingUser.id ? {...u, ...data} : u)); else setUsers([...users, { id: 'u-'+Date.now(), ...data }]); setShowUserModal(false); }} theme={theme} />}
+      {showResourceModal && <ResourceModal resource={editingResource} onClose={() => setShowResourceModal(false)} onSave={(data: any) => { if(editingResource) setResources(resources.map(r => r.id === editingResource.id ? {...r, ...data} : r)); else setResources([...resources, { id: 'r-'+Date.now(), status: 'AVAILABLE', features: [], ...data }]); setShowResourceModal(false); }} theme={theme} />}
+      {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={(data: any) => { if(editingRole) setRoles(roles.map(r => r.id === editingRole.id ? {...r, ...data} : r)); else setRoles([...roles, { id: 'rl-'+Date.now(), ...data }]); setShowRoleModal(false); }} theme={theme} />}
+      {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => { if(editingWorkflowNode) setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? {...n, ...data} : n)); else setWorkflow([...workflow, { id: 'wf-'+Date.now(), ...data }]); setShowWorkflowModal(false); }} theme={theme} />}
       {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} onClose={() => setShowBookingModal(false)} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')}/>)}
+      {showApprovalActionModal && (<ApprovalActionModal booking={showApprovalActionModal} workflow={workflow} users={users} theme={theme} onApprove={() => handleApprove(showApprovalActionModal)} onReject={(c: any) => handleReject(showApprovalActionModal, c)} onClose={() => setShowApprovalActionModal(null)} />)}
     </div>
   );
 };
 
+// --- Modal Helper Components ---
+
 const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '' });
+  const [data, setData] = useState<Partial<User>>(user || { name: '', email: '', role: ['EMPLOYEE'], department: departments[0]?.name || '' });
   return (
-    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
       <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
-        <h2 className="text-2xl font-black mb-6">{user ? '修改成员档案' : '录入职场新秀'}</h2>
+        <h2 className="text-2xl font-black mb-6">{user ? '编辑档案' : '录入成员'}</h2>
         <div className="space-y-4">
-          <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">真实姓名</label><input value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="姓名..." /></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">企业邮箱</label><input value={formData.email} onChange={e => setFormData({ ...formData, email: e.target.value })} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none" placeholder="user@company.com" /></div>
-          <div className="space-y-1"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">挂靠部门</label><select value={formData.department} onChange={e => setFormData({ ...formData, department: e.target.value })} className="w-full p-4 bg-gray-50 border border-gray-100 rounded-2xl outline-none font-bold">{departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}</select></div>
-          <div className="space-y-2"><label className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">系统角色分配</label><div className="flex flex-wrap gap-2 pt-2">{roles.map((r: any) => { const isSelected = formData.role?.includes(r.id); return (<button key={r.id} type="button" onClick={() => { const current = formData.role || []; const next = current.includes(r.id) ? current.filter(id => id !== r.id) : [...current, r.id]; setFormData({...formData, role: next}); }} className={`px-3 py-2 rounded-xl text-[10px] font-bold transition-all ${isSelected ? `bg-${theme}-600 text-white shadow-md` : 'bg-gray-100 text-gray-400 hover:bg-gray-200'}`}>{r.name}</button>); })}</div></div>
+          <input value={data.name} onChange={e => setData({...data, name: e.target.value})} placeholder="真实姓名" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <input value={data.email} onChange={e => setData({...data, email: e.target.value})} placeholder="企业邮箱" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <select value={data.department} onChange={e => setData({...data, department: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold">{departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}</select>
         </div>
-        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(formData)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>确认入库</button></div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(data)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg`}>保存</button></div>
+      </div>
+    </div>
+  );
+};
+
+const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
+  const [data, setData] = useState<Partial<Resource>>(resource || { name: '', type: 'ROOM', capacity: 0, location: '' });
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
+        <h2 className="text-2xl font-black mb-6">{resource ? '编辑资产' : '新增办公资产'}</h2>
+        <div className="space-y-4">
+          <input value={data.name} onChange={e => setData({...data, name: e.target.value})} placeholder="资源名称" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <div className="grid grid-cols-2 gap-4">
+            <select value={data.type} onChange={e => setData({...data, type: e.target.value as any})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold"><option value="ROOM">会议室</option><option value="DESK">工位</option></select>
+            <input type="number" value={data.capacity} onChange={e => setData({...data, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          </div>
+          <input value={data.location} onChange={e => setData({...data, location: e.target.value})} placeholder="地理位置" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+        </div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(data)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl`}>入库</button></div>
       </div>
     </div>
   );
@@ -924,151 +674,122 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
 const BookingFormModal = ({ resource, theme, onClose, onConfirm, availableResources }: any) => {
   const [purpose, setPurpose] = useState('');
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("10:00");
+  
+  // Default duration logic
+  const [endDate, setEndDate] = useState(() => {
+    const d = new Date();
+    if (resource.type === 'DESK') d.setMonth(d.getMonth() + 1); // 1 month for Desk
+    return d.toISOString().split('T')[0];
+  });
+  const [endTime, setEndTime] = useState(() => {
+    if (resource.type === 'ROOM') return "10:00"; // 1 hour for Room (09:00 - 10:00)
+    return "09:00";
+  });
+
   const [loadingAI, setLoadingAI] = useState(false);
   const [recommendation, setRecommendation] = useState('');
 
-  const setQuickTime = (start: string, end: string) => {
-    setStartTime(start);
-    setEndTime(end);
-    setEndDate(startDate);
-  };
-
   return (
-    <div className="fixed inset-0 z-[60] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[100] bg-black/30 backdrop-blur-sm flex items-center justify-center p-4">
       <div className="bg-white p-10 rounded-[3rem] w-full max-w-lg shadow-2xl animate-in zoom-in">
-        <h2 className="text-2xl font-black mb-1">预约资源申请</h2>
-        <p className="text-xs text-gray-400 mb-8 flex items-center space-x-1"><span>目标资源: <span className={`text-${theme}-600 font-black`}>{resource.name}</span></span></p>
+        <h2 className="text-2xl font-black mb-1">资源预约</h2>
+        <p className="text-xs text-gray-400 mb-8">目标: <span className={`text-${theme}-600 font-bold`}>{resource.name}</span> | {resource.type === 'ROOM' ? '默认 1 小时' : '默认 1 个月'}</p>
         <div className="space-y-6">
-           <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-1">
-                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">开始日期</label>
-                 <input type="date" value={startDate} onChange={e => {
-                    setStartDate(e.target.value);
-                    if (e.target.value > endDate) setEndDate(e.target.value);
-                 }} className="w-full p-4 bg-gray-50 rounded-2xl font-bold outline-none border-none" />
-              </div>
-              <div className="space-y-1">
-                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">结束日期</label>
-                 <input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold outline-none border-none" />
-              </div>
+           <div className="grid grid-cols-2 gap-4 text-left">
+             <div className="space-y-1"><label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">开始日期</label><input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
+             <div className="space-y-1"><label className="text-[9px] font-black text-gray-400 uppercase tracking-widest">结束日期</label><input type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
            </div>
-           
-           <div className="space-y-4">
-              <div className="flex justify-between items-center">
-                 <label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">选择时段</label>
-                 <div className="flex space-x-2">
-                    <button onClick={() => setQuickTime("09:00", "18:00")} className="px-2 py-1 bg-gray-100 rounded-lg text-[10px] font-bold text-gray-600 hover:bg-gray-200 transition-colors">全天</button>
-                    <button onClick={() => setQuickTime("09:00", "12:00")} className="px-2 py-1 bg-gray-100 rounded-lg text-[10px] font-bold text-gray-600 hover:bg-gray-200 transition-colors">上午</button>
-                    <button onClick={() => setQuickTime("13:00", "18:00")} className="px-2 py-1 bg-gray-100 rounded-lg text-[10px] font-bold text-gray-600 hover:bg-gray-200 transition-colors">下午</button>
-                 </div>
-              </div>
-              <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-1">
-                    <label className="text-[9px] text-gray-300 font-bold ml-1">开始时刻</label>
-                    <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold outline-none border-none" />
-                 </div>
-                 <div className="space-y-1">
-                    <label className="text-[9px] text-gray-300 font-bold ml-1">结束时刻</label>
-                    <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold outline-none border-none" />
-                 </div>
-              </div>
+           <div className="grid grid-cols-2 gap-4 text-left">
+             <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">开始时刻</label><input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
+             <div className="space-y-1"><label className="text-[9px] text-gray-300 font-black ml-1 uppercase">结束时刻</label><input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full p-4 bg-gray-50 rounded-2xl font-bold border-none" /></div>
            </div>
-
-           <div className="space-y-1"><label className="text-[9px] font-bold text-gray-400 uppercase tracking-widest">申请用途详述</label><textarea value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="请输入申请理由..." className="w-full p-4 bg-gray-50 rounded-[2rem] h-24 outline-none text-sm transition-all focus:bg-white resize-none" /></div>
-           
-           <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100">
-              <button onClick={async () => { setLoadingAI(true); const rec = await getSmartRecommendation(purpose, 1, availableResources); setRecommendation(rec); setLoadingAI(false); }} className="text-[10px] font-black text-indigo-600 flex items-center space-x-1 mb-1 hover:opacity-70 transition-opacity"><Zap size={12}/> <span>AI 智能空间匹配建议</span></button>
-              <p className="text-[10px] text-indigo-700/70 italic min-h-[1.5em] leading-relaxed">{loadingAI ? 'AI 正在深度分析中...' : recommendation || '在此输入用途后，点击上方 AI 按钮可获取选址优化建议。'}</p>
+           <textarea value={purpose} onChange={e => setPurpose(e.target.value)} placeholder="预约理由（例如：周度项目复盘、独立办公等）" className="w-full p-4 bg-gray-50 rounded-[2rem] h-24 outline-none text-sm resize-none shadow-inner" />
+           <div className="p-4 bg-indigo-50/50 rounded-2xl border border-indigo-100 text-left">
+              <button onClick={async () => { setLoadingAI(true); const rec = await getSmartRecommendation(purpose, 1, availableResources); setRecommendation(rec); setLoadingAI(false); }} className="text-[10px] font-black text-indigo-600 flex items-center space-x-1 mb-1 hover:opacity-70 transition-all"><Zap size={12}/> <span>AI 选址建议</span></button>
+              <p className="text-[10px] text-indigo-700/70 italic leading-relaxed min-h-[1.5em]">{loadingAI ? '分析中...' : recommendation || '输入用途后点击 AI 按钮获取建议。'}</p>
            </div>
         </div>
-        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onConfirm(resource.id, purpose, `${startDate}T${startTime}`, `${endDate}T${endTime}`)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>提交流程申请</button></div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onConfirm(resource.id, purpose, `${startDate}T${startTime}`, `${endDate}T${endTime}`)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg transition-all active:scale-95`}>立即申请</button></div>
       </div>
     </div>
   );
 };
 
-// Component to display the progress of a booking through its approval workflow
-const WorkflowStepper = ({ booking, workflow, users, theme }: { booking: Booking, workflow: ApprovalNode[], users: User[], theme: string }) => {
-  return (
-    <div className="space-y-6">
-      {/* Starting point: Submission */}
-      <div className="relative flex items-start space-x-4">
-        <div className="absolute left-4 top-8 bottom-0 w-0.5 bg-gray-100 z-0" />
-        <div className={`w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600 z-10 shadow-sm border border-emerald-200`}>
-          <Check size={16} />
-        </div>
-        <div className="flex-1 pb-4">
-          <p className="text-xs font-black text-gray-800">申请已提交</p>
-          <p className="text-[10px] text-gray-400 font-bold uppercase tracking-tight">{new Date(booking.createdAt).toLocaleString()}</p>
-        </div>
-      </div>
-
-      {/* Workflow nodes */}
-      {workflow.map((node, index) => {
+const WorkflowStepper = ({ booking, workflow, users, theme }: any) => (
+  <div className="space-y-4">
+    <div className="flex items-center space-x-4">
+      <div className={`w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_10px_rgba(16,185,129,0.3)]`}></div>
+      <p className="text-[10px] font-black text-gray-400 uppercase">流程记录</p>
+    </div>
+    <div className="flex flex-wrap gap-4">
+      <div className="flex items-center space-x-2"><div className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-emerald-600"><Check size={12}/></div><span className="text-[10px] font-bold text-gray-500">已提交</span></div>
+      {workflow.map((node: any, index: any) => {
         const history = booking.approvalHistory[index];
         const isCurrent = booking.status === 'PENDING' && booking.currentNodeIndex === index;
         const isApproved = history?.status === 'APPROVED';
         const isRejected = history?.status === 'REJECTED';
-        
         return (
-          <div key={node.id} className="relative flex items-start space-x-4">
-            {index < workflow.length - 1 && (
-              <div className="absolute left-4 top-8 bottom-0 w-0.5 bg-gray-100 z-0" />
-            )}
-            <div className={`w-8 h-8 rounded-full flex items-center justify-center z-10 border transition-all ${
-              isRejected ? 'bg-rose-100 text-rose-600 border-rose-200 shadow-sm shadow-rose-100' :
-              isApproved ? `bg-emerald-100 text-emerald-600 border-emerald-200 shadow-sm shadow-emerald-100` :
-              isCurrent ? `bg-amber-100 text-amber-600 border-amber-200 animate-pulse shadow-md shadow-amber-100` :
-              'bg-gray-50 text-gray-300 border-gray-100'
-            }`}>
-              {isRejected ? <X size={14} /> : 
-               isApproved ? <Check size={14} /> : 
-               isCurrent ? <Clock size={14} /> :
-               <div className="w-1.5 h-1.5 rounded-full bg-gray-300" />}
-            </div>
-            <div className="flex-1 pb-6">
-              <div className="flex justify-between items-start">
-                <div>
-                  <h6 className={`text-xs font-black ${isCurrent ? `text-amber-600` : isRejected ? 'text-rose-600' : isApproved ? 'text-emerald-600' : 'text-gray-400'}`}>
-                    {node.name}
-                  </h6>
-                  <p className="text-[9px] text-gray-400 font-bold uppercase tracking-widest mt-0.5">节点负责人: {node.approverRole}</p>
-                </div>
-                {history && (
-                  <div className="text-right">
-                    <p className="text-[10px] font-black text-gray-600">{history.approverName}</p>
-                    <p className="text-[9px] text-gray-400">{new Date(history.timestamp).toLocaleString()}</p>
-                  </div>
-                )}
-              </div>
-              {history?.comment && (
-                <div className="mt-3 p-3 bg-white rounded-xl border border-gray-100 text-[10px] text-gray-500 italic shadow-sm relative">
-                  <div className="absolute -top-2 left-4 w-0 h-0 border-8 border-transparent border-b-gray-100" />
-                  备注: {history.comment}
-                </div>
-              )}
+          <div key={node.id} className="flex items-center space-x-2">
+            <ChevronRight size={12} className="text-gray-300"/>
+            <div className={`flex items-center space-x-2 px-3 py-1.5 rounded-xl border transition-all ${isRejected ? 'bg-rose-50 border-rose-100 text-rose-600' : isApproved ? 'bg-emerald-50 border-emerald-100 text-emerald-600' : isCurrent ? 'bg-amber-50 border-amber-100 text-amber-600 shadow-sm animate-pulse' : 'bg-gray-50 border-gray-100 text-gray-400'}`}>
+              <span className="text-[10px] font-black">{node.name}</span>
+              {isApproved && <Check size={10}/>}
+              {isRejected && <X size={10}/>}
             </div>
           </div>
         );
       })}
+    </div>
+  </div>
+);
 
-      {/* End state summary */}
-      {(booking.status === 'APPROVED' || booking.status === 'REJECTED') && (
-        <div className="flex items-center space-x-4">
-          <div className={`w-8 h-8 rounded-full flex items-center justify-center text-white shadow-lg ${booking.status === 'APPROVED' ? `bg-indigo-600 shadow-indigo-200` : 'bg-rose-600 shadow-rose-200'}`}>
-            {booking.status === 'APPROVED' ? <CheckCircle size={16} /> : <XCircle size={16} />}
-          </div>
-          <div className="flex-1">
-            <p className="text-xs font-black text-gray-800">流程已终结</p>
-            <p className={`text-[10px] font-black uppercase tracking-widest ${booking.status === 'APPROVED' ? 'text-emerald-600' : 'text-rose-600'}`}>
-              最终结果: {booking.status === 'APPROVED' ? '已核准' : '已驳回'}
-            </p>
-          </div>
+const ApprovalActionModal = ({ booking, workflow, users, theme, onApprove, onReject, onClose }: any) => (
+  <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <div className="bg-white rounded-[3rem] w-full max-2xl p-10 shadow-2xl animate-in zoom-in">
+      <div className="flex items-center justify-between mb-8"><h2 className="text-2xl font-black">工单审批</h2><button onClick={onClose} className="p-3 bg-gray-50 rounded-2xl text-gray-400 hover:text-rose-500"><X size={24}/></button></div>
+      <div className="bg-gray-50 p-8 rounded-[2rem] border mb-8 text-left">
+        <p className="text-xs font-black text-gray-400 uppercase tracking-widest mb-1">申请理由</p>
+        <p className="text-lg font-bold text-gray-800 mb-6">{booking.purpose}</p>
+        <div className="grid grid-cols-2 gap-4">
+          <div><p className="text-[10px] text-gray-400 uppercase font-black">申请人</p><p className="font-bold text-gray-700">{users.find((u:any) => u.id === booking.userId)?.name}</p></div>
+          <div><p className="text-[10px] text-gray-400 uppercase font-black">时段</p><p className="font-bold text-gray-700">{booking.startTime.replace('T', ' ')}</p></div>
         </div>
-      )}
+      </div>
+      <div className="flex space-x-4"><button onClick={() => { const c = prompt('理由：'); if(c !== null) onReject(c); }} className="flex-1 py-5 bg-rose-50 text-rose-600 font-bold rounded-2xl">拒绝申请</button><button onClick={onApprove} className={`flex-[2] py-5 bg-${theme}-600 text-white font-black rounded-2xl shadow-xl`}>通过核准</button></div>
+    </div>
+  </div>
+);
+
+const RoleModal = ({ role, onClose, onSave, theme }: any) => {
+  const [data, setData] = useState<Partial<RoleDefinition>>(role || { name: '', description: '', color: 'indigo' });
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
+        <h2 className="text-2xl font-black mb-6">{role ? '编辑角色' : '新增角色'}</h2>
+        <div className="space-y-4">
+          <input value={data.name} onChange={e => setData({...data, name: e.target.value})} placeholder="角色名称" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <select value={data.color} onChange={e => setData({...data, color: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold"><option value="indigo">靛蓝色</option><option value="emerald">祖母绿</option><option value="rose">玫瑰红</option><option value="amber">琥珀色</option></select>
+          <textarea value={data.description} onChange={e => setData({...data, description: e.target.value})} placeholder="角色职能描述" className="w-full p-4 bg-gray-50 rounded-2xl h-24 outline-none resize-none" />
+        </div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(data)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg`}>保存</button></div>
+      </div>
+    </div>
+  );
+};
+
+const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
+  const [data, setData] = useState<Partial<ApprovalNode>>(node || { name: '', approverRole: roles[0]?.id || '' });
+  return (
+    <div className="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2.5rem] w-full max-w-md p-10 shadow-2xl animate-in zoom-in">
+        <h2 className="text-2xl font-black mb-6">{node ? '编辑节点' : '新增审批节点'}</h2>
+        <div className="space-y-4">
+          <input value={data.name} onChange={e => setData({...data, name: e.target.value})} placeholder="节点名称（如：部门预审）" className="w-full p-4 bg-gray-50 rounded-2xl outline-none" />
+          <select value={data.approverRole} onChange={e => setData({...data, approverRole: e.target.value})} className="w-full p-4 bg-gray-50 rounded-2xl font-bold">{roles.map((r:any) => <option key={r.id} value={r.id}>{r.name}</option>)}</select>
+        </div>
+        <div className="mt-10 flex space-x-4"><button onClick={onClose} className="flex-1 py-4 font-bold text-gray-400">取消</button><button onClick={() => onSave(data)} className={`flex-1 py-4 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg`}>确认</button></div>
+      </div>
     </div>
   );
 };
@@ -1085,7 +806,7 @@ const DepartmentTreeNode = ({ department, departments, onAdd, onDelete, onRename
         <div className="flex items-center space-x-3 bg-white p-2 rounded-xl border border-gray-100 shadow-sm hover:border-indigo-200 transition-all flex-1 min-w-0">
           <button onClick={() => setIsExpanded(!isExpanded)} className={`w-6 h-6 rounded-lg bg-${theme}-50 flex items-center justify-center text-${theme}-600 transition-colors`}>{children.length > 0 ? (isExpanded ? <ChevronDown size={12} /> : <ChevronRight size={12} />) : <FolderTree size={12} />}</button>
           {isEditing ? <input autoFocus value={newName} onChange={e => setNewName(e.target.value)} onBlur={handleRename} onKeyDown={e => e.key === 'Enter' && handleRename()} className="flex-1 bg-gray-50 border-none outline-none text-xs font-bold p-1 rounded-md" /> : <span className="text-xs font-bold text-gray-700 truncate">{department.name}</span>}
-          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => setIsEditing(true)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={10}/></button><button onClick={() => onAdd(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-emerald-600 transition-colors"><Plus size={10}/></button><button onClick={() => onDelete(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-rose-600 transition-colors"><Trash2 size={10}/></button></div>
+          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity"><button onClick={() => setIsEditing(true)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-indigo-600 transition-colors"><Edit2 size={10}/></button><button onClick={() => onAdd(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-emerald-600 transition-colors"><Plus size={10}/></button><button onClick={() => onDelete(department.id)} className="p-1 hover:bg-gray-100 rounded text-gray-400 hover:text-rose-500 transition-colors"><Trash2 size={10}/></button></div>
         </div>
       </div>
       {isExpanded && children.length > 0 && <div className="mt-1">{children.map((child: any) => (<DepartmentTreeNode key={child.id} department={child} departments={departments} onAdd={onAdd} onDelete={onDelete} onRename={onRename} theme={theme}/>))}</div>}

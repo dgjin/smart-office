@@ -14,6 +14,8 @@ export interface User {
   email: string;
   role: Role[]; 
   department: string;
+  landline?: string;
+  mobile?: string;
 }
 
 export interface Department {
