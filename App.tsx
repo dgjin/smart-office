@@ -9,7 +9,7 @@ import {
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
-  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye
+  Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -26,6 +26,45 @@ const THEMES = [
   { id: 'rose', name: '胭脂红', color: 'bg-rose-600' },
   { id: 'purple', name: '极光紫', color: 'bg-purple-600' },
 ];
+
+// --- Helper Functions for Scheduling ---
+
+const formatTime = (date: Date) => {
+  return `${date.getHours().toString().padStart(2, '0')}:${date.getMinutes().toString().padStart(2, '0')}`;
+};
+
+const formatDate = (date: Date) => {
+  return date.toISOString().split('T')[0];
+};
+
+const findNextAvailableSlot = (resourceId: string, bookings: Booking[], durationMinutes: number) => {
+  let pointer = new Date();
+  pointer.setMinutes(Math.ceil(pointer.getMinutes() / 30) * 30, 0, 0); // Round up to next 30min
+  
+  const todayEnd = new Date(pointer);
+  todayEnd.setHours(21, 0, 0, 0); // Support bookings until 9 PM
+
+  while (pointer < todayEnd) {
+    const end = new Date(pointer.getTime() + durationMinutes * 60000);
+    const hasConflict = bookings.some(b => {
+      if (b.resourceId !== resourceId || b.status === 'REJECTED' || b.status === 'CANCELLED') return false;
+      const bStart = new Date(b.startTime);
+      const bEnd = new Date(b.endTime);
+      return (pointer < bEnd && end > bStart);
+    });
+
+    if (!hasConflict) {
+      return { start: new Date(pointer), end };
+    }
+    pointer = new Date(pointer.getTime() + 30 * 60000); // Step 30 mins
+  }
+  
+  // If not found today, suggest tomorrow 9 AM
+  const tomorrow = new Date();
+  tomorrow.setDate(tomorrow.getDate() + 1);
+  tomorrow.setHours(9, 0, 0, 0);
+  return { start: tomorrow, end: new Date(tomorrow.getTime() + durationMinutes * 60000) };
+};
 
 // --- Helper Components ---
 
@@ -230,7 +269,14 @@ const App: React.FC = () => {
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
   const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
-  const [bookingConflict, setBookingConflict] = useState<{ resource: Resource, requestedStart: string, requestedEnd: string, resourceBookings: Booking[] } | null>(null);
+  const [bookingConflict, setBookingConflict] = useState<{ 
+    resource: Resource, 
+    requestedStart: string, 
+    requestedEnd: string, 
+    resourceBookings: Booking[],
+    errorType: 'PAST_TIME' | 'CONFLICT',
+    suggestion: { start: Date, end: Date }
+  } | null>(null);
   const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
   const [allExpanded, setAllExpanded] = useState(true);
@@ -261,27 +307,48 @@ const App: React.FC = () => {
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
     
-    const start = new Date(startTime).getTime();
-    const end = new Date(endTime).getTime();
+    const now = new Date();
+    const start = new Date(startTime);
+    const end = new Date(endTime);
+    const requestedDuration = (end.getTime() - start.getTime()) / 60000;
 
+    // 1. Validation: End after Start
     if (end <= start) {
       alert("提交失败：结束时间必须晚于开始时间，请检查您的选择。");
       return;
     }
 
+    // 2. Validation: Not in the past
+    if (start < now) {
+      const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
+      setBookingConflict({
+        resource,
+        requestedStart: startTime,
+        requestedEnd: endTime,
+        resourceBookings: bookings.filter(b => b.resourceId === resourceId && b.status !== 'REJECTED'),
+        errorType: 'PAST_TIME',
+        suggestion
+      });
+      return;
+    }
+
+    // 3. Validation: Overlap check
     const conflict = bookings.find(b => 
       b.resourceId === resourceId && 
       (b.status === 'APPROVED' || b.status === 'PENDING') && 
-      (start < new Date(b.endTime).getTime() && end > new Date(b.startTime).getTime())
+      (start < new Date(b.endTime) && end > new Date(b.startTime))
     );
 
     if (conflict) {
       const resourceBookings = bookings.filter(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING'));
+      const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
       setBookingConflict({ 
         resource, 
         requestedStart: startTime,
         requestedEnd: endTime,
-        resourceBookings 
+        resourceBookings,
+        errorType: 'CONFLICT',
+        suggestion
       });
       return;
     }
@@ -858,6 +925,12 @@ const App: React.FC = () => {
           users={users} 
           theme={theme} 
           onClose={() => setBookingConflict(null)} 
+          onApplySuggestion={(start: Date, end: Date) => {
+            if (selectedResource) {
+              handleBooking(selectedResource.id, "智能调整预约", start.toISOString(), end.toISOString());
+              setBookingConflict(null);
+            }
+          }}
         />
       )}
 
@@ -994,7 +1067,7 @@ const App: React.FC = () => {
   );
 };
 
-// --- Login & Password Components ---
+// --- Login View ---
 
 const LoginView = ({ users, onLogin, theme }: any) => {
   const [id, setId] = useState('');
@@ -1045,67 +1118,95 @@ const LoginView = ({ users, onLogin, theme }: any) => {
 
 // --- Specialized Components ---
 
-const BookingConflictModal = ({ conflict, users, theme, onClose }: any) => {
+const BookingConflictModal = ({ conflict, users, theme, onClose, onApplySuggestion }: any) => {
   const [showDetails, setShowDetails] = useState(false);
+  const isPastTime = conflict.errorType === 'PAST_TIME';
   
   return (
     <div className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-md flex items-center justify-center p-4">
-      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in">
-        <div className="text-center mb-10">
-           <div className="w-20 h-20 bg-rose-50 text-rose-500 rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50">
+      <div className="bg-white rounded-[3rem] w-full max-w-2xl p-10 shadow-2xl animate-in zoom-in overflow-hidden">
+        <div className="text-center mb-8">
+           <div className={`w-20 h-20 bg-rose-50 ${isPastTime ? 'text-amber-500' : 'text-rose-500'} rounded-3xl flex items-center justify-center border-4 border-rose-100 mx-auto mb-6 shadow-xl shadow-rose-200/50`}>
              <AlertTriangle size={40} />
            </div>
-           <h3 className="text-3xl font-black text-gray-800 mb-2">预约时间冲突</h3>
-           <p className="text-gray-400 font-medium leading-relaxed">抱歉，您申请的资源 <span className={`text-${theme}-600 font-bold underline`}>{conflict.resource.name}</span> 在此时段已被占用或不可用。</p>
-        </div>
-
-        <div className="p-6 bg-rose-50/50 border border-rose-100 rounded-[2rem] space-y-4 mb-6 relative overflow-hidden">
-           <h5 className="text-[10px] font-black text-rose-500 uppercase tracking-widest flex items-center space-x-2">
-             <Zap size={14}/> <span>您的申请请求</span>
-           </h5>
-           <p className="text-sm font-black text-gray-700 leading-relaxed">
-             从 {conflict.requestedStart.replace('T', ' ')} 到 {conflict.requestedEnd.replace('T', ' ')}
+           <h3 className="text-3xl font-black text-gray-800 mb-2">
+             {isPastTime ? '无法预约过去的时间' : '预约时段冲突'}
+           </h3>
+           <p className="text-gray-400 font-medium leading-relaxed px-4">
+             {isPastTime 
+               ? '您选择的开始时间早于当前时刻，系统无法处理该请求。' 
+               : `资源 ${conflict.resource.name} 在您申请的时段已被占用。`}
            </p>
         </div>
 
-        {!showDetails ? (
-          <button 
-            onClick={() => setShowDetails(true)}
-            className="w-full py-4 mb-8 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 rounded-2xl flex items-center justify-center space-x-2 transition-all font-bold"
-          >
-            <Eye size={18}/> <span>查看冲突详情</span>
-          </button>
-        ) : (
-          <div className="p-6 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-4 mb-8 relative overflow-hidden animate-in slide-in-from-top-4">
-            <h5 className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-2">
-              <History size={14}/> <span>该资源现有冲突项</span>
-            </h5>
-            <div className="space-y-3 max-h-60 overflow-y-auto custom-scrollbar pr-2">
-              {conflict.resourceBookings.map((b: Booking) => {
-                const user = users.find((u: User) => u.id === b.userId);
-                return (
-                  <div key={b.id} className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm">
-                    <div className="flex justify-between items-start mb-2">
-                       <div>
-                         <p className="text-xs font-black text-gray-700">{user?.name} · {user?.department}</p>
-                         <p className="text-[10px] text-gray-400 font-medium">用途: {b.purpose}</p>
-                       </div>
-                       <StatusBadge status={b.status} theme={theme} />
+        {/* Suggestion Box */}
+        <div className={`p-6 bg-${theme}-50 border-2 border-${theme}-100 rounded-[2.5rem] mb-8 relative overflow-hidden group`}>
+           <div className="flex items-center justify-between mb-4">
+              <h5 className={`text-[11px] font-black text-${theme}-600 uppercase tracking-widest flex items-center space-x-2`}>
+                <Lightbulb size={16} className="animate-bounce" /> <span>智能预订建议</span>
+              </h5>
+              <span className={`text-[10px] font-bold text-${theme}-400`}>为您匹配到最近空档</span>
+           </div>
+           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-black text-gray-800 leading-tight">
+                  {formatDate(conflict.suggestion.start) === formatDate(new Date()) ? '今日' : '明日'} {formatTime(conflict.suggestion.start)} - {formatTime(conflict.suggestion.end)}
+                </p>
+                <p className="text-[10px] text-gray-400 font-bold mt-1 uppercase tracking-tighter">
+                   {conflict.resource.name} · {conflict.resource.location}
+                </p>
+              </div>
+              <button 
+                onClick={() => onApplySuggestion(conflict.suggestion.start, conflict.suggestion.end)}
+                className={`px-6 py-3 bg-${theme}-600 text-white font-black rounded-2xl shadow-lg hover:scale-105 transition-all text-xs flex items-center space-x-2`}
+              >
+                <Check size={14}/> <span>采用此建议</span>
+              </button>
+           </div>
+           <Zap className={`absolute -right-4 -bottom-4 text-${theme}-600/5 group-hover:scale-110 transition-transform`} size={120}/>
+        </div>
+
+        {/* Conflicting Request Info */}
+        {!isPastTime && (
+          <div className="mb-8">
+            <button 
+              onClick={() => setShowDetails(!showDetails)}
+              className="w-full py-4 bg-white border-2 border-dashed border-gray-200 text-gray-400 hover:text-indigo-600 hover:border-indigo-200 rounded-2xl flex items-center justify-center space-x-2 transition-all font-bold text-sm"
+            >
+              <Eye size={18}/> <span>{showDetails ? '隐藏冲突详情' : '查看具体冲突项'}</span>
+            </button>
+            
+            {showDetails && (
+              <div className="mt-4 p-4 bg-gray-50 border border-gray-100 rounded-[2rem] space-y-3 max-h-48 overflow-y-auto custom-scrollbar animate-in slide-in-from-top-2">
+                {conflict.resourceBookings.filter((b: Booking) => {
+                   const bStart = new Date(b.startTime);
+                   const bEnd = new Date(b.endTime);
+                   const rStart = new Date(conflict.requestedStart);
+                   const rEnd = new Date(conflict.requestedEnd);
+                   return (rStart < bEnd && rEnd > bStart);
+                }).map((b: Booking) => {
+                  const user = users.find((u: User) => u.id === b.userId);
+                  return (
+                    <div key={b.id} className="p-4 bg-white rounded-2xl border border-gray-100 shadow-sm flex justify-between items-start">
+                      <div>
+                        <p className="text-xs font-black text-gray-700">{user?.name} · {user?.department}</p>
+                        <p className="text-[10px] text-gray-400 mt-1">用途: {b.purpose}</p>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-[9px] font-black text-rose-500 bg-rose-50 px-1.5 py-0.5 rounded mb-1 inline-block">占用中</span>
+                        <p className="text-[10px] font-bold text-gray-500">{b.startTime.split('T')[1].slice(0, 5)} - {b.endTime.split('T')[1].slice(0, 5)}</p>
+                      </div>
                     </div>
-                    <div className="flex items-center space-x-2 text-[10px] font-bold text-rose-500 bg-rose-50 px-2 py-1 rounded-lg w-fit">
-                      <Clock size={12}/>
-                      <span>{b.startTime.replace('T', ' ')} - {b.endTime.replace('T', ' ')}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         )}
 
         <div className="flex space-x-4">
-          <button onClick={onClose} className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all">取消</button>
-          <button onClick={onClose} className={`flex-1 py-5 bg-${theme}-600 hover:bg-${theme}-700 text-white font-black rounded-3xl shadow-2xl transition-all`}>重新选择时间</button>
+          <button onClick={onClose} className="flex-1 py-5 bg-gray-100 hover:bg-gray-200 text-gray-500 font-black rounded-3xl transition-all">取消预订</button>
+          <button onClick={onClose} className={`flex-1 py-5 bg-${theme}-600/10 text-${theme}-600 font-black rounded-3xl border border-${theme}-200 transition-all`}>手动调整时间</button>
         </div>
       </div>
     </div>
