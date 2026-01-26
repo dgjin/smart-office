@@ -1,5 +1,4 @@
 
-// ... existing imports
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
@@ -17,7 +16,7 @@ import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNod
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
 import { getSmartRecommendation } from './services/geminiService';
 
-const STORAGE_KEY = 'SMART_OFFICE_DATA_V27';
+const STORAGE_KEY = 'SMART_OFFICE_DATA_V34';
 const THEME_KEY = 'SMART_OFFICE_THEME';
 
 // --- Theme Config ---
@@ -76,10 +75,14 @@ const StatusBadge = ({ status, theme }: { status: string, theme: string }) => {
     OCCUPIED: 'bg-rose-50 text-rose-600 border-rose-100', 
     APPROVED: `bg-${theme}-50 text-${theme}-600 border-${theme}-100`, 
     REJECTED: 'bg-rose-50 text-rose-600 border-rose-100', 
+    CANCELLED: 'bg-gray-100 text-gray-400 border-gray-200 line-through',
     COMPLETED: 'bg-gray-100 text-gray-400 border-gray-200',
     MAINTENANCE: 'bg-gray-50 text-gray-500 border-gray-200'
   };
-  const labels: any = { AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', OCCUPIED: '占用', COMPLETED: '结束', MAINTENANCE: '维护中' };
+  const labels: any = { 
+    AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', 
+    OCCUPIED: '占用', CANCELLED: '已撤销', COMPLETED: '结束', MAINTENANCE: '维护中' 
+  };
   return <span className={`px-2 py-0.5 rounded-lg text-[10px] font-bold border ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
 };
 
@@ -269,7 +272,7 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
               {days.map((d, i) => {
                 const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                 return (
-                  <th key={i} className={`p-2 text-[10px] font-bold text-gray-400 border-b border-gray-100 min-w-[40px] text-center ${isWeekend ? 'bg-gray-50/50 text-gray-300' : ''}`}>
+                  <th key={i} className={`p-2 text-[10px] font-bold text-gray-400 border-b border-gray-100 min-w-[40px] text-center ${isWeekend ? 'bg-slate-50 text-slate-400' : ''}`}>
                     {d.getMonth() + 1}/{d.getDate()}
                   </th>
                 );
@@ -295,10 +298,10 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
 
                   return (
-                    <td key={i} className={`p-1 border-b border-gray-50 text-center ${isWeekend ? 'bg-gray-50/30' : ''}`}>
+                    <td key={i} className={`p-1 border-b border-gray-50 text-center ${isWeekend ? 'bg-slate-50' : ''}`}>
                       <button 
                         onClick={() => onDayClick(r.id, d)}
-                        className={`w-full h-8 rounded-lg transition-all hover:scale-110 flex items-center justify-center ${bookingCount > 0 ? `bg-${theme}-500 shadow-sm` : 'hover:bg-gray-100'}`}
+                        className={`w-full h-8 rounded-lg transition-all flex items-center justify-center ${bookingCount > 0 ? `bg-${theme}-600 border-${theme}-700 border-2 shadow-sm scale-90` : 'hover:bg-gray-100'}`}
                         title={bookingCount > 0 ? `${bookingCount} 项预订` : '空闲'}
                       >
                         {bookingCount > 0 && (
@@ -314,9 +317,9 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
         </table>
       </div>
       <div className="mt-4 flex items-center space-x-4 text-[10px] text-gray-400 font-bold justify-end">
-        <div className="flex items-center space-x-1"><span className={`w-3 h-3 rounded bg-${theme}-500`}></span><span>已预订</span></div>
-        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-gray-100"></span><span>空闲</span></div>
-        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded border border-gray-200 bg-gray-50"></span><span>周末</span></div>
+        <div className="flex items-center space-x-1"><span className={`w-3 h-3 rounded bg-${theme}-600 border border-${theme}-700`}></span><span>已预订</span></div>
+        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-white border border-gray-200"></span><span>空闲</span></div>
+        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-slate-50"></span><span>周末</span></div>
       </div>
     </div>
   );
@@ -431,27 +434,23 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
 
   const processData = () => {
     try {
-      // Try JSON first
       const trimmed = text.trim();
       if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
          onImport(JSON.parse(trimmed));
          return;
       }
 
-      // Try CSV
       const lines = trimmed.split('\n');
-      const data = [];
+      const data: any[] = [];
+      const headerKeywords = ['名称', '姓名', '资源', '部门', 'name'];
+      const hasHeader = headerKeywords.some(key => lines[0].toLowerCase().includes(key));
+      const startIndex = hasHeader ? 1 : 0;
       
       if (type === 'DEPARTMENTS') {
-         // Special logic for departments to resolve IDs
          const deptMap = new Map();
          existingDepartments.forEach((d: any) => deptMap.set(d.name, d.id));
          
-         // Skip header if present (simple check: first line contains '部门名称' or 'name' or Chinese comma)
-         const startIndex = (lines[0].includes('部门名称') || lines[0].includes('name')) ? 1 : 0;
-         
          for (let i = startIndex; i < lines.length; i++) {
-            // Split by comma, handling both Chinese and English commas
             const parts = lines[i].split(/,|，/);
             const name = parts[0]?.trim();
             const parentName = parts[1]?.trim();
@@ -459,32 +458,26 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
             if (!name) continue;
             
             const newId = `dpt-imp-${Date.now()}-${i}`;
-            const parentId = parentName ? deptMap.get(parentName) : undefined;
-            
-            // Check if department already exists to prevent duplicates (optional, but good for import)
-            if (deptMap.has(name)) {
-                // If exists, skip or maybe update? For simplicity, skip.
-                continue;
-            }
+            // If the user imports duplicates, we skip or handle? Simple skip if exists in map.
+            if (deptMap.has(name)) continue;
 
+            const parentId = parentName ? deptMap.get(parentName) : undefined;
             const newDept = { id: newId, name, parentId };
+            
             data.push(newDept);
-            deptMap.set(name, newId); // Add to map for subsequent rows to reference
+            deptMap.set(name, newId); 
          }
       } else if (type === 'USERS') {
-         const startIndex = (lines[0].includes('姓名') || lines[0].includes('name')) ? 1 : 0;
          for (let i = startIndex; i < lines.length; i++) {
             const parts = lines[i].split(/,|，/);
             const name = parts[0]?.trim();
+            if (!name) continue;
             const email = parts[1]?.trim();
             const department = parts[2]?.trim();
             const roleName = parts[3]?.trim();
             const landline = parts[4]?.trim();
             const mobile = parts[5]?.trim();
-
-            if (!name) continue;
             
-            // Resolve Role
             let roleIds = ['EMPLOYEE'];
             if (roleName) {
                const foundRole = roles.find((r: any) => r.name === roleName);
@@ -494,7 +487,7 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
             data.push({
                id: `u-imp-${Date.now()}-${i}`,
                name,
-               email: email || `${name}@company.com`, // Default email generator
+               email: email || `${name}@company.com`,
                department: department || '待分配',
                role: roleIds,
                landline,
@@ -502,21 +495,19 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
             });
          }
       } else if (type === 'RESOURCES') {
-         const startIndex = (lines[0].includes('资源名称') || lines[0].includes('name')) ? 1 : 0;
          for (let i = startIndex; i < lines.length; i++) {
             const parts = lines[i].split(/,|，/);
             const name = parts[0]?.trim();
-            const typeStr = parts[1]?.trim();
+            if (!name) continue;
+            const typeStr = parts[1]?.trim().toUpperCase();
             const capacity = parts[2]?.trim();
             const location = parts[3]?.trim();
 
-            if (!name) continue;
-            
             data.push({
                id: `r-imp-${Date.now()}-${i}`,
                name,
-               type: (typeStr === '会议室' || typeStr === 'ROOM') ? 'ROOM' : 'DESK',
-               capacity: parseInt(capacity) || 4,
+               type: (typeStr === '会议室' || typeStr === 'ROOM' || typeStr.includes('室')) ? 'ROOM' : 'DESK',
+               capacity: parseInt(capacity) || 1,
                location: location || '未标注',
                status: 'AVAILABLE',
                features: []
@@ -806,49 +797,138 @@ const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
 };
 
 const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, availableResources }: any) => {
-  const [startTime, setStartTime] = useState(`${initialDate || new Date().toISOString().split('T')[0]}T09:00`);
-  const [endTime, setEndTime] = useState(`${initialDate || new Date().toISOString().split('T')[0]}T10:00`);
+  const isRoom = resource.type === 'ROOM';
+  const todayStr = initialDate ? initialDate.split('T')[0] : new Date().toISOString().split('T')[0];
+  
+  // Room specific states
+  const [date, setDate] = useState(todayStr);
+  const [startTime, setStartTime] = useState("09:00");
+  const [endTime, setEndTime] = useState("10:00");
+  
+  // Desk specific states
+  const [startDate, setStartDate] = useState(todayStr);
+  const [endDate, setEndDate] = useState(todayStr);
+  
   const [purpose, setPurpose] = useState('');
+  const [participants, setParticipants] = useState(resource.capacity || 1);
+  const [loadingAI, setLoadingAI] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState('');
-  const [loading, setLoading] = useState(false);
 
   const handleSmartRecommend = async () => {
-    setLoading(true);
-    const suggestion = await getSmartRecommendation(purpose, 4, availableResources);
+    if (!purpose) return;
+    setLoadingAI(true);
+    const suggestion = await getSmartRecommendation(purpose, participants, availableResources);
     setAiSuggestion(suggestion);
-    setLoading(false);
+    setLoadingAI(false);
+  };
+
+  const handleSubmit = () => {
+    let finalStart, finalEnd;
+
+    if (isRoom) {
+        finalStart = `${date}T${startTime}:00`;
+        finalEnd = `${date}T${endTime}:00`;
+        
+        const s = new Date(finalStart);
+        const e = new Date(finalEnd);
+        
+        if (e <= s) {
+            alert("结束时间必须晚于开始时间");
+            return;
+        }
+        if ((e.getTime() - s.getTime()) < 15 * 60000) {
+            alert("会议时长不能少于15分钟");
+            return;
+        }
+    } else {
+        // Desk uses full day occupancy (09:00 - 18:00 standard work hours for blocking)
+        finalStart = `${startDate}T09:00:00`;
+        finalEnd = `${endDate}T18:00:00`;
+
+        if (new Date(endDate) < new Date(startDate)) {
+             alert("结束日期必须晚于开始日期");
+             return;
+        }
+    }
+
+    onConfirm(resource.id, purpose, finalStart, finalEnd, participants);
   };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full">
+      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
         <h3 className="font-bold text-xl mb-6">预约 {resource.name}</h3>
-        <div className="space-y-4">
-           <div>
-             <label className="text-xs font-bold text-gray-400">开始时间</label>
-             <input type="datetime-local" className="w-full p-3 bg-gray-50 rounded-xl outline-none" value={startTime} onChange={e => setStartTime(e.target.value)} />
-           </div>
-           <div>
-             <label className="text-xs font-bold text-gray-400">结束时间</label>
-             <input type="datetime-local" className="w-full p-3 bg-gray-50 rounded-xl outline-none" value={endTime} onChange={e => setEndTime(e.target.value)} />
-           </div>
-           <div>
-             <label className="text-xs font-bold text-gray-400">用途</label>
-             <div className="flex space-x-2">
-               <input className="flex-1 p-3 bg-gray-50 rounded-xl outline-none" placeholder="会议/办公/面试..." value={purpose} onChange={e => setPurpose(e.target.value)} />
-               <button onClick={handleSmartRecommend} className={`p-3 bg-${theme}-100 text-${theme}-600 rounded-xl font-bold`}>AI 建议</button>
-             </div>
-           </div>
-           {loading && <div className="text-xs text-gray-400 animate-pulse">正在思考中...</div>}
-           {aiSuggestion && (
-             <div className={`p-3 rounded-xl bg-${theme}-50 text-${theme}-700 text-xs border border-${theme}-100`}>
-               <strong>AI 建议：</strong> {aiSuggestion}
-             </div>
-           )}
-        </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
-          <button onClick={() => onConfirm(resource.id, purpose, startTime, endTime)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold`}>确认预约</button>
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">申请用途</label>
+            <div className="flex space-x-2">
+              <input 
+                value={purpose} 
+                onChange={e => setPurpose(e.target.value)} 
+                placeholder="请输入会议或办公目的..." 
+                className="flex-1 bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner focus:ring-2 ring-indigo-100 transition-all" 
+              />
+              <button 
+                onClick={handleSmartRecommend} 
+                disabled={loadingAI || !purpose}
+                className={`p-4 bg-${theme}-50 text-${theme}-600 rounded-2xl font-bold flex items-center space-x-1 hover:bg-${theme}-100 transition-colors disabled:opacity-50`}
+              >
+                {loadingAI ? <RefreshCw size={18} className="animate-spin" /> : <Zap size={18}/>}
+                <span>AI</span>
+              </button>
+            </div>
+          </div>
+
+          {aiSuggestion && (
+            <div className={`p-4 rounded-2xl bg-${theme}-50 text-${theme}-700 text-[11px] leading-relaxed border border-${theme}-100 animate-in slide-in-from-top-2`}>
+              <strong>AI 建议：</strong> {aiSuggestion}
+            </div>
+          )}
+
+          {isRoom ? (
+            <div className="space-y-4">
+               <div className="space-y-2">
+                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">使用日期</label>
+                 <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+               </div>
+               <div className="grid grid-cols-2 gap-4">
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">开始时间</label>
+                   <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+                 </div>
+                 <div className="space-y-2">
+                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">结束时间</label>
+                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+                 </div>
+               </div>
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">起用日期</label>
+                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+              </div>
+              <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">结束日期</label>
+                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+              </div>
+            </div>
+          )}
+
+          <div className="space-y-2">
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">参与/额定人数</label>
+            <input type="number" min="1" value={participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+          </div>
+
+          <div className="flex space-x-3 mt-4">
+            <button onClick={onClose} className="flex-1 py-3 rounded-2xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
+            <button 
+              onClick={handleSubmit} 
+              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.01] active:scale-95 transition-all`}
+            >
+              确认并提交
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -1050,7 +1130,7 @@ const App: React.FC = () => {
     u.department.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string) => {
+  const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number) => {
     // ... existing implementation
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
@@ -1065,7 +1145,8 @@ const App: React.FC = () => {
       return;
     }
 
-    if (start < now) {
+    // Relaxed PAST_TIME check for desk multi-day booking scenarios or slight delays
+    if (start < now && resource.type === 'ROOM') {
       const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
       setBookingConflict({ 
         resource, 
@@ -1094,11 +1175,18 @@ const App: React.FC = () => {
       return;
     }
 
-    const newBooking: Booking = { id: `bk-${Date.now()}`, userId: currentUser.id, resourceId, type: resource.type, startTime, endTime, status: workflow.length === 0 ? 'APPROVED' : 'PENDING', purpose, createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [] };
+    const newBooking: Booking = { id: `bk-${Date.now()}`, userId: currentUser.id, resourceId, type: resource.type, startTime, endTime, status: workflow.length === 0 ? 'APPROVED' : 'PENDING', purpose, participants, createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [] };
     setBookings(prev => [newBooking, ...prev]);
     setShowBookingModal(false);
     setCalendarDateForBooking(null);
     addNotification("预约申请已提交", `资源 ${resource.name} 的预约已进入审批流程。`, "SUCCESS");
+  };
+
+  const handleCancelBooking = (id: string) => {
+    if (confirm("确定要撤销此项预约申请吗？撤销后该时段资源将立即释放。")) {
+      setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'CANCELLED' as BookingStatus } : b));
+      addNotification("申请已撤销", "相关资源已释放，可重新进行预订。", "SUCCESS");
+    }
   };
 
   // ... existing handlers
@@ -1277,7 +1365,7 @@ const App: React.FC = () => {
                   <Monitor className="absolute -right-4 -bottom-4 text-white/10 opacity-50 group-hover:scale-125 transition-all pointer-events-none" size={100} />
                 </button>
 
-                <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="flex items-center justify-between p-5 bg-emerald-600 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]">
+                <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className={`flex items-center justify-between p-5 bg-${theme}-500 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]`}>
                   <div className="flex items-center space-x-4 relative z-10">
                     <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
                       <Coffee size={24} />
@@ -1492,7 +1580,17 @@ const App: React.FC = () => {
                            <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={24}/></div>
                            <div><h4 className="font-black text-lg text-gray-800 leading-none">{b.purpose}</h4><p className="text-[10px] text-gray-400 font-black uppercase mt-2 tracking-widest">{resources.find(r => r.id === b.resourceId)?.name} · {b.startTime.replace('T', ' ')}</p></div>
                          </div>
-                         <StatusBadge status={b.status} theme={theme} />
+                         <div className="flex items-center space-x-3">
+                            {['PENDING', 'APPROVED'].includes(b.status) && (
+                              <button 
+                                onClick={() => handleCancelBooking(b.id)} 
+                                className="text-[10px] text-rose-500 font-black px-4 py-2 bg-rose-50 rounded-xl hover:bg-rose-100 transition-colors border border-rose-100 shadow-sm"
+                              >
+                                撤销申请
+                              </button>
+                            )}
+                            <StatusBadge status={b.status} theme={theme} />
+                         </div>
                        </div>
                        <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
                      </div>
@@ -1680,10 +1778,8 @@ const App: React.FC = () => {
       {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={(data: any) => { if(editingRole) setRoles(roles.map(r => r.id === editingRole.id ? {...r, ...data} : r)); else setRoles([...roles, { id: 'rl-'+Date.now(), ...data }]); setShowRoleModal(false); addNotification("操作成功", "角色集已更新。", "SUCCESS"); }} theme={theme} />}
       {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => { if(editingWorkflowNode) setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? {...n, ...data} : n)); else setWorkflow([...workflow, { id: 'wf-'+Date.now(), ...data }]); setShowWorkflowModal(false); addNotification("流程已更新", "审批链路配置已生效。", "SUCCESS"); }} theme={theme} />}
       
-      {/* Booking Form must be before Conflict Modal in logic or behind in stacking, here we rely on z-index but rendering order matters too */}
       {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); }} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')}/>)}
 
-      {/* Moved BookingConflictModal to the very end and increased z-index to 1050 to ensure it is always on top */}
       {bookingConflict && (
         <BookingConflictModal 
           conflict={bookingConflict} 
