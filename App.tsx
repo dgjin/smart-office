@@ -10,7 +10,7 @@ import {
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
-  Save, RotateCcw, Phone, Ban
+  Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -397,14 +397,40 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
   const resource = resources.find((r: any) => r.id === booking.resourceId);
   return (
     <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6">
-      <div className="flex items-center space-x-4">
-        <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 font-bold text-xs`}>{user?.name[0]}</div>
+      <div className="flex items-center space-x-4 flex-1">
+        <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 font-bold text-xs shrink-0`}>{user?.name[0]}</div>
         <div>
-           <h4 className="font-bold text-gray-800 text-lg">{user?.name} 申请 {resource?.name}</h4>
+           <div className="flex items-center space-x-2">
+             <h4 className="font-bold text-gray-800 text-lg">{user?.name} 申请 {resource?.name}</h4>
+             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && <span className="bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[10px] font-black border border-rose-100">特殊需求</span>}
+           </div>
            <p className="text-xs text-gray-400 font-medium">{booking.startTime.replace('T', ' ')} 至 {booking.endTime.replace('T', ' ')} · {booking.purpose}</p>
+           
+           {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && (
+             <div className="mt-2 flex flex-wrap gap-2">
+               {booking.hasLeader && (
+                 <div className="flex items-center space-x-1 text-[10px] text-gray-600 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                   <Crown size={12} className="text-amber-500"/>
+                   <span className="font-bold">领导参会: {booking.leaderDetails}</span>
+                 </div>
+               )}
+               {booking.isVideoConference && (
+                 <div className="flex items-center space-x-1 text-[10px] text-gray-600 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                   <Video size={12} className="text-indigo-500"/>
+                   <span className="font-bold">视频会议</span>
+                 </div>
+               )}
+               {booking.needsTeaService && (
+                 <div className="flex items-center space-x-1 text-[10px] text-gray-600 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
+                   <CupSoda size={12} className="text-emerald-500"/>
+                   <span className="font-bold">茶水服务</span>
+                 </div>
+               )}
+             </div>
+           )}
         </div>
       </div>
-      <div className="flex space-x-3">
+      <div className="flex space-x-3 shrink-0">
         <button onClick={() => onReject('不符合规定')} className="px-6 py-2.5 rounded-xl border border-gray-200 text-gray-500 font-bold text-xs hover:bg-gray-50 transition-colors">驳回</button>
         <button onClick={onApprove} className={`px-6 py-2.5 rounded-xl bg-${theme}-600 text-white font-bold text-xs shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all`}>通过审批</button>
       </div>
@@ -606,22 +632,47 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
 
 const DepartmentNode = ({ dept, allDepts, theme, onEdit, onDelete, onAddSub, depth = 0 }: any) => {
   const children = allDepts.filter((d: any) => d.parentId === dept.id);
+  const hasChildren = children.length > 0;
+
   return (
-    <div className={`mb-2 ${depth > 0 ? 'ml-8' : ''}`}>
-      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-gray-200 transition-all group">
-        <div className="flex items-center space-x-3">
-          <div className={`w-2 h-8 rounded-full bg-${theme}-400`}></div>
-          <span className="font-bold text-gray-700">{dept.name}</span>
+    <div className="relative">
+      <div className={`flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 hover:border-${theme}-200 shadow-sm hover:shadow-md transition-all group mb-3 relative z-10`}>
+        {/* Connector line for non-root nodes */}
+        {depth > 0 && (
+          <div className="absolute -left-8 top-1/2 w-8 h-px bg-gray-200"></div>
+        )}
+        {/* Connector dot */}
+        {depth > 0 && (
+          <div className="absolute -left-8 top-1/2 w-1.5 h-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-300"></div>
+        )}
+
+        <div className="flex items-center space-x-4">
+          <div className={`w-10 h-10 rounded-xl ${hasChildren ? `bg-${theme}-50 text-${theme}-600` : 'bg-gray-50 text-gray-400'} flex items-center justify-center transition-colors`}>
+             {hasChildren ? <FolderTree size={20}/> : <Building2 size={20}/>}
+          </div>
+          <div>
+            <div className="flex items-center space-x-2">
+                <span className="font-bold text-gray-800 text-sm">{dept.name}</span>
+                {depth === 0 && <span className="px-1.5 py-0.5 rounded-md bg-gray-800 text-white text-[10px] font-bold">总部</span>}
+            </div>
+            <p className="text-[10px] text-gray-400 font-medium mt-0.5">ID: {dept.id}</p>
+          </div>
         </div>
-        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
-          <button onClick={() => onAddSub(dept.id)} className={`p-1.5 text-${theme}-600 hover:bg-${theme}-50 rounded-lg`} title="添加子部门"><Plus size={14} /></button>
-          <button onClick={() => onEdit(dept)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 size={14} /></button>
-          <button onClick={() => onDelete(dept.id)} className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"><Trash2 size={14} /></button>
+        
+        <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onAddSub(dept.id)} className={`p-2 text-${theme}-600 hover:bg-${theme}-50 rounded-lg transition-colors`} title="添加子部门"><Plus size={16} /></button>
+          <button onClick={() => onEdit(dept)} className="p-2 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"><Edit2 size={16} /></button>
+          <button onClick={() => onDelete(dept.id)} className="p-2 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"><Trash2 size={16} /></button>
         </div>
       </div>
-      {children.map((child: any) => (
-        <DepartmentNode key={child.id} dept={child} allDepts={allDepts} theme={theme} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} depth={depth + 1} />
-      ))}
+      
+      {hasChildren && (
+        <div className="pl-8 ml-6 relative border-l border-gray-200 space-y-3 pt-3 pb-1">
+          {children.map((child: any) => (
+            <DepartmentNode key={child.id} dept={child} allDepts={allDepts} theme={theme} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} depth={depth + 1} />
+          ))}
+        </div>
+      )}
     </div>
   );
 };
@@ -836,23 +887,95 @@ const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
   );
 };
 
-const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, availableResources }: any) => {
+const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, availableResources, bookings = [] }: any) => {
   const isRoom = resource.type === 'ROOM';
-  const todayStr = initialDate ? initialDate.split('T')[0] : new Date().toISOString().split('T')[0];
+  const initialDateObj = initialDate ? new Date(initialDate) : new Date();
   
-  // Room specific states
-  const [date, setDate] = useState(todayStr);
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("10:00");
-  
-  // Desk specific states
-  const [startDate, setStartDate] = useState(todayStr);
-  const [endDate, setEndDate] = useState(todayStr);
+  const [selectedDate, setSelectedDate] = useState(initialDateObj);
+  const [selectedTimeRange, setSelectedTimeRange] = useState<{start: string | null, end: string | null}>({ 
+    start: isRoom ? null : '09:00', 
+    end: isRoom ? null : '18:00' 
+  });
+  const [deskEndDate, setDeskEndDate] = useState(initialDateObj);
   
   const [purpose, setPurpose] = useState('');
   const [participants, setParticipants] = useState(resource.capacity || 1);
   const [loadingAI, setLoadingAI] = useState(false);
   const [aiSuggestion, setAiSuggestion] = useState('');
+
+  // New state variables for additional requirements
+  const [hasLeader, setHasLeader] = useState(false);
+  const [leaderDetails, setLeaderDetails] = useState('');
+  const [isVideoConference, setIsVideoConference] = useState(false);
+  const [needsTeaService, setNeedsTeaService] = useState(false);
+
+  // Generate next 14 days for date picker
+  const dateOptions = useMemo(() => {
+    return Array.from({ length: 14 }, (_, i) => {
+      const d = new Date();
+      d.setDate(d.getDate() + i);
+      return d;
+    });
+  }, []);
+
+  const timeSlots = useMemo(() => {
+    const slots = [];
+    for(let h=8; h<20; h++) {
+        slots.push(`${String(h).padStart(2,'0')}:00`);
+        slots.push(`${String(h).padStart(2,'0')}:30`);
+    }
+    return slots;
+  }, []);
+
+  const isSlotBooked = (time: string) => {
+    const slotStart = new Date(`${formatDate(selectedDate)}T${time}`);
+    const slotEnd = new Date(slotStart.getTime() + 30 * 60000);
+    
+    return bookings.some((b: any) => {
+        if (b.resourceId !== resource.id || ['REJECTED', 'CANCELLED'].includes(b.status)) return false;
+        const bStart = new Date(b.startTime);
+        const bEnd = new Date(b.endTime);
+        return (slotStart < bEnd && slotEnd > bStart);
+    });
+  };
+
+  const handleTimeClick = (time: string) => {
+    if (isSlotBooked(time)) return;
+    
+    const { start, end } = selectedTimeRange;
+    
+    if (!start || (start && end)) {
+        setSelectedTimeRange({ start: time, end: null });
+    } else {
+        if (time === start) {
+            setSelectedTimeRange({ start: null, end: null });
+            return;
+        }
+        const timeVal = parseInt(time.replace(':',''));
+        const startVal = parseInt(start.replace(':',''));
+        
+        if (timeVal < startVal) {
+            setSelectedTimeRange({ start: time, end: null });
+        } else {
+            // Validate continuous range
+            let valid = true;
+            const startIndex = timeSlots.indexOf(start);
+            const endIndex = timeSlots.indexOf(time);
+            for(let i = startIndex; i <= endIndex; i++) {
+                if (isSlotBooked(timeSlots[i])) {
+                    valid = false;
+                    break;
+                }
+            }
+            if (!valid) {
+                alert("选择的时间段内包含已被占用的时段，请重新选择。");
+                setSelectedTimeRange({ start: time, end: null });
+            } else {
+                setSelectedTimeRange({ start, end: time });
+            }
+        }
+    }
+  };
 
   const handleSmartRecommend = async () => {
     if (!purpose) return;
@@ -866,47 +989,62 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
     let finalStart, finalEnd;
 
     if (isRoom) {
-        finalStart = `${date}T${startTime}:00`;
-        finalEnd = `${date}T${endTime}:00`;
-        
-        const s = new Date(finalStart);
-        const e = new Date(finalEnd);
-        
-        if (e <= s) {
-            alert("结束时间必须晚于开始时间");
+        if (!selectedTimeRange.start || !selectedTimeRange.end) {
+            alert("请选择开始和结束时间");
             return;
         }
-        if ((e.getTime() - s.getTime()) < 15 * 60000) {
-            alert("会议时长不能少于15分钟");
-            return;
-        }
+        finalStart = `${formatDate(selectedDate)}T${selectedTimeRange.start}:00`;
+        finalEnd = `${formatDate(selectedDate)}T${selectedTimeRange.end}:00`;
     } else {
-        // Desk uses full day occupancy (09:00 - 18:00 standard work hours for blocking)
-        finalStart = `${startDate}T09:00:00`;
-        finalEnd = `${endDate}T18:00:00`;
-
-        if (new Date(endDate) < new Date(startDate)) {
+        finalStart = `${formatDate(selectedDate)}T09:00:00`;
+        finalEnd = `${formatDate(deskEndDate)}T18:00:00`;
+        if (new Date(deskEndDate) < new Date(selectedDate)) {
              alert("结束日期必须晚于开始日期");
              return;
         }
     }
 
-    onConfirm(resource.id, purpose, finalStart, finalEnd, participants);
+    onConfirm(resource.id, purpose, finalStart, finalEnd, participants, {
+        hasLeader,
+        leaderDetails: hasLeader ? leaderDetails : undefined,
+        isVideoConference,
+        needsTeaService
+    });
+  };
+
+  const isSlotSelected = (time: string) => {
+      if (!selectedTimeRange.start) return false;
+      if (selectedTimeRange.start === time) return true;
+      if (selectedTimeRange.end === time) return true; 
+      return selectedTimeRange.start === time || selectedTimeRange.end === time;
+  };
+
+  const isSlotInRange = (time: string) => {
+      if (!selectedTimeRange.start || !selectedTimeRange.end) return false;
+      const t = parseInt(time.replace(':',''));
+      const s = parseInt(selectedTimeRange.start.replace(':',''));
+      const e = parseInt(selectedTimeRange.end.replace(':',''));
+      return t > s && t < e;
   };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
-        <h3 className="font-bold text-xl mb-6">预约 {resource.name}</h3>
+      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in max-h-[90vh] overflow-y-auto custom-scrollbar">
+        <h3 className="font-black text-xl mb-6 flex items-center gap-2">
+            {isRoom ? <Monitor size={24} className={`text-${theme}-600`}/> : <Coffee size={24} className={`text-${theme}-600`}/>}
+            <span>预约 {resource.name}</span>
+        </h3>
+        
         <div className="space-y-6">
+          {/* Purpose & AI */}
           <div className="space-y-2">
             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">申请用途</label>
             <div className="flex space-x-2">
               <input 
                 value={purpose} 
                 onChange={e => setPurpose(e.target.value)} 
-                placeholder="请输入会议或办公目的..." 
-                className="flex-1 bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner focus:ring-2 ring-indigo-100 transition-all" 
+                placeholder="会议主题或办公内容..." 
+                className="flex-1 bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner focus:ring-2 ring-indigo-100 transition-all text-sm" 
               />
               <button 
                 onClick={handleSmartRecommend} 
@@ -918,55 +1056,130 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
               </button>
             </div>
           </div>
-
+          
           {aiSuggestion && (
             <div className={`p-4 rounded-2xl bg-${theme}-50 text-${theme}-700 text-[11px] leading-relaxed border border-${theme}-100 animate-in slide-in-from-top-2`}>
               <strong>AI 建议：</strong> {aiSuggestion}
             </div>
           )}
 
+          {/* Date Picker - Horizontal Scroll */}
+          <div className="space-y-2">
+             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">选择日期</label>
+             <div className="flex space-x-3 overflow-x-auto pb-2 custom-scrollbar">
+                {dateOptions.map((d) => {
+                    const isSelected = formatDate(d) === formatDate(selectedDate);
+                    const dayName = ['日','一','二','三','四','五','六'][d.getDay()];
+                    return (
+                        <button 
+                            key={d.toISOString()}
+                            onClick={() => { setSelectedDate(d); setSelectedTimeRange({start:null,end:null}); }}
+                            className={`flex flex-col items-center justify-center w-14 h-16 rounded-2xl border-2 transition-all shrink-0 ${isSelected ? `bg-${theme}-600 border-${theme}-600 text-white shadow-lg scale-105` : 'bg-white border-gray-100 text-gray-400 hover:border-gray-200 hover:bg-gray-50'}`}
+                        >
+                            <span className="text-[10px] font-medium opacity-80">周{dayName}</span>
+                            <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
+                        </button>
+                    );
+                })}
+             </div>
+          </div>
+
           {isRoom ? (
-            <div className="space-y-4">
-               <div className="space-y-2">
-                 <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">使用日期</label>
-                 <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
-               </div>
-               <div className="grid grid-cols-2 gap-4">
-                 <div className="space-y-2">
-                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">开始时间</label>
-                   <input type="time" value={startTime} onChange={e => setStartTime(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
-                 </div>
-                 <div className="space-y-2">
-                   <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">结束时间</label>
-                   <input type="time" value={endTime} onChange={e => setEndTime(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
-                 </div>
-               </div>
+            <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex justify-between">
+                    <span>选择时段 (08:00 - 20:00)</span>
+                    {selectedTimeRange.start && selectedTimeRange.end && <span className={`text-${theme}-600`}>{selectedTimeRange.start} - {selectedTimeRange.end}</span>}
+                </label>
+                <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                    {timeSlots.map(time => {
+                        const booked = isSlotBooked(time);
+                        const selected = isSlotSelected(time);
+                        const inRange = isSlotInRange(time);
+                        return (
+                            <button
+                                key={time}
+                                onClick={() => handleTimeClick(time)}
+                                disabled={booked}
+                                className={`py-2.5 rounded-xl text-xs font-bold transition-all border ${
+                                    booked ? 'bg-gray-100 text-gray-300 border-transparent cursor-not-allowed decoration-slice line-through' :
+                                    selected ? `bg-${theme}-600 text-white border-${theme}-600 shadow-md transform scale-105` :
+                                    inRange ? `bg-${theme}-50 text-${theme}-600 border-${theme}-200` :
+                                    'bg-white text-gray-600 border-gray-100 hover:border-gray-300'
+                                }`}
+                            >
+                                {time}
+                            </button>
+                        );
+                    })}
+                </div>
+                <p className="text-[10px] text-gray-400 text-center pt-2">点击开始时间，再次点击结束时间</p>
             </div>
           ) : (
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">起用日期</label>
-                <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
-              </div>
-              <div className="space-y-2">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">结束日期</label>
-                <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
-              </div>
+            <div className="space-y-2">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">结束日期 (工位通常按天预订)</label>
+                <input type="date" value={formatDate(deskEndDate)} onChange={e => setDeskEndDate(new Date(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
             </div>
           )}
 
           <div className="space-y-2">
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">参与/额定人数</label>
-            <input type="number" min="1" value={participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner" />
+            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest">人数</label>
+            <input type="number" min="1" value={participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
           </div>
 
-          <div className="flex space-x-3 mt-4">
-            <button onClick={onClose} className="flex-1 py-3 rounded-2xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
+          {/* New Fields Section */}
+          <div className="space-y-4 pt-4 border-t border-gray-100">
+             <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-1">
+                    <Crown size={12}/> <span>领导参会</span>
+                </label>
+                <button 
+                    onClick={() => setHasLeader(!hasLeader)} 
+                    className={`w-10 h-6 rounded-full p-1 transition-all ${hasLeader ? `bg-${theme}-600` : 'bg-gray-200'}`}
+                >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${hasLeader ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                </button>
+             </div>
+             {hasLeader && (
+                 <input 
+                    value={leaderDetails} 
+                    onChange={e => setLeaderDetails(e.target.value)} 
+                    placeholder="请输入参会领导姓名或职位..." 
+                    className="w-full p-3 bg-gray-50 rounded-xl border border-gray-200 text-sm focus:border-indigo-200 outline-none animate-in fade-in slide-in-from-top-2" 
+                 />
+             )}
+
+             <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-1">
+                    <Video size={12}/> <span>视频会议</span>
+                </label>
+                <button 
+                    onClick={() => setIsVideoConference(!isVideoConference)} 
+                    className={`w-10 h-6 rounded-full p-1 transition-all ${isVideoConference ? `bg-${theme}-600` : 'bg-gray-200'}`}
+                >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${isVideoConference ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                </button>
+             </div>
+
+             <div className="flex items-center justify-between">
+                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest flex items-center space-x-1">
+                    <CupSoda size={12}/> <span>茶水服务</span>
+                </label>
+                <button 
+                    onClick={() => setNeedsTeaService(!needsTeaService)} 
+                    className={`w-10 h-6 rounded-full p-1 transition-all ${needsTeaService ? `bg-${theme}-600` : 'bg-gray-200'}`}
+                >
+                    <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${needsTeaService ? 'translate-x-4' : 'translate-x-0'}`}></div>
+                </button>
+             </div>
+          </div>
+
+          <div className="flex space-x-3 mt-6 pt-4 border-t border-gray-100">
+            <button onClick={onClose} className="flex-1 py-3 rounded-2xl bg-gray-50 font-bold text-gray-500 hover:bg-gray-100 transition-colors">取消</button>
             <button 
               onClick={handleSubmit} 
-              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.01] active:scale-95 transition-all`}
+              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.02] active:scale-95 transition-all`}
             >
-              确认并提交
+              确认预约
             </button>
           </div>
         </div>
@@ -1169,7 +1382,7 @@ const App: React.FC = () => {
     u.department.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number) => {
+  const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number, extras?: any) => {
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
     
@@ -1218,7 +1431,21 @@ const App: React.FC = () => {
       return;
     }
 
-    const newBooking: Booking = { id: `bk-${Date.now()}`, userId: currentUser.id, resourceId, type: resource.type, startTime, endTime, status: workflow.length === 0 ? 'APPROVED' : 'PENDING', purpose, participants, createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [] };
+    const newBooking: Booking = { 
+      id: `bk-${Date.now()}`, 
+      userId: currentUser.id, 
+      resourceId, 
+      type: resource.type, 
+      startTime, 
+      endTime, 
+      status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
+      purpose, 
+      participants, 
+      createdAt: new Date().toISOString(), 
+      currentNodeIndex: 0, 
+      approvalHistory: [],
+      ...extras // Spread optional fields
+    };
     setBookings(prev => [newBooking, ...prev]);
     setShowBookingModal(false);
     setCalendarDateForBooking(null);
@@ -1826,7 +2053,7 @@ const App: React.FC = () => {
       {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={(data: any) => { if(editingRole) setRoles(roles.map(r => r.id === editingRole.id ? {...r, ...data} : r)); else setRoles([...roles, { id: 'rl-'+Date.now(), ...data }]); setShowRoleModal(false); addNotification("操作成功", "角色集已更新。", "SUCCESS"); }} theme={theme} />}
       {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => { if(editingWorkflowNode) setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? {...n, ...data} : n)); else setWorkflow([...workflow, { id: 'wf-'+Date.now(), ...data }]); setShowWorkflowModal(false); addNotification("流程已更新", "审批链路配置已生效。", "SUCCESS"); }} theme={theme} />}
       
-      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); }} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')}/>)}
+      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); }} onConfirm={handleBooking} availableResources={resources.filter(r => r.status === 'AVAILABLE')} bookings={bookings} />)}
 
       {bookingConflict && (
         <BookingConflictModal 

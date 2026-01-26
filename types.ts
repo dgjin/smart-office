@@ -66,6 +66,11 @@ export interface Booking {
   createdAt: string;
   currentNodeIndex: number; 
   approvalHistory: ApprovalRecord[];
+  // New optional fields
+  hasLeader?: boolean;
+  leaderDetails?: string;
+  isVideoConference?: boolean;
+  needsTeaService?: boolean;
 }
 
 export interface Notification {
