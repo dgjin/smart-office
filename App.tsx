@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
@@ -474,6 +473,26 @@ const DayBookingDetailModal = ({ detail, onClose, users, resources, theme }: any
                      <p className="text-[10px] text-gray-500 mt-0.5">{b.purpose}</p>
                    </div>
                  </div>
+
+                 {(b.hasLeader || b.isVideoConference || b.needsTeaService) && (
+                   <div className="mt-3 pt-2 border-t border-gray-200/50 flex flex-wrap gap-2">
+                     {b.hasLeader && (
+                       <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-bold bg-amber-50 text-amber-600 border border-amber-100">
+                         <Crown size={12} className="mr-1"/> 领导{b.leaderDetails ? `: ${b.leaderDetails}` : ''}
+                       </span>
+                     )}
+                     {b.isVideoConference && (
+                       <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
+                         <Video size={12} className="mr-1"/> 视频会
+                       </span>
+                     )}
+                     {b.needsTeaService && (
+                       <span className="inline-flex items-center px-2 py-1 rounded text-[10px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">
+                         <CupSoda size={12} className="mr-1"/> 茶水
+                       </span>
+                     )}
+                   </div>
+                 )}
                </div>
              );
            })
@@ -790,6 +809,7 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
             {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
           </select>
           <input value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} placeholder="移动电话" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input value={formData.landline} onChange={e => setFormData({...formData, landline: e.target.value})} placeholder="办公电话" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
         </div>
         <div className="flex space-x-3 mt-6">
           <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
