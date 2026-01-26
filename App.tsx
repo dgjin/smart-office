@@ -9,7 +9,7 @@ import {
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
-  Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown
+  Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
@@ -1369,12 +1369,69 @@ const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
   
+  // --- Persistent State Logic ---
+  const [isOnline, setIsOnline] = useState(true);
+  const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+
+  // Load initial state from local storage first for speed, then try server
   const [roles, setRoles] = useState<RoleDefinition[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).roles : INITIAL_ROLES; });
   const [users, setUsers] = useState<User[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).users : INITIAL_USERS; });
   const [resources, setResources] = useState<Resource[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).resources : INITIAL_RESOURCES; });
   const [bookings, setBookings] = useState<Booking[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).bookings : INITIAL_BOOKINGS; });
   const [departments, setDepartments] = useState<Department[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).departments || INITIAL_DEPARTMENTS) : INITIAL_DEPARTMENTS; });
   const [workflow, setWorkflow] = useState<ApprovalNode[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).workflow || DEFAULT_WORKFLOW) : DEFAULT_WORKFLOW; });
+
+  // Sync: Load from server on mount
+  useEffect(() => {
+    fetch('/api/db')
+      .then(res => res.json())
+      .then(data => {
+        if (data) {
+          if(data.users) setUsers(data.users);
+          if(data.resources) setResources(data.resources);
+          if(data.bookings) setBookings(data.bookings);
+          if(data.departments) setDepartments(data.departments);
+          if(data.roles) setRoles(data.roles);
+          if(data.workflow) setWorkflow(data.workflow);
+          // Update local cache
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+          setIsOnline(true);
+        }
+      })
+      .catch((err) => {
+        console.warn("Could not load from server, using local cache.", err);
+        // Do not set isOnline(false) immediately unless we want to show offline on first load
+        // But let's assume if initial fetch fails, maybe backend is down.
+      });
+  }, []);
+
+  // Sync: Save to server on change (Debounced)
+  useEffect(() => {
+    const data = { roles, users, resources, bookings, departments, workflow };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+
+    const saveToServer = async () => {
+      setSaveStatus('saving');
+      try {
+        await fetch('/api/db', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data)
+        });
+        setSaveStatus('saved');
+        setIsOnline(true);
+      } catch (err) {
+        console.error("Save failed", err);
+        setSaveStatus('error');
+        setIsOnline(false);
+      }
+    };
+
+    const timer = setTimeout(saveToServer, 2000); // 2s debounce to prevent flooding
+    return () => clearTimeout(timer);
+  }, [roles, users, resources, bookings, departments, workflow]);
+
+  useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -1411,13 +1468,15 @@ const App: React.FC = () => {
   const [showDepartmentModal, setShowDepartmentModal] = useState(false);
   const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
   const [departmentParentId, setDepartmentParentId] = useState<string | null>(null);
+  
+  // States for Booking List Pagination & Expansion
+  const [bookingPage, setBookingPage] = useState(1);
+  const [expandedBookingIds, setExpandedBookingIds] = useState<Set<string>>(new Set());
+  const ITEMS_PER_PAGE = 5;
 
   // Computed days for dashboard views
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
   const monthDays = useMemo(() => Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
-
-  useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
-  useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
   const addNotification = (title: string, content: string, type: 'INFO' | 'SUCCESS' | 'WARNING' = 'INFO') => {
     const newNotif: Notification = { id: Date.now().toString(), userId: currentUser?.id || 'sys', title, content, timestamp: new Date().toISOString(), isRead: false, type };
@@ -1447,6 +1506,23 @@ const App: React.FC = () => {
     u.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
     u.department.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
+  // My Bookings Computation for Pagination
+  const myBookings = useMemo(() => {
+      return bookings
+          .filter(b => b.userId === currentUser?.id)
+          .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  }, [bookings, currentUser]);
+
+  const totalBookingPages = Math.ceil(myBookings.length / ITEMS_PER_PAGE);
+  const currentPageBookings = myBookings.slice((bookingPage - 1) * ITEMS_PER_PAGE, bookingPage * ITEMS_PER_PAGE);
+
+  const toggleBookingExpand = (id: string) => {
+      const next = new Set(expandedBookingIds);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      setExpandedBookingIds(next);
+  };
 
   const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number, extras?: any) => {
     const resource = resources.find(r => r.id === resourceId);
@@ -1635,12 +1711,24 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-6 pt-6 border-t shrink-0 flex items-center justify-between">
-          <div className="flex items-center space-x-2 truncate">
-            <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner`}>{currentUser.name[0]}</div>
-            <p className="text-xs font-bold truncate">{currentUser.name}</p>
+        <div className="mt-6 pt-6 border-t shrink-0">
+          <div className={`flex items-center justify-between px-2 py-2 rounded-xl bg-gray-50 mb-4 ${!isOnline ? 'bg-rose-50' : ''}`}>
+             <div className="flex items-center space-x-2">
+               {isOnline ? <Cloud size={14} className="text-emerald-500"/> : <CloudOff size={14} className="text-rose-500"/>}
+               <span className={`text-[10px] font-bold ${isOnline ? 'text-emerald-600' : 'text-rose-600'}`}>
+                 {saveStatus === 'saving' ? '正在同步...' : (isOnline ? '已同步至云端' : '离线模式')}
+               </span>
+             </div>
+             {saveStatus === 'saving' && <RefreshCw size={12} className="text-gray-400 animate-spin"/>}
           </div>
-          <button onClick={() => setCurrentUser(null)} className="text-gray-400 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
+
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-2 truncate">
+              <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner`}>{currentUser.name[0]}</div>
+              <p className="text-xs font-bold truncate">{currentUser.name}</p>
+            </div>
+            <button onClick={() => setCurrentUser(null)} className="text-gray-400 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
+          </div>
         </div>
       </aside>
 
@@ -1943,40 +2031,127 @@ const App: React.FC = () => {
           )}
           
           {view === 'BOOKINGS' && (
-             <div className="space-y-4 animate-in fade-in">
-               <h3 className="text-2xl font-black mb-4">我的申请动态</h3>
-               <div className="grid grid-cols-1 gap-4">
-                 {bookings.filter(b => b.userId === currentUser.id).length === 0 ? (
+             <div className="space-y-6 animate-in fade-in">
+                 <div className="flex justify-between items-center mb-4">
+                     <h3 className="text-2xl font-black">我的申请动态</h3>
+                     <span className="text-xs font-bold text-gray-400 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                         共 {myBookings.length} 条记录
+                     </span>
+                 </div>
+
+                 {myBookings.length === 0 ? (
                    <div className="text-center py-32 bg-white rounded-[3rem] border border-dashed text-gray-400 font-bold">
                      <History size={48} className="mx-auto mb-4 opacity-20"/>
                      暂无预约申请记录，去资源库看看吧。
                    </div>
                  ) : (
-                   bookings.filter(b => b.userId === currentUser.id).map(b => (
-                     <div key={b.id} className="bg-white rounded-[2.5rem] border border-gray-100 shadow-sm overflow-hidden p-8 hover:border-gray-200 hover:shadow-lg transition-all">
-                       <div className="flex items-center justify-between mb-8">
-                         <div className="flex items-center space-x-4">
-                           <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600`}><Briefcase size={24}/></div>
-                           <div><h4 className="font-black text-lg text-gray-800 leading-none">{b.purpose}</h4><p className="text-[10px] text-gray-400 font-black uppercase mt-2 tracking-widest">{resources.find(r => r.id === b.resourceId)?.name} · {b.startTime.replace('T', ' ')}</p></div>
-                         </div>
-                         <div className="flex items-center space-x-3">
-                            {['PENDING', 'APPROVED'].includes(b.status) && (
-                              <button 
-                                onClick={(e) => { e.stopPropagation(); handleCancelBooking(b.id); }} 
-                                className="flex items-center space-x-2 text-xs font-bold text-white bg-rose-500 hover:bg-rose-600 px-4 py-2.5 rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
-                              >
-                                <Ban size={14} className="stroke-[2.5px]" />
-                                <span>撤销申请</span>
-                              </button>
-                            )}
-                            <StatusBadge status={b.status} theme={theme} />
-                         </div>
+                   <>
+                       <div className="space-y-4">
+                           {currentPageBookings.map(b => {
+                               const isExpanded = expandedBookingIds.has(b.id);
+                               const resource = resources.find(r => r.id === b.resourceId);
+                               return (
+                                   <div key={b.id} className={`bg-white rounded-[2rem] border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg border-indigo-100' : 'shadow-sm border-gray-100 hover:border-gray-200'}`}>
+                                       {/* Header - Click to Toggle */}
+                                       <div 
+                                           onClick={() => toggleBookingExpand(b.id)}
+                                           className="p-6 cursor-pointer flex items-center justify-between hover:bg-gray-50/50 transition-colors"
+                                       >
+                                           <div className="flex items-center space-x-4">
+                                               <div className={`w-12 h-12 rounded-2xl ${isExpanded ? `bg-${theme}-100 text-${theme}-600` : 'bg-gray-50 text-gray-400'} flex items-center justify-center transition-colors`}>
+                                                   {b.type === 'ROOM' ? <Monitor size={20}/> : <Briefcase size={20}/>}
+                                               </div>
+                                               <div>
+                                                   <h4 className="font-black text-gray-800 text-base">{b.purpose}</h4>
+                                                   <div className="flex items-center space-x-2 mt-1">
+                                                       <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wide bg-gray-50 px-1.5 py-0.5 rounded">{resource?.name || '未知资源'}</span>
+                                                       <span className="text-[10px] font-medium text-gray-400">·</span>
+                                                       <span className="text-[10px] font-medium text-gray-400">{b.startTime.split('T')[0]}</span>
+                                                   </div>
+                                               </div>
+                                           </div>
+                                           
+                                           <div className="flex items-center space-x-4">
+                                               <StatusBadge status={b.status} theme={theme} />
+                                               <div className={`p-2 rounded-full transition-transform duration-300 ${isExpanded ? 'rotate-180 bg-gray-100 text-gray-600' : 'text-gray-300'}`}>
+                                                   <ChevronDown size={16}/>
+                                               </div>
+                                           </div>
+                                       </div>
+
+                                       {/* Expanded Content */}
+                                       {isExpanded && (
+                                           <div className="px-6 pb-8 pt-2 border-t border-gray-50 animate-in slide-in-from-top-2 fade-in">
+                                               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 text-xs text-gray-500">
+                                                   <div className="space-y-1">
+                                                       <p className="font-black text-gray-300 uppercase tracking-widest text-[10px]">时间段</p>
+                                                       <p className="font-bold text-gray-700 text-sm flex items-center gap-2">
+                                                           <Clock size={14}/>
+                                                           {b.startTime.replace('T', ' ').slice(0, 16)} - {b.endTime.split('T')[1].slice(0, 5)}
+                                                       </p>
+                                                   </div>
+                                                   <div className="space-y-1">
+                                                       <p className="font-black text-gray-300 uppercase tracking-widest text-[10px]">参与人数</p>
+                                                       <p className="font-bold text-gray-700 text-sm flex items-center gap-2">
+                                                           <Users size={14}/>
+                                                           {b.participants || 1} 人
+                                                       </p>
+                                                   </div>
+                                                   <div className="space-y-1">
+                                                        <p className="font-black text-gray-300 uppercase tracking-widest text-[10px]">附加选项</p>
+                                                        <div className="flex flex-wrap gap-2 mt-1">
+                                                            {b.hasLeader && <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-bold border border-amber-100">领导参会</span>}
+                                                            {b.isVideoConference && <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-bold border border-indigo-100">视频会议</span>}
+                                                            {b.needsTeaService && <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-bold border border-emerald-100">茶水</span>}
+                                                            {!b.hasLeader && !b.isVideoConference && !b.needsTeaService && <span className="text-gray-300">-</span>}
+                                                        </div>
+                                                   </div>
+                                               </div>
+
+                                               <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
+
+                                               {['PENDING', 'APPROVED'].includes(b.status) && (
+                                                   <div className="mt-8 flex justify-end">
+                                                        <button 
+                                                           onClick={(e) => { e.stopPropagation(); handleCancelBooking(b.id); }} 
+                                                           className="flex items-center space-x-2 text-xs font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-5 py-2.5 rounded-xl transition-all border border-rose-100"
+                                                       >
+                                                           <Ban size={14} className="stroke-[2.5px]" />
+                                                           <span>撤销此申请</span>
+                                                       </button>
+                                                   </div>
+                                               )}
+                                           </div>
+                                       )}
+                                   </div>
+                               );
+                           })}
                        </div>
-                       <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
-                     </div>
-                   ))
+
+                       {/* Pagination Controls */}
+                       {totalBookingPages > 1 && (
+                           <div className="flex items-center justify-center space-x-2 mt-8">
+                               <button 
+                                   onClick={() => setBookingPage(p => Math.max(1, p - 1))}
+                                   disabled={bookingPage === 1}
+                                   className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                               >
+                                   <ChevronLeft size={16}/>
+                               </button>
+                               <span className="text-xs font-bold text-gray-400 px-4">
+                                   {bookingPage} / {totalBookingPages}
+                               </span>
+                               <button 
+                                   onClick={() => setBookingPage(p => Math.min(totalBookingPages, p + 1))}
+                                   disabled={bookingPage === totalBookingPages}
+                                   className="p-2 rounded-xl border border-gray-200 text-gray-500 hover:bg-gray-50 disabled:opacity-30 disabled:hover:bg-transparent transition-all"
+                               >
+                                   <ChevronRight size={16}/>
+                               </button>
+                           </div>
+                       )}
+                   </>
                  )}
-               </div>
              </div>
           )}
 
