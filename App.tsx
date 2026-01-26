@@ -220,37 +220,70 @@ const LoginView = ({ users, onLogin, theme }: any) => {
   );
 };
 
-const TodayResourceUsage = ({ resources, bookings, theme }: any) => {
+const TodayResourceUsage = ({ resources, bookings, users, theme, onBookingClick }: any) => {
   const hours = Array.from({ length: 13 }, (_, i) => i + 8); // 8:00 - 20:00
   return (
     <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 overflow-x-auto">
       <h3 className="font-black text-lg mb-6">今日资源占用概览</h3>
       <div className="min-w-[600px]">
         <div className="flex mb-4">
-          <div className="w-24 shrink-0"></div>
-          <div className="flex-1 flex justify-between text-xs text-gray-400 font-bold uppercase">
-            {hours.map(h => <div key={h} className="flex-1 text-center">{h}:00</div>)}
+          <div className="w-32 shrink-0 p-2 text-xs font-black text-gray-400 uppercase tracking-widest">资源名称</div>
+          <div className="flex-1 flex justify-between text-xs text-gray-400 font-bold uppercase relative">
+            {hours.map(h => <div key={h} className="flex-1 text-center border-l border-gray-100">{h}:00</div>)}
           </div>
         </div>
         <div className="space-y-3">
-          {resources.slice(0, 5).map((r: any) => (
-            <div key={r.id} className="flex items-center">
-              <div className="w-24 shrink-0 text-xs font-bold text-gray-600 truncate pr-4">{r.name}</div>
-              <div className="flex-1 h-8 bg-gray-50 rounded-lg relative overflow-hidden">
-                {bookings.filter((b: any) => b.resourceId === r.id && b.status === 'APPROVED' && new Date(b.startTime).toDateString() === new Date().toDateString()).map((b: any) => {
-                  const start = new Date(b.startTime);
-                  const end = new Date(b.endTime);
-                  const startHour = start.getHours() + start.getMinutes() / 60;
-                  const endHour = end.getHours() + end.getMinutes() / 60;
-                  const left = ((startHour - 8) / 13) * 100;
-                  const width = ((endHour - startHour) / 13) * 100;
-                  return (
-                    <div key={b.id} className={`absolute top-1 bottom-1 bg-${theme}-400 rounded-md opacity-80`} style={{ left: `${left}%`, width: `${width}%` }} title={b.purpose}></div>
-                  );
-                })}
+          {resources.slice(0, 5).map((r: any) => {
+            const dailyBookings = bookings.filter((b: any) => 
+              b.resourceId === r.id && 
+              b.status === 'APPROVED' && 
+              new Date(b.startTime).toDateString() === new Date().toDateString()
+            );
+
+            return (
+              <div key={r.id} className="flex items-center group">
+                <div className="w-32 shrink-0 text-xs font-bold text-gray-600 truncate pr-4 flex items-center gap-2">
+                  <div className={`w-2 h-2 rounded-full ${r.type === 'ROOM' ? 'bg-indigo-400' : 'bg-emerald-400'}`}></div>
+                  {r.name}
+                </div>
+                <div className="flex-1 h-10 bg-gray-50/50 rounded-xl relative overflow-hidden border border-transparent group-hover:border-gray-100 transition-all">
+                   {/* Background Grid Lines */}
+                   <div className="absolute inset-0 flex">
+                      {hours.map(h => <div key={h} className="flex-1 border-l border-gray-100 first:border-l-0"></div>)}
+                   </div>
+
+                   {dailyBookings.map((b: any) => {
+                    const start = new Date(b.startTime);
+                    const end = new Date(b.endTime);
+                    const startHour = start.getHours() + start.getMinutes() / 60;
+                    const endHour = end.getHours() + end.getMinutes() / 60;
+                    
+                    // Clamp to view 8-20
+                    let s = Math.max(startHour, 8);
+                    let e = Math.min(endHour, 21);
+                    if (s >= 21 || e <= 8) return null;
+
+                    const left = ((s - 8) / 13) * 100;
+                    const width = ((e - s) / 13) * 100;
+                    
+                    const user = users?.find((u: any) => u.id === b.userId);
+
+                    return (
+                      <button 
+                        key={b.id} 
+                        onClick={() => onBookingClick && onBookingClick({ resource: r, date: new Date(), bookings: dailyBookings })}
+                        className={`absolute top-1.5 bottom-1.5 bg-${theme}-500/90 rounded-lg text-white text-[9px] font-bold flex items-center px-2 hover:bg-${theme}-600 transition-all shadow-sm hover:shadow-md z-10 hover:z-20 border border-${theme}-400/20 overflow-hidden whitespace-nowrap`} 
+                        style={{ left: `${left}%`, width: `${width}%` }} 
+                        title={`${user?.name || '未知'} · ${b.purpose}`}
+                      >
+                         {user?.name}
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
     </div>
@@ -650,21 +683,30 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
 const DepartmentNode = ({ dept, allDepts, theme, onEdit, onDelete, onAddSub, depth = 0 }: any) => {
   const children = allDepts.filter((d: any) => d.parentId === dept.id);
   const hasChildren = children.length > 0;
+  const [isExpanded, setIsExpanded] = useState(true);
 
   return (
     <div className="relative">
       <div className={`flex items-center justify-between p-4 bg-white rounded-2xl border border-gray-100 hover:border-${theme}-200 shadow-sm hover:shadow-md transition-all group mb-3 relative z-10`}>
         {/* Connector line for non-root nodes */}
         {depth > 0 && (
-          <div className="absolute -left-8 top-1/2 w-8 h-px bg-gray-200"></div>
+          <div className="absolute -left-6 top-1/2 w-6 h-px bg-gray-200"></div>
         )}
-        {/* Connector dot */}
+        {/* Vertical connector line segment from parent */}
         {depth > 0 && (
-          <div className="absolute -left-8 top-1/2 w-1.5 h-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-gray-300"></div>
+           <div className="absolute -left-6 bottom-1/2 h-[calc(100%+12px)] w-px bg-gray-200 -z-10 origin-bottom"></div>
         )}
 
-        <div className="flex items-center space-x-4">
-          <div className={`w-10 h-10 rounded-xl ${hasChildren ? `bg-${theme}-50 text-${theme}-600` : 'bg-gray-50 text-gray-400'} flex items-center justify-center transition-colors`}>
+        <div className="flex items-center space-x-4 flex-1">
+          <button 
+            onClick={() => setIsExpanded(!isExpanded)} 
+            disabled={!hasChildren}
+            className={`w-6 h-6 flex items-center justify-center rounded-lg transition-colors ${hasChildren ? `hover:bg-${theme}-50 text-gray-400 hover:text-${theme}-600 cursor-pointer` : 'opacity-0 cursor-default'}`}
+          >
+             {isExpanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+          </button>
+
+          <div className={`w-10 h-10 rounded-xl ${hasChildren ? `bg-${theme}-50 text-${theme}-600` : 'bg-gray-50 text-gray-400'} flex items-center justify-center transition-colors shrink-0`}>
              {hasChildren ? <FolderTree size={20}/> : <Building2 size={20}/>}
           </div>
           <div>
@@ -683,8 +725,8 @@ const DepartmentNode = ({ dept, allDepts, theme, onEdit, onDelete, onAddSub, dep
         </div>
       </div>
       
-      {hasChildren && (
-        <div className="pl-8 ml-6 relative border-l border-gray-200 space-y-3 pt-3 pb-1">
+      {hasChildren && isExpanded && (
+        <div className="pl-6 ml-6 relative space-y-3 pt-3 pb-1 border-l border-gray-200">
           {children.map((child: any) => (
             <DepartmentNode key={child.id} dept={child} allDepts={allDepts} theme={theme} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} depth={depth + 1} />
           ))}
@@ -693,6 +735,8 @@ const DepartmentNode = ({ dept, allDepts, theme, onEdit, onDelete, onAddSub, dep
     </div>
   );
 };
+
+// ... (DepartmentModal, ResourceCalendarModal, UserModal, ResourceModal, RoleModal, WorkflowModal, BookingFormModal, BookingConflictModal, DetailViewModal omitted as they are unchanged) ...
 
 const DepartmentModal = ({ department, parentId, theme, onClose, onSave }: any) => {
   const [name, setName] = useState(department?.name || '');
@@ -1678,7 +1722,13 @@ const App: React.FC = () => {
                 <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setView('APPROVAL_CENTER')} />
               </div>
 
-              <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
+              <TodayResourceUsage 
+                resources={resources} 
+                bookings={bookings} 
+                users={users} 
+                theme={theme}
+                onBookingClick={(detail: any) => setDayDetail(detail)}
+              />
               
               {/* Weekly View */}
               <ResourceUsageGrid 
