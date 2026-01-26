@@ -10,13 +10,13 @@ import {
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
-  Save, RotateCcw, Phone
+  Save, RotateCcw, Phone, Ban
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
 import { getSmartRecommendation } from './services/geminiService';
 
-const STORAGE_KEY = 'SMART_OFFICE_DATA_V34';
+const STORAGE_KEY = 'SMART_OFFICE_DATA_V35';
 const THEME_KEY = 'SMART_OFFICE_THEME';
 
 // --- Theme Config ---
@@ -261,6 +261,18 @@ const TodayResourceUsage = ({ resources, bookings, theme }: any) => {
 const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
   const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000));
 
+  const isBookingActiveOnDay = (booking: Booking, day: Date, resourceId: string) => {
+    if (booking.resourceId !== resourceId) return false;
+    if (booking.status !== 'APPROVED') return false;
+    
+    const dayStart = new Date(day); dayStart.setHours(0,0,0,0);
+    const dayEnd = new Date(day); dayEnd.setHours(23,59,59,999);
+    const bStart = new Date(booking.startTime);
+    const bEnd = new Date(booking.endTime);
+    
+    return bStart < dayEnd && bEnd > dayStart;
+  };
+
   return (
     <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col">
       <h3 className="font-black text-lg mb-4">未来30天资源申请情况</h3>
@@ -289,25 +301,60 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
                   </div>
                 </td>
                 {days.map((d, i) => {
-                  const dateStr = d.toISOString().split('T')[0];
-                  const bookingCount = bookings.filter((b: any) => 
-                    b.resourceId === r.id && 
-                    b.status === 'APPROVED' && 
-                    b.startTime.startsWith(dateStr)
-                  ).length;
+                  const dayBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, d, r.id));
+                  const bookingCount = dayBookings.length;
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
+                  
+                  // Logic for continuous bars visualization
+                  let connectLeft = false;
+                  let connectRight = false;
+                  
+                  // Only apply continuous logic if there is exactly one booking, to avoid confusion with overlaps
+                  if (bookingCount === 1) {
+                      const currentBookingId = dayBookings[0].id;
+                      if (i > 0) {
+                         const prevD = days[i-1];
+                         const prevBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, prevD, r.id));
+                         if (prevBookings.some((b: any) => b.id === currentBookingId)) connectLeft = true;
+                      }
+                      if (i < days.length - 1) {
+                         const nextD = days[i+1];
+                         const nextBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, nextD, r.id));
+                         if (nextBookings.some((b: any) => b.id === currentBookingId)) connectRight = true;
+                      }
+                  }
+
+                  let shapeClass = 'rounded-lg';
+                  let widthClass = 'w-full';
+                  let marginClass = '';
+                  
+                  if (connectLeft && connectRight) {
+                      shapeClass = 'rounded-none';
+                      widthClass = 'w-[calc(100%+9px)]'; 
+                      marginClass = '-mx-1';
+                  } else if (connectLeft) {
+                      shapeClass = 'rounded-l-none rounded-r-lg';
+                      widthClass = 'w-[calc(100%+4px)]';
+                      marginClass = '-ml-1';
+                  } else if (connectRight) {
+                      shapeClass = 'rounded-l-lg rounded-r-none';
+                      widthClass = 'w-[calc(100%+4px)]';
+                      marginClass = '-mr-1';
+                  }
 
                   return (
-                    <td key={i} className={`p-1 border-b border-gray-50 text-center ${isWeekend ? 'bg-slate-50' : ''}`}>
-                      <button 
-                        onClick={() => onDayClick(r.id, d)}
-                        className={`w-full h-8 rounded-lg transition-all flex items-center justify-center ${bookingCount > 0 ? `bg-${theme}-600 border-${theme}-700 border-2 shadow-sm scale-90` : 'hover:bg-gray-100'}`}
-                        title={bookingCount > 0 ? `${bookingCount} 项预订` : '空闲'}
-                      >
-                        {bookingCount > 0 && (
-                          <span className="text-[9px] font-bold text-white">{bookingCount}</span>
-                        )}
-                      </button>
+                    <td key={i} className={`p-1 border-b border-gray-50 text-center relative ${isWeekend ? 'bg-slate-50' : ''}`}>
+                      <div className="relative w-full h-8 flex items-center justify-center">
+                        <button 
+                          onClick={() => onDayClick(r.id, d)}
+                          className={`h-full flex items-center justify-center transition-all ${bookingCount > 0 ? `bg-${theme}-600 border-${theme}-700 border shadow-sm ${shapeClass} ${widthClass} ${marginClass} z-10` : 'w-full hover:bg-gray-100 rounded-lg'}`}
+                          title={bookingCount > 0 ? `${bookingCount} 项预订` : '空闲'}
+                        >
+                          {bookingCount > 0 && (
+                            <span className="text-[9px] font-bold text-white">{bookingCount > 1 ? bookingCount : ''}</span>
+                          )}
+                        </button>
+                      </div>
                     </td>
                   );
                 })}
@@ -557,171 +604,145 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
   );
 };
 
-const DepartmentNode = ({ dept, allDepts, level = 0, onEdit, onDelete, onAddSub, theme }: any) => {
+const DepartmentNode = ({ dept, allDepts, theme, onEdit, onDelete, onAddSub, depth = 0 }: any) => {
   const children = allDepts.filter((d: any) => d.parentId === dept.id);
-  const [isExpanded, setIsExpanded] = useState(true);
-  const hasChildren = children.length > 0;
-  
   return (
-    <div className="space-y-1">
-       <div className={`group flex items-center justify-between p-3 rounded-xl transition-all ${level === 0 ? 'bg-gray-50 border border-gray-100' : 'hover:bg-gray-50 border border-transparent hover:border-gray-100'}`} style={{ marginLeft: `${level * 24}px` }}>
-          <div className="flex items-center space-x-2">
-             <button 
-                onClick={() => setIsExpanded(!isExpanded)} 
-                className={`p-1 rounded-md text-gray-400 hover:text-${theme}-600 hover:bg-${theme}-50 transition-colors ${hasChildren ? '' : 'opacity-0 cursor-default'}`}
-             >
-                {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
-             </button>
-             
-             {level === 0 ? (
-                <div className={`p-1.5 rounded-lg bg-${theme}-100 text-${theme}-700`}><FolderTree size={16} /></div>
-             ) : (
-                <div className="flex items-center justify-center w-6 h-6"><div className="w-1.5 h-1.5 rounded-full bg-gray-300"></div></div>
-             )}
-             <span className={`font-bold ${level === 0 ? 'text-gray-800 text-sm' : 'text-gray-600 text-xs'}`}>{dept.name}</span>
-             {level === 0 && <span className="px-2 py-0.5 bg-gray-100 text-gray-400 text-[9px] rounded-md font-bold uppercase">一级</span>}
-          </div>
-          <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-all">
-             <button onClick={() => onAddSub(dept.id)} className={`p-1.5 text-${theme}-600 hover:bg-${theme}-50 rounded-lg transition-colors`} title="添加子部门"><Plus size={14}/></button>
-             <button onClick={() => onEdit(dept)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors" title="编辑"><Edit2 size={14}/></button>
-             <button onClick={() => onDelete(dept.id)} className="p-1.5 text-gray-400 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-colors" title="删除"><Trash2 size={14}/></button>
-          </div>
-       </div>
-       
-       {isExpanded && children.map((child: any) => (
-          <DepartmentNode key={child.id} dept={child} allDepts={allDepts} level={level + 1} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} theme={theme} />
-       ))}
+    <div className={`mb-2 ${depth > 0 ? 'ml-8' : ''}`}>
+      <div className="flex items-center justify-between p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-gray-200 transition-all group">
+        <div className="flex items-center space-x-3">
+          <div className={`w-2 h-8 rounded-full bg-${theme}-400`}></div>
+          <span className="font-bold text-gray-700">{dept.name}</span>
+        </div>
+        <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-opacity">
+          <button onClick={() => onAddSub(dept.id)} className={`p-1.5 text-${theme}-600 hover:bg-${theme}-50 rounded-lg`} title="添加子部门"><Plus size={14} /></button>
+          <button onClick={() => onEdit(dept)} className="p-1.5 text-gray-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg"><Edit2 size={14} /></button>
+          <button onClick={() => onDelete(dept.id)} className="p-1.5 text-gray-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg"><Trash2 size={14} /></button>
+        </div>
+      </div>
+      {children.map((child: any) => (
+        <DepartmentNode key={child.id} dept={child} allDepts={allDepts} theme={theme} onEdit={onEdit} onDelete={onDelete} onAddSub={onAddSub} depth={depth + 1} />
+      ))}
     </div>
   );
 };
 
-const DepartmentModal = ({ department, parentId, onClose, onSave, theme }: any) => {
+const DepartmentModal = ({ department, parentId, theme, onClose, onSave }: any) => {
   const [name, setName] = useState(department?.name || '');
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in">
-        <h3 className="font-black text-xl mb-6 text-gray-800">
-          {department ? '编辑部门' : (parentId ? '添加子部门' : '新建一级部门')}
-        </h3>
-        <div className="space-y-4">
-          <div>
-             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">部门名称</label>
-             <input 
-                className="w-full p-4 bg-gray-50 rounded-2xl border-2 border-transparent focus:border-indigo-100 focus:bg-white outline-none font-bold text-gray-800 transition-all" 
-                placeholder="请输入名称..." 
-                value={name} 
-                onChange={e => setName(e.target.value)} 
-                autoFocus
-             />
-          </div>
-        </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
-          <button 
-            onClick={() => { if(name.trim()) onSave({ name, parentId: department ? department.parentId : parentId }); }} 
-            className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all`}
-            disabled={!name.trim()}
-          >
-            保存
-          </button>
+      <div className="bg-white rounded-3xl p-8 max-w-sm w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl mb-6 text-gray-800">{department ? '编辑部门' : '新增部门'}</h3>
+        <input 
+          value={name} 
+          onChange={e => setName(e.target.value)} 
+          placeholder="部门名称" 
+          className="w-full p-4 bg-gray-50 border border-gray-100 rounded-xl mb-6 focus:ring-2 focus:ring-indigo-100 outline-none" 
+        />
+        <div className="flex space-x-3">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => { if(name) onSave({ name, parentId }); }} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold shadow-lg`}>保存</button>
         </div>
       </div>
     </div>
   );
 };
 
-const ResourceCalendarModal = ({ resource, onClose }: any) => (
-  <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-    <div className="bg-white rounded-3xl p-8 max-w-lg w-full h-[500px] flex flex-col">
-       <div className="flex justify-between items-center mb-4">
-          <h3 className="font-bold text-xl">{resource.name} 日历视图</h3>
-          <button onClick={onClose}><X size={20}/></button>
-       </div>
-       <div className="flex-1 bg-gray-50 rounded-2xl flex items-center justify-center text-gray-400 font-bold">
-         日历组件开发中...
-       </div>
-    </div>
-  </div>
-);
+const ResourceCalendarModal = ({ resource, bookings, users, theme, onClose, onSelectDate }: any) => {
+  const [currentMonth, setCurrentMonth] = useState(new Date());
+  
+  const daysInMonth = new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 0).getDate();
+  const firstDay = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), 1).getDay();
+  
+  const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+  const blanks = Array.from({ length: firstDay }, (_, i) => i);
 
-const UserModal = ({ user, onClose, onSave, theme, departments = [], roles = [] }: any) => {
-  const [formData, setFormData] = useState(user || { name: '', email: '', role: ['EMPLOYEE'], department: '', landline: '', mobile: '' });
+  const isToday = (d: number) => {
+    const today = new Date();
+    return d === today.getDate() && currentMonth.getMonth() === today.getMonth() && currentMonth.getFullYear() === today.getFullYear();
+  };
 
-  const toggleRole = (roleId: string) => {
-    const currentRoles = formData.role || [];
-    if (currentRoles.includes(roleId)) {
-      setFormData({ ...formData, role: currentRoles.filter((id: string) => id !== roleId) });
-    } else {
-      setFormData({ ...formData, role: [...currentRoles, roleId] });
-    }
+  const getDayStatus = (day: number) => {
+    const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dayStart = new Date(dateStr); dayStart.setHours(0,0,0,0);
+    const dayEnd = new Date(dateStr); dayEnd.setHours(23,59,59,999);
+    
+    const dayBookings = bookings.filter((b: any) => 
+      b.resourceId === resource.id && 
+      b.status === 'APPROVED' &&
+      new Date(b.startTime) < dayEnd && 
+      new Date(b.endTime) > dayStart
+    );
+
+    if (dayBookings.length === 0) return 'AVAILABLE';
+    return 'PARTIAL'; 
   };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full animate-in zoom-in">
-        <h3 className="font-bold text-xl mb-6 text-gray-800">{user ? '编辑成员' : '新增成员'}</h3>
-        <div className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-             <div className="col-span-1">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">姓名</label>
-                <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-bold text-gray-800 transition-all" placeholder="输入姓名" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-             </div>
-             <div className="col-span-1">
-                <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">部门</label>
-                <div className="relative">
-                  <select 
-                    className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-bold text-gray-800 transition-all appearance-none" 
-                    value={formData.department} 
-                    onChange={e => setFormData({...formData, department: e.target.value})}
-                  >
-                    <option value="">选择部门...</option>
-                    {departments.map((d: any) => (
-                      <option key={d.id} value={d.name}>{d.name}</option>
-                    ))}
-                  </select>
-                  <ChevronDown className="absolute right-3 top-3.5 text-gray-400 pointer-events-none" size={14} />
-                </div>
-             </div>
-          </div>
-          
-          <div>
-            <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">电子邮箱</label>
-            <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none font-medium text-gray-600 transition-all" placeholder="name@company.com" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} />
-          </div>
-
-          <div>
-             <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-2 block">系统角色 (多选)</label>
-             <div className="flex flex-wrap gap-2">
-                {roles.map((r: any) => {
-                   const isSelected = formData.role?.includes(r.id);
-                   return (
-                      <button 
-                        key={r.id} 
-                        onClick={() => toggleRole(r.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all flex items-center space-x-1 ${isSelected ? `bg-${theme}-100 text-${theme}-700 border-${theme}-200` : 'bg-white text-gray-400 border-gray-200 hover:border-gray-300'}`}
-                      >
-                         {isSelected ? <CheckSquare size={14}/> : <Square size={14}/>}
-                         <span>{r.name}</span>
-                      </button>
-                   )
-                })}
-             </div>
-          </div>
-
-          <div className="flex space-x-4">
-            <div className="flex-1">
-               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">办公电话</label>
-               <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none text-sm" placeholder="010-..." value={formData.landline || ''} onChange={e => setFormData({...formData, landline: e.target.value})} />
-            </div>
-            <div className="flex-1">
-               <label className="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">移动电话</label>
-               <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent focus:border-indigo-100 focus:bg-white outline-none text-sm" placeholder="138..." value={formData.mobile || ''} onChange={e => setFormData({...formData, mobile: e.target.value})} />
-            </div>
+      <div className="bg-white rounded-[2.5rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in relative">
+        <button onClick={onClose} className="absolute top-6 right-6 p-2 bg-gray-100 rounded-xl text-gray-400 hover:text-rose-500"><X size={20}/></button>
+        <div className="mb-6 flex items-center justify-between">
+          <h3 className="text-xl font-black text-gray-800 flex items-center gap-2"><Calendar size={20}/> {resource.name} 排期</h3>
+          <div className="flex items-center space-x-2">
+            <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() - 1)))} className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200"><ChevronLeft size={16}/></button>
+            <span className="font-bold text-gray-600 w-24 text-center">{currentMonth.getFullYear()}年{currentMonth.getMonth() + 1}月</span>
+            <button onClick={() => setCurrentMonth(new Date(currentMonth.setMonth(currentMonth.getMonth() + 1)))} className="p-2 bg-gray-100 rounded-lg hover:bg-gray-200"><ChevronRight size={16}/></button>
           </div>
         </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all`}>保存</button>
+        
+        <div className="grid grid-cols-7 gap-2 mb-2 text-center">
+          {['日', '一', '二', '三', '四', '五', '六'].map(d => <div key={d} className="text-xs font-bold text-gray-300">{d}</div>)}
+        </div>
+        <div className="grid grid-cols-7 gap-2">
+          {blanks.map(i => <div key={`blank-${i}`} />)}
+          {days.map(d => {
+            const status = getDayStatus(d);
+            const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+            return (
+              <button 
+                key={d} 
+                onClick={() => onSelectDate(dateStr + 'T09:00')}
+                className={`aspect-square rounded-xl flex flex-col items-center justify-center border-2 transition-all ${isToday(d) ? `border-${theme}-600 text-${theme}-600 font-black` : 'border-transparent hover:border-indigo-100 hover:bg-indigo-50'} ${status === 'PARTIAL' ? 'bg-amber-50 text-amber-600' : 'bg-gray-50 text-gray-600'}`}
+              >
+                <span className="text-sm">{d}</span>
+                {status === 'PARTIAL' && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1"></span>}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) => {
+  const [formData, setFormData] = useState({
+    name: user?.name || '',
+    email: user?.email || '',
+    department: user?.department || departments[0]?.name || '',
+    role: user?.role?.[0] || 'EMPLOYEE',
+    mobile: user?.mobile || '',
+    landline: user?.landline || ''
+  });
+
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl mb-6">{user ? '编辑成员' : '录入新成员'}</h3>
+        <div className="space-y-4">
+          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="姓名" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} placeholder="电子邮箱" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <select value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+            {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
+          </select>
+          <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+            {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+          </select>
+          <input value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} placeholder="移动电话" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+        </div>
+        <div className="flex space-x-3 mt-6">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => onSave({...formData, role: [formData.role]})} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
         </div>
       </div>
     </div>
@@ -729,25 +750,29 @@ const UserModal = ({ user, onClose, onSave, theme, departments = [], roles = [] 
 };
 
 const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState(resource || { name: '', type: 'ROOM', capacity: 4, location: '' });
+  const [formData, setFormData] = useState({
+    name: resource?.name || '',
+    type: resource?.type || 'ROOM',
+    capacity: resource?.capacity || 4,
+    location: resource?.location || '',
+  });
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full">
-        <h3 className="font-bold text-xl mb-6">{resource ? '编辑资源' : '新增资源'}</h3>
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl mb-6">{resource ? '编辑资源' : '新增资源'}</h3>
         <div className="space-y-4">
-          <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent outline-none" placeholder="资源名称" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-          <div className="flex space-x-4">
-            <select className="flex-1 p-3 bg-gray-50 rounded-xl outline-none" value={formData.type} onChange={e => setFormData({...formData, type: e.target.value})}>
-              <option value="ROOM">会议室</option>
-              <option value="DESK">工位</option>
-            </select>
-            <input type="number" className="w-24 p-3 bg-gray-50 rounded-xl outline-none" placeholder="容量" value={formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} />
+          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="资源名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <div className="flex space-x-2">
+            <button onClick={() => setFormData({...formData, type: 'ROOM'})} className={`flex-1 p-3 rounded-xl border ${formData.type === 'ROOM' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-400'}`}>会议室</button>
+            <button onClick={() => setFormData({...formData, type: 'DESK'})} className={`flex-1 p-3 rounded-xl border ${formData.type === 'DESK' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-400'}`}>工位</button>
           </div>
-          <input className="w-full p-3 bg-gray-50 rounded-xl border border-transparent outline-none" placeholder="位置" value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} />
+          <input type="number" value={formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} placeholder="位置" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
         </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold`}>保存</button>
+        <div className="flex space-x-3 mt-6">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
         </div>
       </div>
     </div>
@@ -755,19 +780,28 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
 };
 
 const RoleModal = ({ role, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState(role || { id: '', name: '', description: '', color: 'indigo' });
+  const [formData, setFormData] = useState({
+    name: role?.name || '',
+    description: role?.description || '',
+    color: role?.color || 'indigo'
+  });
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full">
-        <h3 className="font-bold text-xl mb-6">{role ? '编辑角色' : '新增角色'}</h3>
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl mb-6">{role ? '编辑角色集' : '新增角色集'}</h3>
         <div className="space-y-4">
-          <input className="w-full p-3 bg-gray-50 rounded-xl outline-none" placeholder="角色ID" value={formData.id} onChange={e => setFormData({...formData, id: e.target.value})} disabled={!!role} />
-          <input className="w-full p-3 bg-gray-50 rounded-xl outline-none" placeholder="角色名称" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-          <textarea className="w-full p-3 bg-gray-50 rounded-xl outline-none h-24" placeholder="描述" value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} />
+          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="角色名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="职能描述" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100 h-24" />
+          <div className="flex space-x-2">
+            {['indigo', 'emerald', 'amber', 'rose', 'purple'].map(c => (
+              <button key={c} onClick={() => setFormData({...formData, color: c})} className={`w-8 h-8 rounded-full bg-${c}-500 ${formData.color === c ? 'ring-2 ring-offset-2 ring-gray-400' : ''}`} />
+            ))}
+          </div>
         </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold`}>保存</button>
+        <div className="flex space-x-3 mt-6">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
         </div>
       </div>
     </div>
@@ -775,21 +809,27 @@ const RoleModal = ({ role, onClose, onSave, theme }: any) => {
 };
 
 const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
-  const [formData, setFormData] = useState(node || { name: '', approverRole: '' });
+  const [formData, setFormData] = useState({
+    name: node?.name || '',
+    approverRole: node?.approverRole || roles[0]?.id || ''
+  });
+
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-3xl p-8 max-w-md w-full">
-        <h3 className="font-bold text-xl mb-6">{node ? '编辑节点' : '新增节点'}</h3>
+      <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl mb-6">{node ? '编辑节点' : '新增审批节点'}</h3>
         <div className="space-y-4">
-          <input className="w-full p-3 bg-gray-50 rounded-xl outline-none" placeholder="节点名称" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-          <select className="w-full p-3 bg-gray-50 rounded-xl outline-none" value={formData.approverRole} onChange={e => setFormData({...formData, approverRole: e.target.value})}>
-            <option value="">选择审批角色</option>
-            {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="节点名称（如：行政初审）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <div>
+            <label className="text-xs text-gray-400 font-bold ml-1 mb-1 block">审批负责人角色</label>
+            <select value={formData.approverRole} onChange={e => setFormData({...formData, approverRole: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+              {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
+            </select>
+          </div>
         </div>
-        <div className="flex space-x-3 mt-8">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold`}>保存</button>
+        <div className="flex space-x-3 mt-6">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
         </div>
       </div>
     </div>
@@ -935,6 +975,54 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
   );
 };
 
+const BookingConflictModal = ({ conflict, users, theme, onClose, onApplySuggestion }: any) => {
+  const { resource, resourceBookings, errorType, suggestion } = conflict;
+
+  return (
+    <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+        <div className="text-center mb-6">
+           <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mx-auto mb-4">
+              <AlertTriangle size={32}/>
+           </div>
+           <h3 className="font-black text-xl text-gray-800">预约冲突提示</h3>
+           <p className="text-xs font-bold text-gray-400 mt-2">
+             {errorType === 'PAST_TIME' ? "您选择的时间已是过去式" : "该时段已被其他同事预订"}
+           </p>
+        </div>
+
+        {errorType === 'CONFLICT' && (
+          <div className="bg-gray-50 rounded-2xl p-4 mb-6 max-h-32 overflow-y-auto custom-scrollbar">
+             {resourceBookings.map((b: any) => {
+                const user = users.find((u: any) => u.id === b.userId);
+                return (
+                   <div key={b.id} className="flex items-center space-x-3 mb-2 last:mb-0 pb-2 border-b border-gray-100 last:border-0 last:pb-0">
+                      <div className={`w-6 h-6 rounded-full bg-white flex items-center justify-center text-[10px] font-bold shadow-sm shrink-0`}>{user?.name[0]}</div>
+                      <div>
+                         <p className="text-xs font-bold text-gray-700">{user?.name} · {b.purpose}</p>
+                         <p className="text-[10px] text-gray-400">{b.startTime.replace('T', ' ')} - {b.endTime.split('T')[1]}</p>
+                      </div>
+                   </div>
+                );
+             })}
+          </div>
+        )}
+
+        <div className="space-y-3">
+           <button 
+             onClick={() => onApplySuggestion(suggestion.start, suggestion.end)} 
+             className={`w-full py-4 bg-${theme}-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center justify-center space-x-2`}
+           >
+             <Lightbulb size={18} className="animate-pulse"/>
+             <span className="text-sm">采纳建议：{formatDate(suggestion.start)} {formatTime(suggestion.start)}</span>
+           </button>
+           <button onClick={onClose} className="w-full py-3 bg-gray-100 text-gray-500 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">取消</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }: any) => {
   const { type, data } = viewDetail;
   const relatedBookings = bookings.filter((b: any) => 
@@ -999,54 +1087,6 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
   );
 };
 
-const BookingConflictModal = ({ conflict, users, theme, onClose, onApplySuggestion }: any) => {
-  const { resource, resourceBookings, errorType, suggestion } = conflict;
-
-  return (
-    <div className="fixed inset-0 z-[1050] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
-        <div className="text-center mb-6">
-           <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center text-rose-500 mx-auto mb-4">
-              <AlertTriangle size={32}/>
-           </div>
-           <h3 className="font-black text-xl text-gray-800">预约冲突提示</h3>
-           <p className="text-xs font-bold text-gray-400 mt-2">
-             {errorType === 'PAST_TIME' ? "您选择的时间已是过去式" : "该时段已被其他同事预订"}
-           </p>
-        </div>
-
-        {errorType === 'CONFLICT' && (
-          <div className="bg-gray-50 rounded-2xl p-4 mb-6 max-h-32 overflow-y-auto custom-scrollbar">
-             {resourceBookings.map((b: any) => {
-                const user = users.find((u: any) => u.id === b.userId);
-                return (
-                   <div key={b.id} className="flex items-center space-x-3 mb-2 last:mb-0 pb-2 border-b border-gray-100 last:border-0 last:pb-0">
-                      <div className={`w-6 h-6 rounded-full bg-white flex items-center justify-center text-[10px] font-bold shadow-sm shrink-0`}>{user?.name[0]}</div>
-                      <div>
-                         <p className="text-xs font-bold text-gray-700">{user?.name} · {b.purpose}</p>
-                         <p className="text-[10px] text-gray-400">{b.startTime.replace('T', ' ')} - {b.endTime.split('T')[1]}</p>
-                      </div>
-                   </div>
-                );
-             })}
-          </div>
-        )}
-
-        <div className="space-y-3">
-           <button 
-             onClick={() => onApplySuggestion(suggestion.start, suggestion.end)} 
-             className={`w-full py-4 bg-${theme}-600 text-white rounded-xl font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all flex items-center justify-center space-x-2`}
-           >
-             <Lightbulb size={18} className="animate-pulse"/>
-             <span className="text-sm">采纳建议：{formatDate(suggestion.start)} {formatTime(suggestion.start)}</span>
-           </button>
-           <button onClick={onClose} className="w-full py-3 bg-gray-100 text-gray-500 rounded-xl font-bold text-sm hover:bg-gray-200 transition-colors">取消</button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // --- Main App ---
 
 const App: React.FC = () => {
@@ -1097,7 +1137,6 @@ const App: React.FC = () => {
   const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
   const [departmentParentId, setDepartmentParentId] = useState<string | null>(null);
 
-  // ... (keep existing useEffects and helper functions)
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
   useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
@@ -1131,7 +1170,6 @@ const App: React.FC = () => {
   );
 
   const handleBooking = (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number) => {
-    // ... existing implementation
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
     
@@ -1153,14 +1191,19 @@ const App: React.FC = () => {
         requestedStart: startTime, 
         requestedEnd: endTime, 
         purpose,
-        resourceBookings: bookings.filter(b => b.resourceId === resourceId && b.status !== 'REJECTED'), 
+        resourceBookings: bookings.filter(b => b.resourceId === resourceId && b.status !== 'REJECTED' && b.status !== 'CANCELLED'), 
         errorType: 'PAST_TIME', 
         suggestion 
       });
       return;
     }
 
-    const conflict = bookings.find(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING') && (start < new Date(b.endTime) && end > new Date(b.startTime)));
+    const conflict = bookings.find(b => 
+       b.resourceId === resourceId && 
+       (b.status === 'APPROVED' || b.status === 'PENDING') && 
+       (start < new Date(b.endTime) && end > new Date(b.startTime))
+    );
+
     if (conflict) {
       const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
       setBookingConflict({ 
@@ -1394,14 +1437,18 @@ const App: React.FC = () => {
                 users={users} 
                 theme={theme} 
                 onDayClick={(resId: string | null, date: Date) => { 
-                  const dateStr = date.toISOString().split('T')[0];
+                  const dayStart = new Date(date); dayStart.setHours(0,0,0,0);
+                  const dayEnd = new Date(date); dayEnd.setHours(23,59,59,999);
+                  
                   const targetResource = resId ? resources.find(r => r.id === resId) : { name: '全公司资源概览' };
                   
-                  const dayBookings = bookings.filter(b => 
-                    b.status === 'APPROVED' && 
-                    b.startTime.startsWith(dateStr) &&
-                    (!resId || b.resourceId === resId) 
-                  );
+                  const dayBookings = bookings.filter(b => {
+                    if (b.status !== 'APPROVED') return false;
+                    if (resId && b.resourceId !== resId) return false;
+                    const bStart = new Date(b.startTime);
+                    const bEnd = new Date(b.endTime);
+                    return bStart < dayEnd && bEnd > dayStart;
+                  });
                   
                   setDayDetail({ 
                     resource: targetResource, 
@@ -1583,10 +1630,11 @@ const App: React.FC = () => {
                          <div className="flex items-center space-x-3">
                             {['PENDING', 'APPROVED'].includes(b.status) && (
                               <button 
-                                onClick={() => handleCancelBooking(b.id)} 
-                                className="text-[10px] text-rose-500 font-black px-4 py-2 bg-rose-50 rounded-xl hover:bg-rose-100 transition-colors border border-rose-100 shadow-sm"
+                                onClick={(e) => { e.stopPropagation(); handleCancelBooking(b.id); }} 
+                                className="flex items-center space-x-2 text-xs font-bold text-white bg-rose-500 hover:bg-rose-600 px-4 py-2.5 rounded-xl transition-all shadow-md hover:shadow-lg hover:-translate-y-0.5"
                               >
-                                撤销申请
+                                <Ban size={14} className="stroke-[2.5px]" />
+                                <span>撤销申请</span>
                               </button>
                             )}
                             <StatusBadge status={b.status} theme={theme} />
