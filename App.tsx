@@ -257,9 +257,7 @@ const TodayResourceUsage = ({ resources, bookings, theme }: any) => {
   );
 };
 
-const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
-  const days = Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000));
-
+const ResourceUsageGrid = ({ title, days, resources, bookings, onDayClick, theme }: any) => {
   const isBookingActiveOnDay = (booking: Booking, day: Date, resourceId: string) => {
     if (booking.resourceId !== resourceId) return false;
     if (booking.status !== 'APPROVED') return false;
@@ -274,13 +272,13 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
 
   return (
     <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col">
-      <h3 className="font-black text-lg mb-4">未来30天资源申请情况</h3>
+      <h3 className="font-black text-lg mb-4">{title}</h3>
       <div className="overflow-x-auto custom-scrollbar pb-2">
         <table className="border-collapse w-full min-w-[800px]">
           <thead>
             <tr>
               <th className="sticky left-0 z-20 bg-white p-3 text-left text-xs font-black text-gray-400 uppercase tracking-widest border-b border-gray-100 min-w-[140px]">资源名称</th>
-              {days.map((d, i) => {
+              {days.map((d: Date, i: number) => {
                 const isWeekend = d.getDay() === 0 || d.getDay() === 6;
                 return (
                   <th key={i} className={`p-2 text-[10px] font-bold text-gray-400 border-b border-gray-100 min-w-[40px] text-center ${isWeekend ? 'bg-slate-50 text-slate-400' : ''}`}>
@@ -299,7 +297,7 @@ const MonthlyUsageGrid = ({ resources, bookings, onDayClick, theme }: any) => {
                     <span className="truncate">{r.name}</span>
                   </div>
                 </td>
-                {days.map((d, i) => {
+                {days.map((d: Date, i: number) => {
                   const dayBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, d, r.id));
                   const bookingCount = dayBookings.length;
                   const isWeekend = d.getDay() === 0 || d.getDay() === 6;
@@ -1370,6 +1368,10 @@ const App: React.FC = () => {
   const [editingDepartment, setEditingDepartment] = useState<Department | null>(null);
   const [departmentParentId, setDepartmentParentId] = useState<string | null>(null);
 
+  // Computed days for dashboard views
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
+  const monthDays = useMemo(() => Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
+
   useEffect(() => { localStorage.setItem(STORAGE_KEY, JSON.stringify({ roles, users, resources, bookings, departments, workflow })); }, [roles, users, resources, bookings, departments, workflow]);
   useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
 
@@ -1678,7 +1680,40 @@ const App: React.FC = () => {
 
               <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} />
               
-              <MonthlyUsageGrid 
+              {/* Weekly View */}
+              <ResourceUsageGrid 
+                title="本周资源申请情况 (7天)" 
+                days={weekDays} 
+                resources={resources} 
+                bookings={bookings} 
+                users={users} 
+                theme={theme} 
+                onDayClick={(resId: string | null, date: Date) => { 
+                  const dayStart = new Date(date); dayStart.setHours(0,0,0,0);
+                  const dayEnd = new Date(date); dayEnd.setHours(23,59,59,999);
+                  
+                  const targetResource = resId ? resources.find(r => r.id === resId) : { name: '全公司资源概览' };
+                  
+                  const dayBookings = bookings.filter(b => {
+                    if (b.status !== 'APPROVED') return false;
+                    if (resId && b.resourceId !== resId) return false;
+                    const bStart = new Date(b.startTime);
+                    const bEnd = new Date(b.endTime);
+                    return bStart < dayEnd && bEnd > dayStart;
+                  });
+                  
+                  setDayDetail({ 
+                    resource: targetResource, 
+                    date, 
+                    bookings: dayBookings 
+                  }); 
+                }} 
+              />
+              
+              {/* Monthly View */}
+              <ResourceUsageGrid 
+                title="未来30天资源申请情况" 
+                days={monthDays} 
                 resources={resources} 
                 bookings={bookings} 
                 users={users} 
