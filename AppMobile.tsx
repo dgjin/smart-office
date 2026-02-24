@@ -925,12 +925,40 @@ const AppMobile: React.FC = () => {
           getWorkflow(),
         ]);
 
-        setUsers(usersData);
-        setResources(resourcesData);
+        // 如果数据库中没有用户数据，初始化默认数据
+        if (usersData.length === 0) {
+          console.log('数据库为空，初始化默认数据...');
+          // 使用默认数据并保存到数据库
+          for (const user of INITIAL_USERS) {
+            try {
+              await createUser(user);
+            } catch (e) {
+              console.error('创建用户失败:', e);
+            }
+          }
+          for (const resource of INITIAL_RESOURCES) {
+            try {
+              await createResource(resource);
+            } catch (e) {
+              console.error('创建资源失败:', e);
+            }
+          }
+          // 重新加载数据
+          const [newUsers, newResources] = await Promise.all([
+            getUsers(),
+            getResources(),
+          ]);
+          setUsers(newUsers);
+          setResources(newResources);
+        } else {
+          setUsers(usersData);
+          setResources(resourcesData);
+        }
+        
         setBookings(bookingsData);
-        setRoles(rolesData);
-        setDepartments(departmentsData);
-        setWorkflow(workflowData);
+        setRoles(rolesData.length > 0 ? rolesData : INITIAL_ROLES);
+        setDepartments(departmentsData.length > 0 ? departmentsData : INITIAL_DEPARTMENTS);
+        setWorkflow(workflowData.length > 0 ? workflowData : DEFAULT_WORKFLOW);
         
         setIsOnline(true);
         setSaveStatus('saved');
