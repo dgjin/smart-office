@@ -22,6 +22,7 @@ import {
   createDepartment, updateDepartment, deleteDepartment, updateWorkflow as updateWorkflowDB,
   batchImportUsers, batchImportResources, batchImportDepartments,
   exportAllData, restoreAllData, subscribeToBookings, subscribeToResources,
+  testConnection,
 } from './services/supabaseService';
 
 const STORAGE_KEY = 'SMART_OFFICE_DATA_V35';
@@ -108,7 +109,7 @@ const RoleTag = ({ roleId, roles, theme }: any) => {
 };
 
 // --- Mobile Login View ---
-const LoginView = ({ users, onLogin, theme }: any) => {
+const LoginView = ({ users, onLogin, theme, isLoading }: any) => {
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 flex flex-col">
       {/* Header */}
@@ -123,24 +124,47 @@ const LoginView = ({ users, onLogin, theme }: any) => {
       {/* User Selection */}
       <div className="bg-white rounded-t-[2.5rem] shadow-[0_-10px_40px_rgba(0,0,0,0.1)] p-6 pb-8">
         <h2 className="text-lg font-bold text-gray-800 mb-4">选择账号登录</h2>
-        <div className="space-y-3">
-          {users.map((u: any) => (
-            <button 
-              key={u.id} 
-              onClick={() => onLogin(u)} 
-              className="w-full p-4 flex items-center space-x-4 rounded-2xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-all group text-left active:scale-[0.98]"
-            >
-              <div className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center font-black text-gray-400 group-hover:bg-indigo-200 group-hover:text-indigo-600 transition-colors text-lg`}>
-                {u.name[0]}
-              </div>
-              <div className="flex-1">
-                <h4 className="font-bold text-gray-800">{u.name}</h4>
-                <p className="text-xs text-gray-400">{u.role.join(', ')}</p>
-              </div>
-              <ChevronRight size={20} className="text-gray-300" />
-            </button>
-          ))}
-        </div>
+        
+        {isLoading ? (
+          <div className="flex flex-col items-center justify-center py-8">
+            <div className={`w-8 h-8 border-2 border-${theme}-600 border-t-transparent rounded-full animate-spin mb-3`}></div>
+            <p className="text-sm text-gray-400">正在加载用户数据...</p>
+          </div>
+        ) : users.length === 0 ? (
+          <div className="text-center py-8">
+            <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+              <Users size={24} className="text-gray-400" />
+            </div>
+            <p className="text-gray-500 font-medium mb-2">暂无用户数据</p>
+            <p className="text-xs text-gray-400 mb-4">请先在 Supabase 中添加用户数据</p>
+            <div className="bg-gray-50 rounded-xl p-4 text-left text-xs text-gray-500">
+              <p className="font-bold mb-2">SQL 示例：</p>
+              <code className="block bg-gray-100 p-2 rounded text-[10px] overflow-x-auto">
+                INSERT INTO smartoffice_users (name, email, role, department) <br/>
+                VALUES ('管理员', 'admin@company.com', ARRAY['SYSTEM_ADMIN'], 'IT部');
+              </code>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {users.map((u: any) => (
+              <button 
+                key={u.id} 
+                onClick={() => onLogin(u)} 
+                className="w-full p-4 flex items-center space-x-4 rounded-2xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-all group text-left active:scale-[0.98]"
+              >
+                <div className={`w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center font-black text-gray-400 group-hover:bg-indigo-200 group-hover:text-indigo-600 transition-colors text-lg`}>
+                  {u.name[0]}
+                </div>
+                <div className="flex-1">
+                  <h4 className="font-bold text-gray-800">{u.name}</h4>
+                  <p className="text-xs text-gray-400">{u.role?.join(', ') || '员工'}</p>
+                </div>
+                <ChevronRight size={20} className="text-gray-300" />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -886,6 +910,12 @@ const AppMobile: React.FC = () => {
         setIsLoading(true);
         setSaveStatus('saving');
         
+        // 首先测试连接
+        const isConnected = await testConnection();
+        if (!isConnected) {
+          throw new Error('无法连接到 Supabase');
+        }
+        
         const [usersData, resourcesData, bookingsData, rolesData, departmentsData, workflowData] = await Promise.all([
           getUsers(),
           getResources(),
@@ -906,7 +936,7 @@ const AppMobile: React.FC = () => {
         setSaveStatus('saved');
       } catch (error) {
         console.error('从 Supabase 加载数据失败:', error);
-        // 尝试从本地缓存加载
+        // 尝试从本地缓存加载，如果没有缓存则使用默认数据
         const cached = localStorage.getItem(OFFLINE_CACHE_KEY);
         if (cached) {
           const data = JSON.parse(cached);
@@ -916,10 +946,18 @@ const AppMobile: React.FC = () => {
           setRoles(data.roles || INITIAL_ROLES);
           setDepartments(data.departments || INITIAL_DEPARTMENTS);
           setWorkflow(data.workflow || DEFAULT_WORKFLOW);
+        } else {
+          // 使用默认数据
+          setUsers(INITIAL_USERS);
+          setResources(INITIAL_RESOURCES);
+          setBookings(INITIAL_BOOKINGS);
+          setRoles(INITIAL_ROLES);
+          setDepartments(INITIAL_DEPARTMENTS);
+          setWorkflow(DEFAULT_WORKFLOW);
         }
         setIsOnline(false);
         setSaveStatus('error');
-        addNotification('离线模式', '无法连接到服务器，使用本地缓存数据', 'WARNING');
+        addNotification('离线模式', '无法连接到服务器，使用默认数据', 'WARNING');
       } finally {
         setIsLoading(false);
       }
@@ -1149,7 +1187,7 @@ const AppMobile: React.FC = () => {
     );
   }
 
-  if (!currentUser) return <LoginView users={users} onLogin={setCurrentUser} theme={theme} />;
+  if (!currentUser) return <LoginView users={users} onLogin={setCurrentUser} theme={theme} isLoading={isLoading} />;
 
   return (
     <div className="min-h-screen bg-gray-50">

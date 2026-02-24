@@ -8,6 +8,21 @@ const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-supaba
 // 创建 Supabase 客户端
 export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+// 测试 Supabase 连接
+export async function testConnection(): Promise<boolean> {
+  try {
+    const { error } = await supabase.from(TABLES.USERS).select('count', { count: 'exact', head: true });
+    if (error) {
+      console.error('Supabase 连接测试失败:', error);
+      return false;
+    }
+    return true;
+  } catch (error) {
+    console.error('Supabase 连接测试异常:', error);
+    return false;
+  }
+}
+
 // 数据库表名（使用 smartoffice 前缀）
 const TABLES = {
   USERS: 'smartoffice_users',
