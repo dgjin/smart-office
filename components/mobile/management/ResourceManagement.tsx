@@ -41,6 +41,23 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
     status: 'AVAILABLE' as ResourceStatus
   });
 
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-100';
+  const darkCardBg = isFinanceTheme ? 'bg-[#1E293B]' : 'bg-white';
+  const darkIconBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : (type: ResourceType) => type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600';
+  const darkButtonBg = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const darkPrimaryButton = isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 text-white`;
+  const darkModalBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkInputBg = isFinanceTheme ? 'bg-[#334155] border-[#475569] text-white' : 'bg-white border-gray-200 text-gray-800';
+  const darkLabelText = isFinanceTheme ? 'text-white/80' : 'text-gray-700';
+  const darkFilterButton = isFinanceTheme ? (active: boolean) => active ? 'bg-[#F59E0B] text-[#0F172A]' : 'bg-[#334155] text-white/80 border border-[#475569]' : (active: boolean) => active ? `bg-${theme}-600 text-white shadow-md` : 'bg-white text-gray-500 border border-gray-200';
+  const darkFeatureTag = isFinanceTheme ? (active: boolean) => active ? 'bg-[#334155] text-[#F59E0B] border border-[#F59E0B]' : 'bg-[#334155] text-white/80 border border-[#475569]' : (active: boolean) => active ? `bg-${theme}-100 text-${theme}-700 border border-${theme}-300` : 'bg-gray-100 text-gray-600 border border-gray-200';
+  const darkTypeTag = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : 'bg-gray-50 text-gray-500';
+  const darkFeatureItemTag = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : 'bg-gray-50 text-gray-500';
+
   const handleAdd = () => {
     setEditingResource(null);
     setFormData({
@@ -119,6 +136,11 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
     return statusOptions.find(s => s.value === status) || statusOptions[0];
   };
 
+  const getStatusColor = (status: ResourceStatus) => {
+    const statusInfo = getStatusInfo(status);
+    return isFinanceTheme ? `bg-[#334155] text-[#F59E0B]` : `bg-${statusInfo.color}-50 text-${statusInfo.color}-600 border border-${statusInfo.color}-100`;
+  };
+
   return (
     <MobileAdminPage
       title="资源管理"
@@ -132,11 +154,7 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
           <button
             key={type}
             onClick={() => setFilterType(type as ResourceType | 'ALL')}
-            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${
-              filterType === type 
-                ? `bg-${theme}-600 text-white shadow-md` 
-                : 'bg-white text-gray-500 border border-gray-200'
-            }`}
+            className={`px-4 py-2 rounded-xl text-sm font-bold transition-all ${darkFilterButton(filterType === type)}`}
           >
             {type === 'ALL' ? '全部' : type === 'ROOM' ? '会议室' : '工位'}
           </button>
@@ -146,33 +164,34 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
       {/* Resource List */}
       <div className="space-y-3">
         {filteredResources.length === 0 ? (
-          <div className="text-center py-12 text-gray-400">
+          <div className={`text-center py-12 ${darkSubtext}`}>
             <MapPin size={40} className="mx-auto mb-3 opacity-30" />
             <p>暂无资源数据</p>
           </div>
         ) : (
           filteredResources.map(resource => {
             const statusInfo = getStatusInfo(resource.status);
+            const statusColor = getStatusColor(resource.status);
+            const resourceIconBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : (resource.type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600');
+
             return (
-              <div key={resource.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm group">
+              <div key={resource.id} className={`${darkCardBg} p-4 rounded-xl border ${darkBorder} shadow-sm group`}>
                 <div className="flex items-start justify-between mb-3">
                   <div className="flex items-center space-x-3">
-                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${
-                      resource.type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'
-                    }`}>
+                    <div className={`w-12 h-12 rounded-xl flex items-center justify-center ${resourceIconBg}`}>
                       {resource.type === 'ROOM' ? <Monitor size={24} /> : <Coffee size={24} />}
                     </div>
                     <div>
-                      <h4 className="font-bold text-gray-800">{resource.name}</h4>
-                      <p className="text-xs text-gray-400">{resource.location}</p>
+                      <h4 className={`font-bold ${darkText}`}>{resource.name}</h4>
+                      <p className={`text-xs ${darkSubtext}`}>{resource.location}</p>
                     </div>
                   </div>
-                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold bg-${statusInfo.color}-50 text-${statusInfo.color}-600 border border-${statusInfo.color}-100`}>
+                  <span className={`px-2 py-1 rounded-lg text-[10px] font-bold ${statusColor}`}>
                     {statusInfo.label}
                   </span>
                 </div>
 
-                <div className="flex items-center space-x-4 text-xs text-gray-500 mb-3">
+                <div className={`flex items-center space-x-4 text-xs ${darkSubtext} mb-3`}>
                   <span className="flex items-center space-x-1">
                     <Users size={12} />
                     <span>{resource.capacity || 1}人</span>
@@ -186,12 +205,12 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
                 {resource.features && resource.features.length > 0 && (
                   <div className="flex flex-wrap gap-1 mb-3">
                     {resource.features.slice(0, 3).map((feature, idx) => (
-                      <span key={idx} className="px-2 py-0.5 bg-gray-50 text-gray-500 rounded text-[10px]">
+                      <span key={idx} className={`px-2 py-0.5 ${darkFeatureItemTag} rounded text-[10px]`}>
                         {feature}
                       </span>
                     ))}
                     {resource.features.length > 3 && (
-                      <span className="px-2 py-0.5 bg-gray-50 text-gray-400 rounded text-[10px]">
+                      <span className={`px-2 py-0.5 ${darkFeatureItemTag} rounded text-[10px]`}>
                         +{resource.features.length - 3}
                       </span>
                     )}
@@ -201,13 +220,13 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
                 <div className="flex items-center justify-end space-x-2 pt-2 border-t border-gray-50 opacity-0 group-hover:opacity-100 transition-opacity">
                   <button 
                     onClick={() => handleEdit(resource)} 
-                    className="px-3 py-1.5 text-xs font-medium text-gray-600 hover:bg-gray-100 rounded-lg flex items-center space-x-1"
+                    className={`px-3 py-1.5 text-xs font-medium ${isFinanceTheme ? 'text-white/80 hover:bg-[#334155]' : 'text-gray-600 hover:bg-gray-100'} rounded-lg flex items-center space-x-1`}
                   >
                     <Edit2 size={12} /><span>编辑</span>
                   </button>
                   <button 
                     onClick={() => handleDelete(resource)} 
-                    className="px-3 py-1.5 text-xs font-medium text-red-600 hover:bg-red-50 rounded-lg flex items-center space-x-1"
+                    className={`px-3 py-1.5 text-xs font-medium ${isFinanceTheme ? 'text-[#F43F5E] hover:bg-[#334155]' : 'text-red-600 hover:bg-red-50'} rounded-lg flex items-center space-x-1`}
                   >
                     <Trash2 size={12} /><span>删除</span>
                   </button>
@@ -221,74 +240,76 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
       {/* Add/Edit Modal */}
       {showModal && (
         <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4" style={{ maxWidth: '448px', margin: '0 auto' }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto animate-in zoom-in-95">
-            <h3 className="font-bold text-lg text-gray-800 mb-4">
+          <div className={`${darkModalBg} rounded-2xl p-6 w-full max-w-sm max-h-[90vh] overflow-y-auto animate-in zoom-in-95 border ${darkBorder}`}>
+            <h3 className={`font-bold text-lg ${darkText} mb-4`}>
               {editingResource ? '编辑资源' : '新增资源'}
             </h3>
 
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">资源名称 *</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>资源名称 *</label>
                 <input
                   type="text"
                   value={formData.name}
                   onChange={e => setFormData({...formData, name: e.target.value})}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none"
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`}
                   placeholder="如：战略会议室A"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">资源类型 *</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>资源类型 *</label>
                 <div className="flex space-x-2">
-                  {[
-                    { value: 'ROOM', label: '会议室', icon: Monitor, color: 'indigo' },
-                    { value: 'DESK', label: '工位', icon: Coffee, color: 'emerald' }
-                  ].map(option => (
-                    <button
-                      key={option.value}
-                      onClick={() => setFormData({...formData, type: option.value as ResourceType})}
-                      className={`flex-1 py-3 rounded-xl border-2 flex items-center justify-center space-x-2 transition-all ${
-                        formData.type === option.value 
-                          ? `border-${option.color}-500 bg-${option.color}-50 text-${option.color}-600`
-                          : 'border-gray-200 text-gray-500'
-                      }`}
-                    >
-                      <option.icon size={18} />
-                      <span className="font-medium">{option.label}</span>
-                    </button>
-                  ))}
+                  {
+                    [
+                      { value: 'ROOM', label: '会议室', icon: Monitor, color: 'indigo' },
+                      { value: 'DESK', label: '工位', icon: Coffee, color: 'emerald' }
+                    ].map(option => (
+                      <button
+                        key={option.value}
+                        onClick={() => setFormData({...formData, type: option.value as ResourceType})}
+                        className={`flex-1 py-3 rounded-xl border-2 flex items-center justify-center space-x-2 transition-all ${
+                          formData.type === option.value 
+                            ? (isFinanceTheme ? `border-[#F59E0B] bg-[#334155] text-[#F59E0B]` : `border-${option.color}-500 bg-${option.color}-50 text-${option.color}-600`)
+                            : (isFinanceTheme ? 'border-[#475569] text-white/80' : 'border-gray-200 text-gray-500')
+                        }`}
+                      >
+                        <option.icon size={18} />
+                        <span className="font-medium">{option.label}</span>
+                      </button>
+                    ))
+                  }
                 </div>
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">位置 *</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>位置 *</label>
                 <input
                   type="text"
                   value={formData.location}
                   onChange={e => setFormData({...formData, location: e.target.value})}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none"
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`}
                   placeholder="如：1号楼 10层"
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">容量（人数）</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>容量（人数）</label>
                 <input
                   type="number"
                   min="1"
                   value={formData.capacity}
                   onChange={e => setFormData({...formData, capacity: parseInt(e.target.value) || 1})}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none"
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`}
                 />
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">状态</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>状态</label>
                 <select
                   value={formData.status}
                   onChange={e => setFormData({...formData, status: e.target.value as ResourceStatus})}
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none bg-white"
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`}
                 >
                   {statusOptions.map(option => (
                     <option key={option.value} value={option.value}>{option.label}</option>
@@ -297,17 +318,13 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">设施设备</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-2`}>设施设备</label>
                 <div className="flex flex-wrap gap-2">
                   {featureOptions.map(feature => (
                     <button
                       key={feature}
                       onClick={() => toggleFeature(feature)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        formData.features.includes(feature)
-                          ? `bg-${theme}-100 text-${theme}-700 border border-${theme}-300`
-                          : 'bg-gray-100 text-gray-600 border border-gray-200'
-                      }`}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${darkFeatureTag(formData.features.includes(feature))}`}
                     >
                       {feature}
                     </button>
@@ -319,13 +336,13 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
             <div className="flex space-x-3 mt-6">
               <button
                 onClick={() => setShowModal(false)}
-                className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold"
+                className={`flex-1 py-3 ${darkButtonBg} rounded-xl font-bold`}
               >
                 取消
               </button>
               <button
                 onClick={handleSave}
-                className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}
+                className={`flex-1 py-3 ${darkPrimaryButton} rounded-xl font-bold`}
               >
                 保存
               </button>
@@ -336,3 +353,5 @@ export const ResourceManagement: React.FC<ResourceManagementProps> = ({
     </MobileAdminPage>
   );
 };
+
+export default ResourceManagement;

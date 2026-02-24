@@ -14,6 +14,7 @@ interface ProfileViewProps {
 }
 
 const THEMES = [
+  { id: 'finance', name: '金融黑', color: 'bg-[#F59E0B]' },
   { id: 'indigo', name: '商务蓝', color: 'bg-indigo-500' },
   { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-500' },
   { id: 'orange', name: '活力橙', color: 'bg-orange-500' },
@@ -50,9 +51,23 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     item.id !== 'BOOKINGS' && hasPermission(item.permission)
   );
 
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkSecondary = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-100';
+  const darkCardBg = isFinanceTheme ? 'bg-[#1E293B]' : 'bg-white';
+  const darkPrimary = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : `bg-${theme}-600`;
+  const darkPrimaryText = isFinanceTheme ? 'text-white' : 'text-white';
+  const darkIconBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : `bg-${theme}-50 text-${theme}-600`;
+  const darkAvatarEdit = isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-white text-${theme}-600`;
+  const darkRoleTag = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : 'bg-white/20 text-white';
+  const darkLogoutBtn = isFinanceTheme ? 'bg-[#334155] text-white/60' : 'bg-white/20 text-white';
+
   return (
-    <div className="min-h-screen bg-gray-50 pb-24">
-      <div className={`bg-${theme}-600 text-white p-6 pb-8`}>
+    <div className={`min-h-screen ${isFinanceTheme ? 'bg-[#0F172A]' : 'bg-gray-50'} pb-24 font-['IBM_Plex_Sans']`}>
+      <div className={`${darkPrimary} ${darkPrimaryText} p-6 pb-8 border-b ${darkBorder}`}>
         <div className="flex items-center justify-between mb-6">
           <h1 className="text-lg font-bold">个人中心</h1>
           <button onClick={onLogout} className="p-2 bg-white/20 rounded-full">
@@ -76,15 +91,15 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             </div>
           )}
           <div className="absolute" style={{ marginTop: '48px', marginLeft: '48px' }}>
-            <div className="w-6 h-6 bg-white rounded-full flex items-center justify-center shadow">
-              <Edit3 size={12} className={`text-${theme}-600`} />
+            <div className={`w-6 h-6 ${darkAvatarEdit} rounded-full flex items-center justify-center shadow-md`}>
+              <Edit3 size={12} />
             </div>
           </div>
           <div className="flex-1">
             <h2 className="text-xl font-bold">{currentUser?.name}</h2>
             <p className="text-sm text-white/70">{currentUser?.email}</p>
             <div className="flex items-center space-x-2 mt-1">
-              <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">
+              <span className={`text-xs ${darkRoleTag} px-2 py-0.5 rounded-full`}>
                 {currentUser?.role?.map((r: string) => roles.find((role: any) => role.id === r)?.name || r).join(', ')}
               </span>
             </div>
@@ -94,36 +109,36 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       </div>
 
       <div className="px-4 -mt-4">
-        <div className="bg-white rounded-2xl p-4 shadow-sm border border-gray-100 flex justify-around">
+        <div className={`${darkCardBg} rounded-2xl p-4 shadow-sm border ${darkBorder} flex justify-around`}>
           <div className="text-center">
-            <p className="text-xl font-black text-gray-800">{currentUser?.department}</p>
-            <p className="text-[10px] text-gray-400">所属部门</p>
+            <p className={`text-xl font-black ${darkText}`}>{currentUser?.department}</p>
+            <p className={`text-[10px] ${darkSubtext}`}>所属部门</p>
           </div>
-          <div className="w-px bg-gray-100" />
+          <div className={`w-px ${isFinanceTheme ? 'bg-[#334155]' : 'bg-gray-100'}`} />
           <div className="text-center">
-            <p className="text-xl font-black text-gray-800">{currentUser?.mobile || '-'}</p>
-            <p className="text-[10px] text-gray-400">联系电话</p>
+            <p className={`text-xl font-black ${darkText}`}>{currentUser?.mobile || '-'}</p>
+            <p className={`text-[10px] ${darkSubtext}`}>联系电话</p>
           </div>
         </div>
       </div>
 
       {userMenuItems.length > 0 && (
         <div className="px-4 mt-6">
-          <h3 className="text-xs font-bold text-gray-400 uppercase mb-3 ml-1">常用功能</h3>
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          <h3 className={`text-xs font-bold ${darkSubtext} uppercase mb-3 ml-1`}>常用功能</h3>
+          <div className={`${darkCardBg} rounded-2xl border ${darkBorder} overflow-hidden`}>
             {userMenuItems.map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => onViewChange(item.id)}
-                className={`w-full flex items-center justify-between p-4 ${index !== 0 ? 'border-t border-gray-50' : ''} active:bg-gray-50`}
+                className={`w-full flex items-center justify-between p-4 ${index !== 0 ? `border-t ${darkBorder}` : ''} active:bg-opacity-90 transition-colors`}
               >
                 <div className="flex items-center space-x-3">
-                  <div className={`w-8 h-8 rounded-lg bg-${theme}-50 flex items-center justify-center text-${theme}-600`}>
+                  <div className={`w-8 h-8 rounded-lg ${darkIconBg} flex items-center justify-center`}>
                     <item.icon size={16} />
                   </div>
-                  <span className="font-bold text-gray-700 text-sm">{item.label}</span>
+                  <span className={`font-bold ${darkText} text-sm`}>{item.label}</span>
                 </div>
-                <ChevronRight size={18} className="text-gray-300" />
+                <ChevronRight size={18} className={`${darkSubtext}`} />
               </button>
             ))}
           </div>
@@ -132,21 +147,21 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
       {adminMenuItems.length > 0 && (
         <div className="px-4 mt-6">
-          <h3 className="text-xs font-bold text-gray-400 uppercase mb-3 ml-1">系统管理</h3>
-          <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden">
+          <h3 className={`text-xs font-bold ${darkSubtext} uppercase mb-3 ml-1`}>系统管理</h3>
+          <div className={`${darkCardBg} rounded-2xl border ${darkBorder} overflow-hidden`}>
             {adminMenuItems.map((item, index) => (
               <button
                 key={item.id}
                 onClick={() => onViewChange(item.id)}
-                className={`w-full flex items-center justify-between p-4 ${index !== 0 ? 'border-t border-gray-50' : ''} active:bg-gray-50`}
+                className={`w-full flex items-center justify-between p-4 ${index !== 0 ? `border-t ${darkBorder}` : ''} active:bg-opacity-90 transition-colors`}
               >
                 <div className="flex items-center space-x-3">
-                  <div className={`w-8 h-8 rounded-lg bg-${theme}-50 flex items-center justify-center text-${theme}-600`}>
+                  <div className={`w-8 h-8 rounded-lg ${darkIconBg} flex items-center justify-center`}>
                     <item.icon size={16} />
                   </div>
-                  <span className="font-bold text-gray-700 text-sm">{item.label}</span>
+                  <span className={`font-bold ${darkText} text-sm`}>{item.label}</span>
                 </div>
-                <ChevronRight size={18} className="text-gray-300" />
+                <ChevronRight size={18} className={`${darkSubtext}`} />
               </button>
             ))}
           </div>
@@ -154,8 +169,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
       )}
 
       <div className="px-4 mt-6">
-        <h3 className="text-xs font-bold text-gray-400 uppercase mb-3 ml-1">主题设置</h3>
-        <div className="bg-white rounded-2xl p-4 border border-gray-100">
+        <h3 className={`text-xs font-bold ${darkSubtext} uppercase mb-3 ml-1`}>主题设置</h3>
+        <div className={`${darkCardBg} rounded-2xl p-4 border ${darkBorder}`}>
           <div className="flex justify-around">
             {THEMES.map((t) => (
               <button
@@ -163,8 +178,8 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
                 onClick={() => onThemeChange(t.id)}
                 className={`flex flex-col items-center ${theme === t.id ? 'opacity-100' : 'opacity-40'}`}
               >
-                <div className={`w-8 h-8 rounded-full ${t.color} ${theme === t.id ? 'ring-2 ring-offset-2 ring-gray-400' : ''}`} />
-                <span className="text-[10px] mt-1 font-medium text-gray-500">{t.name}</span>
+                <div className={`w-8 h-8 rounded-full ${t.color} ${theme === t.id ? (isFinanceTheme ? 'ring-2 ring-offset-2 ring-[#F59E0B]' : 'ring-2 ring-offset-2 ring-gray-400') : ''}`} />
+                <span className={`text-[10px] mt-1 font-medium ${darkSubtext}`}>{t.name}</span>
               </button>
             ))}
           </div>
@@ -173,3 +188,5 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
     </div>
   );
 };
+
+export default ProfileView;

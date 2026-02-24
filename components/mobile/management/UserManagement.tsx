@@ -31,6 +31,19 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     role: [] as string[]
   });
 
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-100';
+  const darkCardBg = isFinanceTheme ? 'bg-[#1E293B]' : 'bg-white';
+  const darkIconBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : `bg-${theme}-100 text-${theme}-600`;
+  const darkButtonBg = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const darkPrimaryButton = isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 text-white`;
+  const darkModalBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkInputBg = isFinanceTheme ? 'bg-[#334155] border-[#475569] text-white' : 'bg-white border-gray-200 text-gray-800';
+  const darkLabelText = isFinanceTheme ? 'text-white/80' : 'text-gray-700';
+
   const handleAdd = () => {
     setEditingUser(null);
     setFormData({ name: '', email: '', mobile: '', landline: '', department: '', role: ['EMPLOYEE'] });
@@ -103,19 +116,19 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     >
       <div className="space-y-3">
         {users.map((u: any) => (
-          <div key={u.id} className="bg-white p-4 rounded-xl border border-gray-100 group">
+          <div key={u.id} className={`${darkCardBg} p-4 rounded-xl border ${darkBorder} group`}>
             <div className="flex items-center space-x-3">
-              <div className={`w-10 h-10 rounded-full bg-${theme}-100 flex items-center justify-center font-bold text-${theme}-600`}>
+              <div className={`w-10 h-10 rounded-full ${darkIconBg} flex items-center justify-center font-bold`}>
                 {u.name[0]}
               </div>
               <div className="flex-1 min-w-0">
-                <p className="font-bold text-gray-800 truncate">{u.name}</p>
-                <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                <p className={`font-bold ${darkText} truncate`}>{u.name}</p>
+                <p className={`text-xs ${darkSubtext} truncate`}>{u.email}</p>
                 <div className="flex flex-wrap gap-1 mt-1">
                   {u.role?.map((rid: string) => {
                     const role = roles.find((r: any) => r.id === rid);
                     return role ? (
-                      <span key={rid} className={`text-[10px] px-1.5 py-0.5 rounded bg-${role.color}-100 text-${role.color}-700`}>
+                      <span key={rid} className={`text-[10px] px-1.5 py-0.5 rounded ${isFinanceTheme ? `bg-[#334155] text-[#F59E0B]` : `bg-${role.color}-100 text-${role.color}-700`}`}>
                         {role.name}
                       </span>
                     ) : null;
@@ -123,10 +136,10 @@ export const UserManagement: React.FC<UserManagementProps> = ({
                 </div>
               </div>
               <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => handleEdit(u)} className="p-1.5 hover:bg-gray-200 rounded-full text-gray-500">
+                <button onClick={() => handleEdit(u)} className={`p-1.5 ${isFinanceTheme ? 'hover:bg-[#334155] text-white/80' : 'hover:bg-gray-200 text-gray-500'} rounded-full`}>
                   <Edit2 size={14} />
                 </button>
-                <button onClick={() => handleDelete(u)} className="p-1.5 hover:bg-red-100 rounded-full text-red-500">
+                <button onClick={() => handleDelete(u)} className={`p-1.5 ${isFinanceTheme ? 'hover:bg-[#334155] text-[#F43F5E]' : 'hover:bg-red-100 text-red-500'} rounded-full`}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -137,40 +150,40 @@ export const UserManagement: React.FC<UserManagementProps> = ({
 
       {showModal && (
         <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4" style={{ maxWidth: '448px', margin: '0 auto' }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm max-h-[80vh] overflow-y-auto animate-in zoom-in-95">
-            <h3 className="font-bold text-lg text-gray-800 mb-4">{editingUser ? '编辑成员' : '新增成员'}</h3>
+          <div className={`${darkModalBg} rounded-2xl p-6 w-full max-w-sm max-h-[80vh] overflow-y-auto animate-in zoom-in-95 border ${darkBorder}`}>
+            <h3 className={`font-bold text-lg ${darkText} mb-4`}>{editingUser ? '编辑成员' : '新增成员'}</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">姓名 *</label>
-                <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none" placeholder="请输入姓名" />
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>姓名 *</label>
+                <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`} placeholder="请输入姓名" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">邮箱 *</label>
-                <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none" placeholder="请输入邮箱" />
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>邮箱 *</label>
+                <input type="email" value={formData.email} onChange={e => setFormData({...formData, email: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`} placeholder="请输入邮箱" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">手机号</label>
-                <input type="tel" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none" placeholder="请输入手机号" />
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>手机号</label>
+                <input type="tel" value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`} placeholder="请输入手机号" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">座机</label>
-                <input type="tel" value={formData.landline} onChange={e => setFormData({...formData, landline: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none" placeholder="请输入座机号" />
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>座机</label>
+                <input type="tel" value={formData.landline} onChange={e => setFormData({...formData, landline: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`} placeholder="请输入座机号" />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">部门</label>
-                <select value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none bg-white">
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>部门</label>
+                <select value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`}>
                   <option value="">请选择部门</option>
                   {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">角色</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-2`}>角色</label>
                 <div className="flex flex-wrap gap-2">
                   {roles.map((r: any) => (
                     <button
                       key={r.id}
                       onClick={() => toggleRole(r.id)}
-                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${formData.role.includes(r.id) ? `bg-${r.color}-100 text-${r.color}-700 border border-${r.color}-300` : 'bg-gray-100 text-gray-600 border border-gray-200'}`}
+                      className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${formData.role.includes(r.id) ? (isFinanceTheme ? `bg-[#F59E0B] text-[#0F172A] border border-[#F59E0B]` : `bg-${r.color}-100 text-${r.color}-700 border border-${r.color}-300`) : darkButtonBg}`}
                     >
                       {r.name}
                     </button>
@@ -179,8 +192,8 @@ export const UserManagement: React.FC<UserManagementProps> = ({
               </div>
             </div>
             <div className="flex space-x-3 mt-6">
-              <button onClick={() => setShowModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
-              <button onClick={handleSave} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+              <button onClick={() => setShowModal(false)} className={`flex-1 py-3 ${darkButtonBg} rounded-xl font-bold`}>取消</button>
+              <button onClick={handleSave} className={`flex-1 py-3 ${darkPrimaryButton} rounded-xl font-bold`}>保存</button>
             </div>
           </div>
         </div>
@@ -188,3 +201,5 @@ export const UserManagement: React.FC<UserManagementProps> = ({
     </MobileAdminPage>
   );
 };
+
+export default UserManagement;

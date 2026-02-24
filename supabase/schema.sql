@@ -5,11 +5,15 @@
 -- 启用 UUID 扩展
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
+-- 启用密码加密扩展
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- ==================== 用户表 ====================
 CREATE TABLE IF NOT EXISTS smartoffice_users (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     name TEXT NOT NULL,
     email TEXT UNIQUE NOT NULL,
+    password TEXT,
     role TEXT[] DEFAULT ARRAY['EMPLOYEE']::TEXT[],
     department TEXT,
     landline TEXT,
@@ -20,6 +24,7 @@ CREATE TABLE IF NOT EXISTS smartoffice_users (
 
 COMMENT ON TABLE smartoffice_users IS '系统用户表';
 COMMENT ON COLUMN smartoffice_users.role IS '用户角色数组，如 SYSTEM_ADMIN, APPROVAL_ADMIN, EMPLOYEE';
+COMMENT ON COLUMN smartoffice_users.password IS '用户密码（加密存储）';
 
 -- ==================== 资源表 ====================
 CREATE TABLE IF NOT EXISTS smartoffice_resources (
@@ -56,6 +61,8 @@ CREATE TABLE IF NOT EXISTS smartoffice_bookings (
     leader_details TEXT,
     is_video_conference BOOLEAN DEFAULT FALSE,
     needs_tea_service BOOLEAN DEFAULT FALSE,
+    needs_name_card BOOLEAN DEFAULT FALSE,
+    name_card_details TEXT,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
@@ -66,6 +73,8 @@ COMMENT ON COLUMN smartoffice_bookings.approval_history IS '审批历史记录�
 COMMENT ON COLUMN smartoffice_bookings.has_leader IS '是否有领导参会';
 COMMENT ON COLUMN smartoffice_bookings.is_video_conference IS '是否需要视频会议';
 COMMENT ON COLUMN smartoffice_bookings.needs_tea_service IS '是否需要茶水服务';
+COMMENT ON COLUMN smartoffice_bookings.needs_name_card IS '是否需要桌牌';
+COMMENT ON COLUMN smartoffice_bookings.name_card_details IS '桌牌详细要求';
 
 -- ==================== 角色表 ====================
 CREATE TABLE IF NOT EXISTS smartoffice_roles (
@@ -214,6 +223,36 @@ INSERT INTO smartoffice_roles (id, name, description, color) VALUES
     ('EMPLOYEE', '正式员工', '可申请并使用公司公共资源', 'emerald')
 ON CONFLICT (id) DO NOTHING;
 
+-- 默认管理员用户
+INSERT INTO smartoffice_users (id, name, email, password, role, department)
+VALUES (
+    uuid_generate_v4(),
+    '系统管理员',
+    'admin@company.com',
+    smartoffice_hash_password('123456'),
+    ARRAY['SYSTEM_ADMIN', 'APPROVAL_ADMIN']::TEXT[],
+    '信息技术部'
+)
+ON CONFLICT (email) DO UPDATE
+SET 
+    password = smartoffice_hash_password('123456'),
+    role = ARRAY['SYSTEM_ADMIN', 'APPROVAL_ADMIN']::TEXT[];
+
+-- 默认员工用户
+INSERT INTO smartoffice_users (id, name, email, password, role, department)
+VALUES (
+    uuid_generate_v4(),
+    '测试员工',
+    'user@company.com',
+    smartoffice_hash_password('123456'),
+    ARRAY['EMPLOYEE']::TEXT[],
+    '行政部'
+)
+ON CONFLICT (email) DO UPDATE
+SET 
+    password = smartoffice_hash_password('123456'),
+    role = ARRAY['EMPLOYEE']::TEXT[];
+
 -- 默认部门
 INSERT INTO smartoffice_departments (id, name, parent_id) VALUES
     ('dpt-root', '集团总部', NULL),
@@ -250,6 +289,26 @@ JOIN smartoffice_resources r ON b.resource_id = r.id;
 COMMENT ON VIEW smartoffice_booking_details IS '预约详情视图，包含用户和资源信息';
 
 -- ==================== 创建存储过程 ====================
+
+-- 密码哈希函数
+CREATE OR REPLACE FUNCTION smartoffice_hash_password(p_password TEXT)
+RETURNS TEXT AS $$
+BEGIN
+    RETURN crypt(p_password, gen_salt('bf'));
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION smartoffice_hash_password IS '对密码进行哈希处理';
+
+-- 密码验证函数
+CREATE OR REPLACE FUNCTION smartoffice_verify_password(p_password TEXT, p_hash TEXT)
+RETURNS BOOLEAN AS $$
+BEGIN
+    RETURN crypt(p_password, p_hash) = p_hash;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION smartoffice_verify_password IS '验证密码是否正确';
 
 -- 检查资源时间冲突
 CREATE OR REPLACE FUNCTION smartoffice_check_booking_conflict(

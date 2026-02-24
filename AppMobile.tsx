@@ -15,6 +15,7 @@ import {
 import { User as UserType, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants.tsx';
 import { getSmartRecommendation } from './services/geminiService';
+import { DataCenter } from './components/mobile/management';
 import {
   getUsers, getResources, getBookings, getRoles, getDepartments, getWorkflow,
   createBooking, updateBooking, createResource, updateResource, deleteResource,
@@ -41,12 +42,10 @@ import {
   BottomNav,
   NoPermissionView,
 } from './components/mobile/common';
-import {
-  LoginView,
-  ProfileView,
-  ProfileEditView,
-  MeetingServiceView,
-} from './components/mobile/views';
+import AuthView from './components/mobile/views/AuthView';
+import ProfileView from './components/mobile/views/ProfileView';
+import ProfileEditView from './components/mobile/views/ProfileEditView';
+import MeetingServiceView from './components/mobile/views/MeetingServiceView';
 import {
   BookingFormModal,
 } from './components/mobile/modals';
@@ -59,12 +58,27 @@ const OFFLINE_CACHE_KEY = 'SMART_OFFICE_OFFLINE_CACHE';
 
 // --- Theme Config ---
 const THEMES = [
+  { id: 'finance', name: '金融黑', color: 'bg-[#0F172A]', text: 'text-[#F8FAFC]', border: 'border-[#334155]', bg: 'bg-[#0F172A]', lightColor: '#F59E0B', accent: '#8B5CF6' },
   { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-indigo-600', border: 'border-indigo-100', bg: 'bg-indigo-50', lightColor: '#4F46E5' },
   { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-emerald-600', border: 'border-emerald-100', bg: 'bg-emerald-50', lightColor: '#059669' },
   { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-orange-600', border: 'border-orange-100', bg: 'bg-orange-50', lightColor: '#EA580C' },
   { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-rose-600', border: 'border-rose-100', bg: 'bg-rose-50', lightColor: '#E11D48' },
   { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-purple-600', border: 'border-purple-100', bg: 'bg-purple-50', lightColor: '#7C3AED' },
 ];
+
+// Get theme colors helper
+const getThemeColors = (theme: string) => {
+  const themeConfig = THEMES.find(t => t.id === theme) || THEMES[0];
+  return {
+    primary: themeConfig.color,
+    text: themeConfig.text,
+    border: themeConfig.border,
+    bg: themeConfig.bg,
+    lightColor: themeConfig.lightColor,
+    accent: themeConfig.accent,
+    isDark: theme === 'finance'
+  };
+};
 
 // --- Helper Functions ---
 const formatTime = (date: Date) => {
@@ -117,130 +131,166 @@ const RoleTag = ({ roleId, roles, theme }: any) => {
 };
 
 // --- Mobile Stat Card ---
-const MobileStatCard = ({ title, value, icon: Icon, color, onClick }: any) => (
-  <button onClick={onClick} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm flex items-center space-x-3 active:scale-[0.98] transition-transform">
-    <div className={`w-10 h-10 rounded-xl bg-${color}-50 flex items-center justify-center text-${color}-600`}>
-      <Icon size={20} />
-    </div>
-    <div>
-      <p className="text-[10px] font-bold text-gray-400 uppercase">{title}</p>
-      <h3 className="text-lg font-black text-gray-800">{value}</h3>
-    </div>
-  </button>
-);
+const MobileStatCard = ({ title, value, icon: Icon, color, onClick, isDark = false }: any) => {
+  const darkBg = isDark ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isDark ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isDark ? 'text-white/60' : 'text-gray-400';
+  
+  return (
+    <button onClick={onClick} className={`${darkBg} p-4 rounded-2xl border shadow-sm flex items-center space-x-3 active:scale-[0.98] transition-transform`}>
+      <div className={`w-10 h-10 rounded-xl ${isDark ? `bg-${color}-500/10 text-${color}-500` : `bg-${color}-50 text-${color}-600`} flex items-center justify-center`}>
+        <Icon size={20} />
+      </div>
+      <div>
+        <p className={`text-[10px] font-bold ${darkSubtext} uppercase`}>{title}</p>
+        <h3 className={`text-lg font-black ${darkText}`}>{value}</h3>
+      </div>
+    </button>
+  );
+};
 
 // --- Mobile Resource Card ---
-const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) => (
-  <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-    <div className="flex items-start justify-between mb-3">
-      <div className="flex items-center space-x-3">
-        <div className={`w-10 h-10 rounded-xl ${resource.type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'} flex items-center justify-center`}>
-          {resource.type === 'ROOM' ? <Monitor size={20} /> : <Coffee size={20} />}
+const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) => {
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkSecondary = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const typeColor = resource.type === 'ROOM' 
+    ? (isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-indigo-50 text-indigo-600')
+    : (isFinanceTheme ? 'bg-[#FBBF24]/10 text-[#FBBF24]' : 'bg-emerald-50 text-emerald-600');
+  
+  return (
+    <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center space-x-3">
+          <div className={`w-10 h-10 rounded-xl ${typeColor} flex items-center justify-center`}>
+            {resource.type === 'ROOM' ? <Monitor size={20} /> : <Coffee size={20} />}
+          </div>
+          <div>
+            <h4 className={`font-bold ${darkText} text-sm`}>{resource.name}</h4>
+            <p className={`text-[10px] ${darkSubtext}`}>{resource.location}</p>
+          </div>
         </div>
-        <div>
-          <h4 className="font-bold text-gray-800 text-sm">{resource.name}</h4>
-          <p className="text-[10px] text-gray-400">{resource.location}</p>
-        </div>
+        <StatusBadge status={resource.status} theme={theme} />
       </div>
-      <StatusBadge status={resource.status} theme={theme} />
-    </div>
-    <div className="flex items-center justify-between text-[10px] text-gray-500 mb-3">
-      <span>容量: {resource.capacity || 1}人</span>
-      <span>{resource.features?.slice(0, 2).join(' · ') || '标准配置'}</span>
-    </div>
-    <div className="flex space-x-2">
-      <button onClick={() => onBook(resource)} className={`flex-1 py-2.5 bg-${theme}-600 text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
-        立即预约
-      </button>
-      {resource.type === 'DESK' && (
-        <button onClick={() => onViewCalendar(resource)} className="px-4 py-2.5 bg-gray-100 text-gray-600 rounded-xl font-bold text-xs active:scale-[0.98] transition-transform">
-          <CalendarDays size={16} />
+      <div className={`flex items-center justify-between text-[10px] ${darkSubtext} mb-3`}>
+        <span>容量: {resource.capacity || 1}人</span>
+        <span>{resource.features?.slice(0, 2).join(' · ') || '标准配置'}</span>
+      </div>
+      <div className="flex space-x-2">
+        <button onClick={() => onBook(resource)} className={`flex-1 py-2.5 ${isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 text-white`} rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
+          立即预约
         </button>
-      )}
+        {resource.type === 'DESK' && (
+          <button onClick={() => onViewCalendar(resource)} className={`px-4 py-2.5 ${darkSecondary} rounded-xl font-bold text-xs active:scale-[0.98] transition-transform`}>
+            <CalendarDays size={16} />
+          </button>
+        )}
+      </div>
     </div>
-  </div>
-);
+  );
+};
 
 // --- Mobile Booking Card ---
 const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onToggle }: any) => {
   const isExpanded = expanded;
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-50';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkSecondary = isFinanceTheme ? 'text-white/80' : 'text-gray-700';
+  const darkIcon = isFinanceTheme ? 'text-gray-400' : 'text-gray-300';
+  const typeColor = booking.type === 'ROOM' 
+    ? (isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-indigo-50 text-indigo-600')
+    : (isFinanceTheme ? 'bg-[#FBBF24]/10 text-[#FBBF24]' : 'bg-emerald-50 text-emerald-600');
+  const cancelBtn = isFinanceTheme ? 'bg-[#334155] text-rose-400 border-[#475569]' : 'bg-rose-50 text-rose-600 border border-rose-100';
+  
+  const tagColors = {
+    amber: isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-amber-50 text-amber-600',
+    indigo: isFinanceTheme ? 'bg-[#8B5CF6]/10 text-[#8B5CF6]' : 'bg-indigo-50 text-indigo-600',
+    emerald: isFinanceTheme ? 'bg-[#10B981]/10 text-[#10B981]' : 'bg-emerald-50 text-emerald-600',
+    rose: isFinanceTheme ? 'bg-[#F43F5E]/10 text-[#F43F5E]' : 'bg-rose-50 text-rose-600'
+  };
+  
   return (
-    <div className={`bg-white rounded-2xl border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg border-indigo-100' : 'shadow-sm border-gray-100'}`}>
-      <div onClick={onToggle} className="p-4 cursor-pointer flex items-center justify-between active:bg-gray-50 transition-colors">
+    <div className={`${darkBg} rounded-2xl border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg' : 'shadow-sm'}`}>
+      <div onClick={onToggle} className={`p-4 cursor-pointer flex items-center justify-between active:bg-opacity-90 transition-colors`}>
         <div className="flex items-center space-x-3">
-          <div className={`w-10 h-10 rounded-xl ${booking.type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'} flex items-center justify-center`}>
+          <div className={`w-10 h-10 rounded-xl ${typeColor} flex items-center justify-center`}>
             {booking.type === 'ROOM' ? <Monitor size={18} /> : <Briefcase size={18} />}
           </div>
           <div>
-            <h4 className="font-bold text-gray-800 text-sm line-clamp-1">{booking.purpose}</h4>
+            <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{booking.purpose}</h4>
             <div className="flex items-center space-x-2 mt-0.5">
-              <span className="text-[10px] font-medium text-gray-400">{resource?.name || '未知资源'}</span>
-              <span className="text-[10px] text-gray-300">·</span>
-              <span className="text-[10px] font-medium text-gray-400">{booking.startTime.split('T')[0]}</span>
+              <span className={`text-[10px] font-medium ${darkSubtext}`}>{resource?.name || '未知资源'}</span>
+              <span className={`text-[10px] ${darkIcon}`}>·</span>
+              <span className={`text-[10px] font-medium ${darkSubtext}`}>{booking.startTime.split('T')[0]}</span>
             </div>
           </div>
         </div>
         <div className="flex items-center space-x-2">
           <StatusBadge status={booking.status} theme={theme} />
-          <ChevronDown size={16} className={`text-gray-300 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
+          <ChevronDown size={16} className={`${darkIcon} transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`} />
         </div>
       </div>
       {isExpanded && (
-        <div className="px-4 pb-4 pt-2 border-t border-gray-50 animate-in slide-in-from-top-2 fade-in">
+        <div className={`px-4 pb-4 pt-2 border-t ${darkBorder} animate-in slide-in-from-top-2 fade-in`}>
           <div className="space-y-2.5 mb-4">
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-400">时间段</span>
-              <span className="font-bold text-gray-700">{booking.startTime.replace('T', ' ').slice(0, 16)} - {booking.endTime.split('T')[1].slice(0, 5)}</span>
+              <span className={darkSubtext}>时间段</span>
+              <span className={`font-bold ${darkSecondary}`}>{booking.startTime.replace('T', ' ').slice(0, 16)} - {booking.endTime.split('T')[1].slice(0, 5)}</span>
             </div>
             <div className="flex items-center justify-between text-xs">
-              <span className="text-gray-400">参与人数</span>
-              <span className="font-bold text-gray-700">{booking.participants || 1} 人</span>
+              <span className={darkSubtext}>参与人数</span>
+              <span className={`font-bold ${darkSecondary}`}>{booking.participants || 1} 人</span>
             </div>
             {booking.hasLeader && (
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-400">领导参会</span>
-                <span className="font-bold text-amber-600">{booking.leaderDetails || '是'}</span>
+                <span className={darkSubtext}>领导参会</span>
+                <span className="font-bold text-amber-500">{booking.leaderDetails || '是'}</span>
               </div>
             )}
             {booking.isVideoConference && (
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-400">视频会议</span>
-                <span className="font-bold text-indigo-600">已开启</span>
+                <span className={darkSubtext}>视频会议</span>
+                <span className="font-bold text-indigo-500">已开启</span>
               </div>
             )}
             {booking.needsTeaService && (
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-400">茶水服务</span>
-                <span className="font-bold text-emerald-600">已预约</span>
+                <span className={darkSubtext}>茶水服务</span>
+                <span className="font-bold text-emerald-500">已预约</span>
               </div>
             )}
             {booking.needsNameCard && (
               <div className="flex items-center justify-between text-xs">
-                <span className="text-gray-400">需要桌牌</span>
-                <span className="font-bold text-rose-600">{booking.nameCardDetails || '是'}</span>
+                <span className={darkSubtext}>需要桌牌</span>
+                <span className="font-bold text-rose-500">{booking.nameCardDetails || '是'}</span>
               </div>
             )}
             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService || booking.needsNameCard) && (
-              <div className="pt-2 border-t border-gray-100">
+              <div className="pt-2 border-t border-[#334155]">
                 <div className="flex flex-wrap gap-1.5">
                   {booking.hasLeader && (
-                    <span className="px-2 py-0.5 bg-amber-50 text-amber-600 rounded text-[10px] font-medium">领导参会</span>
+                    <span className={`px-2 py-0.5 ${tagColors.amber} rounded text-[10px] font-medium`}>领导参会</span>
                   )}
                   {booking.isVideoConference && (
-                    <span className="px-2 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[10px] font-medium">视频会议</span>
+                    <span className={`px-2 py-0.5 ${tagColors.indigo} rounded text-[10px] font-medium`}>视频会议</span>
                   )}
                   {booking.needsTeaService && (
-                    <span className="px-2 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[10px] font-medium">茶水服务</span>
+                    <span className={`px-2 py-0.5 ${tagColors.emerald} rounded text-[10px] font-medium`}>茶水服务</span>
                   )}
                   {booking.needsNameCard && (
-                    <span className="px-2 py-0.5 bg-rose-50 text-rose-600 rounded text-[10px] font-medium">桌牌</span>
+                    <span className={`px-2 py-0.5 ${tagColors.rose} rounded text-[10px] font-medium`}>桌牌</span>
                   )}
                 </div>
               </div>
             )}
           </div>
           {['PENDING', 'APPROVED'].includes(booking.status) && (
-            <button onClick={(e) => { e.stopPropagation(); onCancel(booking.id); }} className="w-full py-2.5 bg-rose-50 text-rose-600 rounded-xl font-bold text-xs border border-rose-100 active:scale-[0.98] transition-transform">
+            <button onClick={(e) => { e.stopPropagation(); onCancel(booking.id); }} className={`w-full py-2.5 ${cancelBtn} rounded-xl font-bold text-xs border active:scale-[0.98] transition-transform`}>
               撤销申请
             </button>
           )}
@@ -251,23 +301,33 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
 };
 
 // --- Mobile Approval Card ---
-const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprove, onReject }: any) => (
-  <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm">
-    <div className="flex items-start space-x-3 mb-3">
-      <div className={`w-10 h-10 rounded-full bg-${theme}-100 flex items-center justify-center text-${theme}-600 font-bold text-sm shrink-0`}>
-        {user?.name?.[0] || '?'}
+const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprove, onReject }: any) => {
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkUserBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : `bg-${theme}-100 text-${theme}-600`;
+  const darkRejectBtn = isFinanceTheme ? 'border-[#334155] text-white/60' : 'border border-gray-200 text-gray-500';
+  const darkApproveBtn = isFinanceTheme ? 'bg-[#8B5CF6]' : `bg-${theme}-600`;
+  
+  return (
+    <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
+      <div className="flex items-start space-x-3 mb-3">
+        <div className={`w-10 h-10 rounded-full ${darkUserBg} flex items-center justify-center font-bold text-sm shrink-0`}>
+          {user?.name?.[0] || '?'}
+        </div>
+        <div className="flex-1 min-w-0">
+          <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{user?.name} 申请 {resource?.name}</h4>
+          <p className={`text-[10px] ${darkSubtext} mt-0.5`}>{booking.startTime.replace('T', ' ')} 至 {booking.endTime.replace('T', ' ')}</p>
+        </div>
       </div>
-      <div className="flex-1 min-w-0">
-        <h4 className="font-bold text-gray-800 text-sm line-clamp-1">{user?.name} 申请 {resource?.name}</h4>
-        <p className="text-[10px] text-gray-400 mt-0.5">{booking.startTime.replace('T', ' ')} 至 {booking.endTime.replace('T', ' ')}</p>
+      <div className="flex space-x-2">
+        <button onClick={() => onReject('不符合规定')} className={`flex-1 py-2.5 border ${darkRejectBtn} rounded-xl font-bold text-xs active:scale-[0.98] transition-transform`}>驳回</button>
+        <button onClick={onApprove} className={`flex-1 py-2.5 ${darkApproveBtn} text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>通过</button>
       </div>
     </div>
-    <div className="flex space-x-2">
-      <button onClick={() => onReject('不符合规定')} className="flex-1 py-2.5 border border-gray-200 text-gray-500 rounded-xl font-bold text-xs active:scale-[0.98] transition-transform">驳回</button>
-      <button onClick={onApprove} className={`flex-1 py-2.5 bg-${theme}-600 text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>通过</button>
-    </div>
-  </div>
-);
+  );
+};
 
 // --- Mobile QR Scanner ---
 const MobileQRScanner = ({ theme, onClose, onScanSuccess }: any) => {
@@ -311,13 +371,17 @@ const MobileQRScanner = ({ theme, onClose, onScanSuccess }: any) => {
 const AppMobile: React.FC = () => {
   const [activeTab, setActiveTab] = useState('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
-  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
+  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'finance');
   
   const { hasPermission } = usePermissions(currentUser?.role || []);
   
   const [isOnline, setIsOnline] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  
+  // Get theme colors
+  const themeColors = getThemeColors(theme);
+  const isDarkTheme = themeColors.isDark;
 
   const [roles, setRoles] = useState<RoleDefinition[]>(INITIAL_ROLES);
   const [users, setUsers] = useState<UserType[]>(INITIAL_USERS);
@@ -705,10 +769,10 @@ const AppMobile: React.FC = () => {
     );
   }
 
-  if (!currentUser) return <LoginView users={users} roles={roles} onLogin={setCurrentUser} theme={theme} isLoading={isLoading} />;
+  if (!currentUser) return <AuthView onLogin={setCurrentUser} theme={theme} isLoading={isLoading} />;
 
   return (
-    <div className="min-h-screen bg-gray-50 relative">
+    <div className={`min-h-screen ${themeColors.bg} relative font-['IBM_Plex_Sans']`}>
       {/* Network Status Bar */}
       {!isOnline && (
         <div className="fixed top-0 left-0 right-0 z-[1001] bg-amber-500 text-white px-4 py-2 flex items-center justify-center text-xs font-bold" style={{ maxWidth: '448px', margin: '0 auto' }}>
@@ -736,22 +800,22 @@ const AppMobile: React.FC = () => {
       {/* Main Content */}
       <main className="pb-20">
         {activeTab === 'DASHBOARD' && (
-          <div className="animate-in fade-in">
+          <div className="animate-in fade-in font-['IBM_Plex_Sans']">
             {/* Header */}
-            <div className={`bg-${theme}-600 text-white p-4 pb-6`}>
+            <div className={`${themeColors.primary} ${themeColors.text} p-4 pb-6`}>
               <div className="flex items-center justify-between mb-4">
                 <div className="flex items-center space-x-2">
-                  <Cpu size={24} />
+                  <ShieldCheck size={24} />
                   <span className="text-lg font-black italic">SmartOffice</span>
                 </div>
                 <div className="flex items-center space-x-3">
-                  <button onClick={() => setShowQRScanner(true)} className="p-2 bg-white/20 rounded-full">
+                  <button onClick={() => setShowQRScanner(true)} className="p-2 bg-white/10 rounded-full">
                     <QrCode size={18} />
                   </button>
-                  <button className="p-2 bg-white/20 rounded-full relative">
+                  <button className="p-2 bg-white/10 rounded-full relative">
                     <Bell size={18} />
                     {pendingCount > 0 && (
-                      <span className="absolute -top-0.5 -right-0.5 w-4 h-4 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">
+                      <span className={`absolute -top-0.5 -right-0.5 w-4 h-4 ${themeColors.accent} text-white text-[10px] font-bold rounded-full flex items-center justify-center`}>
                         {pendingCount}
                       </span>
                     )}
@@ -759,7 +823,7 @@ const AppMobile: React.FC = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-3">
-                <div className="w-10 h-10 bg-white/20 rounded-full flex items-center justify-center font-bold">
+                <div className="w-10 h-10 bg-white/10 rounded-full flex items-center justify-center font-bold">
                   {currentUser.name[0]}
                 </div>
                 <div>
@@ -774,7 +838,7 @@ const AppMobile: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <button 
                   onClick={() => setActiveTab('RESOURCES')}
-                  className={`bg-${theme}-600 text-white p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left`}
+                  className="bg-[#F59E0B] text-[#0F172A] p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Monitor size={20} />
@@ -784,7 +848,7 @@ const AppMobile: React.FC = () => {
                 </button>
                 <button 
                   onClick={() => setActiveTab('RESOURCES')}
-                  className={`bg-${theme}-500 text-white p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left`}
+                  className="bg-[#FBBF24] text-[#0F172A] p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Coffee size={20} />
@@ -798,34 +862,36 @@ const AppMobile: React.FC = () => {
             {/* Stats */}
             <div className="px-4 mt-4">
               <div className="grid grid-cols-3 gap-3">
-                <MobileStatCard title="资源总量" value={stats.totalResources} icon={MapPin} color={theme} />
-                <MobileStatCard title="活跃预约" value={stats.activeBookings} icon={Activity} color="emerald" />
-                <MobileStatCard title="待审批" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setActiveTab('APPROVAL_CENTER')} />
+                <MobileStatCard title="资源总量" value={stats.totalResources} icon={MapPin} color={isDarkTheme ? 'amber' : theme} isDark={isDarkTheme} />
+                <MobileStatCard title="活跃预约" value={stats.activeBookings} icon={Activity} color={isDarkTheme ? 'emerald' : 'emerald'} isDark={isDarkTheme} />
+                <MobileStatCard title="待审批" value={pendingCount} icon={ShieldCheck} color={isDarkTheme ? 'purple' : 'amber'} onClick={() => setActiveTab('APPROVAL_CENTER')} isDark={isDarkTheme} />
               </div>
             </div>
 
             {/* Recent Bookings Preview */}
             <div className="px-4 mt-6">
               <div className="flex items-center justify-between mb-3">
-                <h3 className="font-bold text-gray-800">最近预约</h3>
-                <button onClick={() => setActiveTab('BOOKINGS')} className={`text-${theme}-600 text-xs font-bold`}>查看全部</button>
+                <h3 className={`font-bold ${themeColors.text}`}>最近预约</h3>
+                <button onClick={() => setActiveTab('BOOKINGS')} className={`${themeColors.lightColor} text-xs font-bold`}>
+                  查看全部
+                </button>
               </div>
               {myBookings.slice(0, 3).map(booking => (
-                <div key={booking.id} className="bg-white p-3 rounded-xl border border-gray-100 mb-2 flex items-center justify-between">
+                <div key={booking.id} className={`bg-[#1E293B] p-3 rounded-xl border ${themeColors.border} mb-2 flex items-center justify-between`}>
                   <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-lg ${booking.type === 'ROOM' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'} flex items-center justify-center`}>
+                    <div className={`w-8 h-8 rounded-lg ${booking.type === 'ROOM' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#FBBF24]/10 text-[#FBBF24]'} flex items-center justify-center`}>
                       {booking.type === 'ROOM' ? <Monitor size={14} /> : <Briefcase size={14} />}
                     </div>
                     <div>
-                      <p className="font-bold text-sm text-gray-800 line-clamp-1">{booking.purpose}</p>
-                      <p className="text-[10px] text-gray-400">{booking.startTime.split('T')[0]}</p>
+                      <p className={`font-bold text-sm ${themeColors.text} line-clamp-1`}>{booking.purpose}</p>
+                      <p className={`text-[10px] ${themeColors.lightColor}`}>{booking.startTime.split('T')[0]}</p>
                     </div>
                   </div>
                   <StatusBadge status={booking.status} theme={theme} />
                 </div>
               ))}
               {myBookings.length === 0 && (
-                <div className="text-center py-8 text-gray-400 text-sm">
+                <div className={`text-center py-8 ${themeColors.text} text-sm opacity-70`}>
                   暂无预约记录
                 </div>
               )}
@@ -834,23 +900,23 @@ const AppMobile: React.FC = () => {
         )}
 
         {activeTab === 'RESOURCES' && (
-          <div className="animate-in fade-in min-h-screen bg-gray-50">
+          <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className="bg-white p-4 sticky top-0 z-10 border-b border-gray-100">
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
               <div className="flex items-center space-x-3">
-                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-gray-400">
+                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
                   <ChevronLeft size={24} />
                 </button>
-                <h1 className="text-lg font-bold text-gray-800">空间资源库</h1>
+                <h1 className="text-lg font-bold text-white">空间资源库</h1>
               </div>
               <div className="mt-3 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-300" size={18} />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18} />
                 <input 
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="搜索资源名称或位置..."
-                  className="w-full pl-10 pr-4 py-2.5 bg-gray-100 rounded-xl outline-none text-sm"
+                  className="w-full pl-10 pr-4 py-2.5 bg-[#334155] border border-[#475569] rounded-xl outline-none text-sm text-white placeholder-white/40"
                 />
               </div>
             </div>
@@ -867,7 +933,7 @@ const AppMobile: React.FC = () => {
                 />
               ))}
               {filteredResources.length === 0 && (
-                <div className="text-center py-12 text-gray-400">
+                <div className="text-center py-12 text-white/50">
                   <Search size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-sm">未找到匹配的资源</p>
                 </div>
@@ -877,17 +943,17 @@ const AppMobile: React.FC = () => {
         )}
 
         {activeTab === 'BOOKINGS' && (
-          <div className="animate-in fade-in min-h-screen bg-gray-50">
+          <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className="bg-white p-4 sticky top-0 z-10 border-b border-gray-100">
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                  <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-gray-400">
+                  <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
                     <ChevronLeft size={24} />
                   </button>
-                  <h1 className="text-lg font-bold text-gray-800">我的申请</h1>
+                  <h1 className="text-lg font-bold text-white">我的申请</h1>
                 </div>
-                <span className="text-xs font-bold text-gray-400 bg-gray-100 px-3 py-1 rounded-full">
+                <span className="text-xs font-bold text-white/70 bg-[#334155] px-3 py-1 rounded-full">
                   {myBookings.length} 条
                 </span>
               </div>
@@ -896,12 +962,12 @@ const AppMobile: React.FC = () => {
             {/* Bookings List */}
             <div className="p-4 space-y-3">
               {myBookings.length === 0 ? (
-                <div className="text-center py-16 text-gray-400">
+                <div className="text-center py-16 text-white/50">
                   <History size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-sm">暂无预约申请记录</p>
                   <button 
                     onClick={() => setActiveTab('RESOURCES')}
-                    className={`mt-4 px-6 py-2 bg-${theme}-600 text-white rounded-xl font-bold text-sm`}
+                    className={`mt-4 px-6 py-2 ${themeColors.accent} text-white rounded-xl font-bold text-sm`}
                   >
                     去预约
                   </button>
@@ -925,16 +991,16 @@ const AppMobile: React.FC = () => {
 
         {activeTab === 'APPROVAL_CENTER' && (
           hasPermission(PERMISSIONS.VIEW_APPROVAL_CENTER) ? (
-          <div className="animate-in fade-in min-h-screen bg-gray-50">
+          <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className="bg-white p-4 sticky top-0 z-10 border-b border-gray-100">
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
               <div className="flex items-center space-x-3">
-                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-gray-400">
+                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
                   <ChevronLeft size={24} />
                 </button>
                 <div>
-                  <h1 className="text-lg font-bold text-gray-800">审批工作台</h1>
-                  <p className="text-xs text-gray-400">{pendingCount} 项待处理</p>
+                  <h1 className="text-lg font-bold text-white">审批工作台</h1>
+                  <p className="text-xs text-white/70">{pendingCount} 项待处理</p>
                 </div>
               </div>
             </div>
@@ -943,11 +1009,11 @@ const AppMobile: React.FC = () => {
             <div className="p-4 space-y-3">
               {bookings.filter(b => canApprove(b)).length === 0 ? (
                 <div className="text-center py-16">
-                  <div className="w-20 h-20 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
-                    <CheckCircle size={40} className="text-gray-300" />
+                  <div className="w-20 h-20 bg-[#334155] rounded-full flex items-center justify-center mx-auto mb-4">
+                    <CheckCircle size={40} className="text-white/30" />
                   </div>
-                  <p className="text-gray-400 font-bold">所有任务已处理完毕</p>
-                  <p className="text-xs text-gray-300 mt-1">保持高效！</p>
+                  <p className="text-white/70 font-bold">所有任务已处理完毕</p>
+                  <p className="text-xs text-white/50 mt-1">保持高效！</p>
                 </div>
               ) : (
                 bookings.filter(b => canApprove(b)).map(booking => (
@@ -1028,40 +1094,14 @@ const AppMobile: React.FC = () => {
 
         {activeTab === 'DATA_CENTER' && (
           hasPermission(PERMISSIONS.ACCESS_DATA_CENTER) ? (
-          <MobileAdminPage title="数据中心" theme={theme} onBack={() => setActiveTab('PROFILE')}>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="bg-white p-4 rounded-xl border border-gray-100 text-center">
-                <p className="text-2xl font-black text-gray-800">{users.length}</p>
-                <p className="text-xs text-gray-400">总用户数</p>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-100 text-center">
-                <p className="text-2xl font-black text-gray-800">{resources.length}</p>
-                <p className="text-xs text-gray-400">资源总数</p>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-100 text-center">
-                <p className="text-2xl font-black text-gray-800">{bookings.length}</p>
-                <p className="text-xs text-gray-400">预约总数</p>
-              </div>
-              <div className="bg-white p-4 rounded-xl border border-gray-100 text-center">
-                <p className="text-2xl font-black text-gray-800">{departments.length}</p>
-                <p className="text-xs text-gray-400">部门数量</p>
-              </div>
-            </div>
-            
-            <div className="mt-6 bg-white p-4 rounded-xl border border-gray-100">
-              <h4 className="font-bold text-gray-800 mb-3">数据操作</h4>
-              <div className="space-y-2">
-                <button className="w-full py-3 bg-gray-100 rounded-xl text-sm font-bold text-gray-700 flex items-center justify-center space-x-2">
-                  <Download size={16} />
-                  <span>导出数据</span>
-                </button>
-                <button className="w-full py-3 bg-gray-100 rounded-xl text-sm font-bold text-gray-700 flex items-center justify-center space-x-2">
-                  <Upload size={16} />
-                  <span>导入数据</span>
-                </button>
-              </div>
-            </div>
-          </MobileAdminPage>
+          <DataCenter
+            users={users}
+            resources={resources}
+            bookings={bookings}
+            departments={departments}
+            theme={theme}
+            onBack={() => setActiveTab('PROFILE')}
+          />
           ) : <NoPermissionView theme={theme} />
         )}
 

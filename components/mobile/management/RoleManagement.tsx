@@ -22,6 +22,19 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({
   const [editingRole, setEditingRole] = useState<any>(null);
   const [formData, setFormData] = useState({ name: '', description: '', color: 'indigo' });
 
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
+  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-100';
+  const darkCardBg = isFinanceTheme ? 'bg-[#1E293B]' : 'bg-white';
+  const darkButtonBg = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const darkPrimaryButton = isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 text-white`;
+  const darkModalBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
+  const darkInputBg = isFinanceTheme ? 'bg-[#334155] border-[#475569] text-white' : 'bg-white border-gray-200 text-gray-800';
+  const darkLabelText = isFinanceTheme ? 'text-white/80' : 'text-gray-700';
+  const darkRingColor = isFinanceTheme ? 'ring-[#F59E0B]' : 'ring-gray-800';
+
   const handleAdd = () => {
     setEditingRole(null);
     setFormData({ name: '', description: '', color: 'indigo' });
@@ -84,18 +97,18 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({
     >
       <div className="space-y-3">
         {roles.map((r: any) => (
-          <div key={r.id} className="bg-white p-4 rounded-xl border border-gray-100 group">
+          <div key={r.id} className={`${darkCardBg} p-4 rounded-xl border ${darkBorder} group`}>
             <div className="flex items-center space-x-3">
               <div className={`w-4 h-4 rounded-full bg-${r.color}-500`} />
               <div className="flex-1">
-                <p className="font-bold text-gray-800">{r.name}</p>
-                <p className="text-xs text-gray-400">{r.description || '暂无描述'}</p>
+                <p className={`font-bold ${darkText}`}>{r.name}</p>
+                <p className={`text-xs ${darkSubtext}`}>{r.description || '暂无描述'}</p>
               </div>
               <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => handleEdit(r)} className="p-1.5 hover:bg-gray-200 rounded-full text-gray-500">
+                <button onClick={() => handleEdit(r)} className={`p-1.5 ${isFinanceTheme ? 'hover:bg-[#334155] text-white/80' : 'hover:bg-gray-200 text-gray-500'} rounded-full`}>
                   <Edit2 size={14} />
                 </button>
-                <button onClick={() => handleDelete(r)} className="p-1.5 hover:bg-red-100 rounded-full text-red-500">
+                <button onClick={() => handleDelete(r)} className={`p-1.5 ${isFinanceTheme ? 'hover:bg-[#334155] text-[#F43F5E]' : 'hover:bg-red-100 text-red-500'} rounded-full`}>
                   <Trash2 size={14} />
                 </button>
               </div>
@@ -106,45 +119,45 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({
 
       {showModal && (
         <div className="fixed inset-0 z-[300] bg-black/50 flex items-center justify-center p-4" style={{ maxWidth: '448px', margin: '0 auto' }}>
-          <div className="bg-white rounded-2xl p-6 w-full max-w-sm animate-in zoom-in-95">
-            <h3 className="font-bold text-lg text-gray-800 mb-4">{editingRole ? '编辑角色' : '新增角色'}</h3>
+          <div className={`${darkModalBg} rounded-2xl p-6 w-full max-w-sm animate-in zoom-in-95 border ${darkBorder}`}>
+            <h3 className={`font-bold text-lg ${darkText} mb-4`}>{editingRole ? '编辑角色' : '新增角色'}</h3>
             <div className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">角色名称 *</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>角色名称 *</label>
                 <input 
                   type="text" 
                   value={formData.name} 
                   onChange={e => setFormData({...formData, name: e.target.value})} 
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none" 
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none`} 
                   placeholder="请输入角色名称" 
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">描述</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-1`}>描述</label>
                 <textarea 
                   value={formData.description} 
                   onChange={e => setFormData({...formData, description: e.target.value})} 
-                  className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:border-indigo-500 outline-none resize-none" 
+                  className={`w-full px-4 py-3 rounded-xl border ${darkInputBg} focus:border-indigo-500 outline-none resize-none`} 
                   rows={3} 
                   placeholder="请输入角色描述" 
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">颜色标识</label>
+                <label className={`block text-sm font-medium ${darkLabelText} mb-2`}>颜色标识</label>
                 <div className="flex flex-wrap gap-2">
                   {colorOptions.map(c => (
                     <button
                       key={c}
                       onClick={() => setFormData({...formData, color: c})}
-                      className={`w-8 h-8 rounded-full bg-${c}-500 ${formData.color === c ? 'ring-2 ring-offset-2 ring-gray-800' : ''}`}
+                      className={`w-8 h-8 rounded-full bg-${c}-500 ${formData.color === c ? `ring-2 ring-offset-2 ${darkRingColor}` : ''}`}
                     />
                   ))}
                 </div>
               </div>
             </div>
             <div className="flex space-x-3 mt-6">
-              <button onClick={() => setShowModal(false)} className="flex-1 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
-              <button onClick={handleSave} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+              <button onClick={() => setShowModal(false)} className={`flex-1 py-3 ${darkButtonBg} rounded-xl font-bold`}>取消</button>
+              <button onClick={handleSave} className={`flex-1 py-3 ${darkPrimaryButton} rounded-xl font-bold`}>保存</button>
             </div>
           </div>
         </div>
@@ -152,3 +165,5 @@ export const RoleManagement: React.FC<RoleManagementProps> = ({
     </MobileAdminPage>
   );
 };
+
+export default RoleManagement;
