@@ -16,6 +16,7 @@ export interface User {
   department: string;
   landline?: string;
   mobile?: string;
+  avatar?: string;
 }
 
 export interface Department {
@@ -71,6 +72,8 @@ export interface Booking {
   leaderDetails?: string;
   isVideoConference?: boolean;
   needsTeaService?: boolean;
+  needsNameCard?: boolean;
+  nameCardDetails?: string;
 }
 
 export interface Notification {

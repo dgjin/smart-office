@@ -170,6 +170,34 @@ CREATE TRIGGER update_smartoffice_workflow_updated_at
     FOR EACH ROW
     EXECUTE FUNCTION update_updated_at_column();
 
+-- ==================== 启用 Row Level Security (RLS) ====================
+-- 启用 RLS
+ALTER TABLE smartoffice_users ENABLE ROW LEVEL SECURITY;
+ALTER TABLE smartoffice_resources ENABLE ROW LEVEL SECURITY;
+ALTER TABLE smartoffice_bookings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE smartoffice_roles ENABLE ROW LEVEL SECURITY;
+ALTER TABLE smartoffice_departments ENABLE ROW LEVEL SECURITY;
+ALTER TABLE smartoffice_workflow ENABLE ROW LEVEL SECURITY;
+
+-- 创建允许所有操作的策略（开发环境使用）
+CREATE POLICY "Allow all operations on users" ON smartoffice_users
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all operations on resources" ON smartoffice_resources
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all operations on bookings" ON smartoffice_bookings
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all operations on roles" ON smartoffice_roles
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all operations on departments" ON smartoffice_departments
+  FOR ALL USING (true) WITH CHECK (true);
+
+CREATE POLICY "Allow all operations on workflow" ON smartoffice_workflow
+  FOR ALL USING (true) WITH CHECK (true);
+
 -- ==================== 启用实时订阅 ====================
 -- 预约表实时订阅
 ALTER TABLE smartoffice_bookings REPLICA IDENTITY FULL;

@@ -4,6 +4,7 @@ import { User, Resource, ApprovalNode, Department, RoleDefinition } from './type
 export const INITIAL_ROLES: RoleDefinition[] = [
   { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '拥有全系统最高管理权限', color: 'indigo' },
   { id: 'APPROVAL_ADMIN', name: '审批负责人', description: '负责各类资源申请的业务审核', color: 'amber' },
+  { id: 'MEETING_SERVICE', name: '会议服务', description: '负责会议室管理和准备工作', color: 'rose' },
   { id: 'EMPLOYEE', name: '正式员工', description: '可申请并使用公司公共资源', color: 'emerald' },
 ];
 
@@ -21,6 +22,7 @@ export const INITIAL_USERS: User[] = [
   { id: '1', name: '超级管理员', email: 'sysadmin@company.com', role: ['SYSTEM_ADMIN'], department: '架构组', landline: '010-88886666', mobile: '13800000001' },
   { id: '2', name: '审批负责人', email: 'approver@company.com', role: ['APPROVAL_ADMIN'], department: '行政部', landline: '010-88886667', mobile: '13800000002' },
   { id: '3', name: '李员工', email: 'li@company.com', role: ['EMPLOYEE'], department: '市场部', landline: '010-88886668', mobile: '13800000003' },
+  { id: '4', name: '会议服务', email: 'meeting@company.com', role: ['MEETING_SERVICE'], department: '行政部', landline: '010-88886669', mobile: '13800000004' },
 ];
 
 export const INITIAL_RESOURCES: Resource[] = [

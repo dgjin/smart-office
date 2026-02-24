@@ -5,23 +5,9 @@ import { User, Resource, Booking, RoleDefinition, Department, ApprovalNode } fro
 const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || 'your-supabase-url';
 const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY || 'your-supabase-anon-key';
 
-// 创建 Supabase 客户端
-export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
-
-// 测试 Supabase 连接
-export async function testConnection(): Promise<boolean> {
-  try {
-    const { error } = await supabase.from(TABLES.USERS).select('count', { count: 'exact', head: true });
-    if (error) {
-      console.error('Supabase 连接测试失败:', error);
-      return false;
-    }
-    return true;
-  } catch (error) {
-    console.error('Supabase 连接测试异常:', error);
-    return false;
-  }
-}
+// 调试日志
+console.log('Supabase URL:', SUPABASE_URL);
+console.log('Supabase Key 是否存在:', !!SUPABASE_ANON_KEY);
 
 // 数据库表名（使用 smartoffice 前缀）
 const TABLES = {
@@ -32,6 +18,30 @@ const TABLES = {
   DEPARTMENTS: 'smartoffice_departments',
   WORKFLOW: 'smartoffice_workflow',
 } as const;
+
+// 创建 Supabase 客户端
+export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+  auth: {
+    autoRefreshToken: true,
+    persistSession: true,
+  },
+});
+
+// 测试 Supabase 连接
+export async function testConnection(): Promise<boolean> {
+  try {
+    const { data, error } = await supabase.from(TABLES.USERS).select('*').limit(1);
+    if (error) {
+      console.error('Supabase 连接测试失败:', JSON.stringify(error, null, 2));
+      return false;
+    }
+    console.log('连接成功，数据:', data);
+    return true;
+  } catch (error: any) {
+    console.error('Supabase 连接测试异常:', error?.message || error);
+    return false;
+  }
+}
 
 // ==================== 用户相关操作 ====================
 
@@ -278,7 +288,13 @@ export async function getRoles(): Promise<RoleDefinition[]> {
 }
 
 export async function createRole(role: Omit<RoleDefinition, 'id'>): Promise<RoleDefinition> {
-  const dbRole = transformRoleToDB(role);
+  const id = `role_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const dbRole = {
+    id,
+    name: role.name,
+    description: role.description || '',
+    color: role.color || 'indigo',
+  };
   const { data, error } = await supabase
     .from(TABLES.ROLES)
     .insert([dbRole])
