@@ -54,63 +54,157 @@ class ErrorBoundary extends React.Component<
 }
 
 const MonitorApp: React.FC = () => {
-  const [bookings, setBookings] = React.useState<Booking[]>([]);
-  const [resources, setResources] = React.useState<Resource[]>([]);
+  // 添加默认数据，以便在没有实时数据时也能显示一些内容
+  const defaultResources: Resource[] = [
+    {
+      id: '1',
+      name: '会议室1',
+      type: 'ROOM',
+      capacity: 10,
+      location: '1楼',
+      features: ['投影仪', '白板'],
+      status: 'AVAILABLE'
+    },
+    {
+      id: '2',
+      name: '会议室2',
+      type: 'ROOM',
+      capacity: 20,
+      location: '2楼',
+      features: ['投影仪', '白板', '视频会议系统'],
+      status: 'AVAILABLE'
+    }
+  ];
+
+  const defaultBookings: Booking[] = [
+    {
+      id: '1',
+      userId: '1',
+      resourceId: '1',
+      type: 'ROOM',
+      startTime: new Date().toISOString(),
+      endTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+      status: 'APPROVED',
+      purpose: '团队会议',
+      participants: 5,
+      createdAt: new Date().toISOString(),
+      currentNodeIndex: 0,
+      approvalHistory: []
+    }
+  ];
+
+  const [bookings, setBookings] = React.useState<Booking[]>(defaultBookings);
+  const [resources, setResources] = React.useState<Resource[]>(defaultResources);
+  const [isInitialLoad, setIsInitialLoad] = React.useState(true);
   const [connectionStatus, setConnectionStatus] = React.useState<ConnectionStatus>('disconnected');
   const [lastUpdate, setLastUpdate] = React.useState<Date>(new Date());
   const [updateStats, setUpdateStats] = React.useState({ added: 0, updated: 0, deleted: 0 });
-  const [hasInitialData, setHasInitialData] = React.useState(false);
+  const [hasBookingsData, setHasBookingsData] = React.useState(true);
+  const [hasResourcesData, setHasResourcesData] = React.useState(true);
+  const [initialDataLoaded, setInitialDataLoaded] = React.useState(false);
   const realtimeServiceRef = React.useRef<any>(null);
+
+  // 调试：打印状态变化
+  React.useEffect(() => {
+    console.log('MonitorApp 状态变化:', {
+      bookingsCount: bookings.length,
+      resourcesCount: resources.length,
+      connectionStatus,
+      hasInitialData: hasBookingsData || hasResourcesData
+    });
+  }, [bookings, resources, connectionStatus, hasBookingsData, hasResourcesData]);
+
+  // 只有同时收到预订和资源数据后才显示界面
+  const hasInitialData = hasBookingsData || hasResourcesData;
 
   React.useEffect(() => {
     console.log('MonitorApp 初始化...');
     
-    // 创建实时服务
-    const realtimeService = createRealtimeService({
-      onBookingsChange: (newBookings: Booking[], delta: BookingDelta) => {
+    try {
+      console.log('开始创建实时服务...');
+      // 创建实时服务
+      const realtimeService = createRealtimeService({
+        onBookingsChange: (newBookings: Booking[], delta: BookingDelta) => {
         console.log('收到预订数据更新:', { 
           total: newBookings.length, 
           added: delta.added.length, 
           updated: delta.updated.length, 
-          deleted: delta.deleted.length 
+          deleted: delta.deleted.length,
+          initialDataLoaded: initialDataLoaded
         });
-        setBookings(newBookings);
-        setUpdateStats({
-          added: delta.added.length,
-          updated: delta.updated.length,
-          deleted: delta.deleted.length
-        });
-        setLastUpdate(new Date());
-        setHasInitialData(true);
+        // 只有当有真实数据时才更新
+        if (newBookings.length > 0) {
+          console.log('更新预订数据:', newBookings.length, '条');
+          setBookings(newBookings);
+          setUpdateStats({
+            added: delta.added.length,
+            updated: delta.updated.length,
+            deleted: delta.deleted.length
+          });
+          setLastUpdate(new Date());
+          setHasBookingsData(true);
+          setIsInitialLoad(false);
+          setInitialDataLoaded(true);
+        } else {
+          console.log('收到空预订数据，保持当前数据');
+          // 如果已经加载了初始数据，不覆盖
+          if (!initialDataLoaded) {
+            console.log('初始数据未加载，保持默认数据');
+          }
+        }
       },
       onResourcesChange: (newResources: Resource[], delta: ResourceDelta) => {
         console.log('收到资源数据更新:', { 
           total: newResources.length, 
           added: delta.added.length, 
           updated: delta.updated.length, 
-          deleted: delta.deleted.length 
+          deleted: delta.deleted.length,
+          initialDataLoaded: initialDataLoaded
         });
-        setResources(newResources);
-        setLastUpdate(new Date());
+        // 只有当有真实数据时才更新
+        if (newResources.length > 0) {
+          console.log('更新资源数据:', newResources.length, '条');
+          setResources(newResources);
+          setLastUpdate(new Date());
+          setHasResourcesData(true);
+          setIsInitialLoad(false);
+          setInitialDataLoaded(true);
+        } else {
+          console.log('收到空资源数据，保持当前数据');
+          // 如果已经加载了初始数据，不覆盖
+          if (!initialDataLoaded) {
+            console.log('初始数据未加载，保持默认数据');
+          }
+        }
       },
-      onConnectionChange: (status: ConnectionStatus) => {
-        console.log('连接状态变更:', status);
-        setConnectionStatus(status);
-      },
-      onError: (error: Error) => {
-        console.error('实时服务错误:', error);
-      }
-    });
+        onConnectionChange: (status: ConnectionStatus) => {
+          console.log('连接状态变更:', status);
+          setConnectionStatus(status);
+        },
+        onError: (error: Error) => {
+          console.error('实时服务错误:', error);
+        }
+      });
 
-    realtimeServiceRef.current = realtimeService;
+      console.log('实时服务创建成功:', realtimeService);
+      realtimeServiceRef.current = realtimeService;
 
-    // 建立连接
-    realtimeService.connect();
+      // 建立连接
+      console.log('开始建立连接...');
+      realtimeService.connect().then(() => {
+        console.log('连接建立成功');
+      }).catch((error: Error) => {
+        console.error('连接建立失败:', error);
+      });
 
-    // 清理函数
-    return () => {
-      realtimeService.disconnect();
-    };
+      // 清理函数
+      return () => {
+        console.log('清理实时服务...');
+        realtimeService.disconnect();
+      };
+    } catch (error) {
+      console.error('初始化实时服务失败:', error);
+    }
   }, []);
 
   console.log('MonitorApp 渲染:', { 

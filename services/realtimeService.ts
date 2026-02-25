@@ -58,15 +58,22 @@ class RealtimeService {
     try {
       // 先加载初始数据
       console.log('开始获取初始数据...');
+      console.log('调用 fetchAndNotifyBookings...');
       await this.fetchAndNotifyBookings();
+      console.log('fetchAndNotifyBookings 完成');
+      console.log('调用 fetchAndNotifyResources...');
       await this.fetchAndNotifyResources();
+      console.log('fetchAndNotifyResources 完成');
       
       // 然后建立实时订阅
       console.log('开始建立实时订阅...');
+      console.log('调用 subscribeToBookings...');
       await this.subscribeToBookings();
+      console.log('subscribeToBookings 完成');
+      console.log('调用 subscribeToResources...');
       await this.subscribeToResources();
+      console.log('subscribeToResources 完成');
       
-      this.startHeartbeat();
       this.setConnectionStatus('connected');
       this.reconnectAttempts = 0;
       
@@ -81,9 +88,10 @@ class RealtimeService {
     }
   }
 
+
+
   // 断开连接
   public disconnect(): void {
-    this.stopHeartbeat();
     this.unsubscribeAll();
     this.setConnectionStatus('disconnected');
     this.reconnectAttempts = 0;
@@ -173,17 +181,26 @@ class RealtimeService {
 
       // 计算增量
       const currentBookings = bookings || [];
-      const delta = this.calculateBookingDelta(currentBookings);
+      
+      // 确保数据格式正确
+      const validBookings = currentBookings.filter(b => b && typeof b === 'object' && b.id && b.startTime);
+      console.log('有效预订数据:', validBookings.length);
+      
+      // 只有当有有效数据时才更新
+      if (validBookings.length > 0) {
+        const delta = this.calculateBookingDelta(validBookings);
+        console.log('预订数据增量:', delta);
 
-      console.log('预订数据增量:', delta);
+        // 更新缓存
+        this.lastBookings.clear();
+        validBookings.forEach(b => this.lastBookings.set(b.id, b));
 
-      // 更新缓存
-      this.lastBookings.clear();
-      currentBookings.forEach(b => this.lastBookings.set(b.id, b));
-
-      // 通知回调
-      if (this.config.onBookingsChange) {
-        this.config.onBookingsChange(currentBookings, delta);
+        // 通知回调
+        if (this.config.onBookingsChange) {
+          this.config.onBookingsChange(validBookings, delta);
+        }
+      } else {
+        console.log('没有有效预订数据，不更新');
       }
     } catch (error) {
       console.error('处理预订变更失败:', error);
@@ -215,15 +232,24 @@ class RealtimeService {
       if (error) throw error;
 
       const currentResources = resources || [];
-      const delta = this.calculateResourceDelta(currentResources);
+      
+      // 确保数据格式正确
+      const validResources = currentResources.filter(r => r && typeof r === 'object' && r.id && r.name);
+      console.log('有效资源数据:', validResources.length);
+      
+      // 只有当有有效数据时才更新
+      if (validResources.length > 0) {
+        const delta = this.calculateResourceDelta(validResources);
+        console.log('资源数据增量:', delta);
 
-      console.log('资源数据增量:', delta);
+        this.lastResources.clear();
+        validResources.forEach(r => this.lastResources.set(r.id, r));
 
-      this.lastResources.clear();
-      currentResources.forEach(r => this.lastResources.set(r.id, r));
-
-      if (this.config.onResourcesChange) {
-        this.config.onResourcesChange(currentResources, delta);
+        if (this.config.onResourcesChange) {
+          this.config.onResourcesChange(validResources, delta);
+        }
+      } else {
+        console.log('没有有效资源数据，不更新');
       }
     } catch (error) {
       console.error('处理资源变更失败:', error);
@@ -308,6 +334,7 @@ class RealtimeService {
   private async fetchAndNotifyBookings(): Promise<void> {
     try {
       console.log('获取预订数据...');
+      console.log('Supabase 客户端:', !!supabase);
       const { data: bookings, error } = await supabase
         .from('smartoffice_bookings')
         .select('*')
@@ -320,15 +347,20 @@ class RealtimeService {
 
       const currentBookings = bookings || [];
       console.log('获取到预订数据:', currentBookings.length);
+      console.log('预订数据示例:', currentBookings.slice(0, 2));
       
-      const delta = this.calculateBookingDelta(currentBookings);
+      // 确保数据格式正确
+      const validBookings = currentBookings.filter(b => b && typeof b === 'object' && b.id && b.startTime);
+      console.log('有效预订数据:', validBookings.length);
+      
+      const delta = this.calculateBookingDelta(validBookings);
 
       this.lastBookings.clear();
-      currentBookings.forEach(b => this.lastBookings.set(b.id, b));
+      validBookings.forEach(b => this.lastBookings.set(b.id, b));
 
       console.log('准备调用 onBookingsChange 回调...');
       if (this.config.onBookingsChange) {
-        this.config.onBookingsChange(currentBookings, delta);
+        this.config.onBookingsChange(validBookings, delta);
         console.log('onBookingsChange 回调已调用');
       } else {
         console.warn('onBookingsChange 回调未设置');
@@ -343,6 +375,7 @@ class RealtimeService {
   private async fetchAndNotifyResources(): Promise<void> {
     try {
       console.log('获取资源数据...');
+      console.log('Supabase 客户端:', !!supabase);
       const { data: resources, error } = await supabase
         .from('smartoffice_resources')
         .select('*')
@@ -355,15 +388,20 @@ class RealtimeService {
 
       const currentResources = resources || [];
       console.log('获取到资源数据:', currentResources.length);
+      console.log('资源数据示例:', currentResources.slice(0, 2));
       
-      const delta = this.calculateResourceDelta(currentResources);
+      // 确保数据格式正确
+      const validResources = currentResources.filter(r => r && typeof r === 'object' && r.id && r.name);
+      console.log('有效资源数据:', validResources.length);
+      
+      const delta = this.calculateResourceDelta(validResources);
 
       this.lastResources.clear();
-      currentResources.forEach(r => this.lastResources.set(r.id, r));
+      validResources.forEach(r => this.lastResources.set(r.id, r));
 
       console.log('准备调用 onResourcesChange 回调...');
       if (this.config.onResourcesChange) {
-        this.config.onResourcesChange(currentResources, delta);
+        this.config.onResourcesChange(validResources, delta);
         console.log('onResourcesChange 回调已调用');
       } else {
         console.warn('onResourcesChange 回调未设置');
@@ -374,34 +412,7 @@ class RealtimeService {
     }
   }
 
-  // 启动心跳检测
-  private startHeartbeat(): void {
-    this.heartbeatInterval = setInterval(() => {
-      this.checkConnection();
-    }, 30000); // 30秒检测一次
-  }
 
-  // 停止心跳检测
-  private stopHeartbeat(): void {
-    if (this.heartbeatInterval) {
-      clearInterval(this.heartbeatInterval);
-      this.heartbeatInterval = null;
-    }
-  }
-
-  // 检查连接状态
-  private async checkConnection(): Promise<void> {
-    try {
-      const { error } = await supabase.from('smartoffice_bookings').select('id').limit(1);
-      if (error) {
-        console.warn('心跳检测失败:', error);
-        this.scheduleReconnect();
-      }
-    } catch (error) {
-      console.warn('心跳检测异常:', error);
-      this.scheduleReconnect();
-    }
-  }
 
   // 断线重连
   private scheduleReconnect(): void {
