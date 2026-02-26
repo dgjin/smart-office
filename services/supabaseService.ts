@@ -567,7 +567,7 @@ function transformUserToDB(user: Partial<User>): any {
 }
 
 // 资源数据转换
-function transformResourceFromDB(dbResource: any): Resource {
+export function transformResourceFromDB(dbResource: any): Resource {
   return {
     id: dbResource.id,
     name: dbResource.name,
@@ -591,7 +591,7 @@ function transformResourceToDB(resource: Partial<Resource>): any {
 }
 
 // 预约数据转换
-function transformBookingFromDB(dbBooking: any): Booking {
+export function transformBookingFromDB(dbBooking: any): Booking {
   return {
     id: dbBooking.id,
     userId: dbBooking.user_id,

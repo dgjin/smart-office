@@ -1,4 +1,4 @@
-import { supabase } from './supabaseService';
+import { supabase, transformBookingFromDB, transformResourceFromDB } from './supabaseService';
 import { Booking, Resource } from '../types';
 
 // ==================== 实时数据推送服务 ====================
@@ -180,8 +180,9 @@ class RealtimeService {
       if (error) throw error;
 
       // 计算增量
-      const currentBookings = bookings || [];
-      
+      const currentBookingsRaw = bookings || [];
+      // 转换数据格式（从数据库格式转换为应用格式）
+      const currentBookings = currentBookingsRaw.map(transformBookingFromDB);
       // 确保数据格式正确
       const validBookings = currentBookings.filter(b => b && typeof b === 'object' && b.id && b.startTime);
       console.log('有效预订数据:', validBookings.length);
@@ -231,8 +232,9 @@ class RealtimeService {
 
       if (error) throw error;
 
-      const currentResources = resources || [];
-      
+      const currentResourcesRaw = resources || [];
+      // 转换数据格式
+      const currentResources = currentResourcesRaw.map(transformResourceFromDB);
       // 确保数据格式正确
       const validResources = currentResources.filter(r => r && typeof r === 'object' && r.id && r.name);
       console.log('有效资源数据:', validResources.length);
@@ -345,10 +347,11 @@ class RealtimeService {
         throw error;
       }
 
-      const currentBookings = bookings || [];
-      console.log('获取到预订数据:', currentBookings.length);
-      console.log('预订数据示例:', currentBookings.slice(0, 2));
+      const currentBookingsRaw = bookings || [];
+      console.log('获取到预订数据:', currentBookingsRaw.length);
       
+      // 转换数据格式
+      const currentBookings = currentBookingsRaw.map(transformBookingFromDB);
       // 确保数据格式正确
       const validBookings = currentBookings.filter(b => b && typeof b === 'object' && b.id && b.startTime);
       console.log('有效预订数据:', validBookings.length);
@@ -386,10 +389,11 @@ class RealtimeService {
         throw error;
       }
 
-      const currentResources = resources || [];
-      console.log('获取到资源数据:', currentResources.length);
-      console.log('资源数据示例:', currentResources.slice(0, 2));
+      const currentResourcesRaw = resources || [];
+      console.log('获取到资源数据:', currentResourcesRaw.length);
       
+      // 转换数据格式
+      const currentResources = currentResourcesRaw.map(transformResourceFromDB);
       // 确保数据格式正确
       const validResources = currentResources.filter(r => r && typeof r === 'object' && r.id && r.name);
       console.log('有效资源数据:', validResources.length);
