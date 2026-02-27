@@ -408,6 +408,10 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                     const isCurrentHour = hour >= currentHour && hour < currentHour + 1;
                     const isFirstHourOfBooking = booking && new Date(booking.startTime).getHours() === hour;
                     
+                    if (hour === 9) {
+                      console.log(`房间 ${room.name} ${hour}点:`, { booking, roomId: room.id, bookingResourceId: booking?.resourceId });
+                    }
+                    
                     return (
                       <div 
                         key={hour} 
