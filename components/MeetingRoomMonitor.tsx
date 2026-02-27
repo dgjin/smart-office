@@ -313,59 +313,59 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
         </div>
       </div>
 
-      {/* Stats Cards */}
-      <div className="grid grid-cols-4 gap-4 mb-6">
-        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <Calendar size={20} className="text-blue-200" />
-            <span className="text-xs bg-blue-500/50 px-2 py-1 rounded-full">今日</span>
+      {/* Stats Cards - 紧凑布局 */}
+      <div className="grid grid-cols-4 gap-3 mb-4">
+        <div className="bg-gradient-to-br from-blue-600 to-blue-700 rounded-xl p-3">
+          <div className="flex items-center justify-between">
+            <Calendar size={14} className="text-blue-200" />
+            <span className="text-[10px] bg-blue-500/50 px-1.5 py-0.5 rounded-full">今日</span>
           </div>
-          <p className="text-3xl font-bold">{getTodayStats.totalBookings}</p>
-          <p className="text-blue-200 text-sm">预订会议数</p>
+          <p className="text-2xl font-bold mt-1">{getTodayStats.totalBookings}</p>
+          <p className="text-blue-200 text-xs">预订会议数</p>
         </div>
 
-        <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <Clock size={20} className="text-emerald-200" />
-            <span className="text-xs bg-emerald-500/50 px-2 py-1 rounded-full">今日</span>
+        <div className="bg-gradient-to-br from-emerald-600 to-emerald-700 rounded-xl p-3">
+          <div className="flex items-center justify-between">
+            <Clock size={14} className="text-emerald-200" />
+            <span className="text-[10px] bg-emerald-500/50 px-1.5 py-0.5 rounded-full">今日</span>
           </div>
-          <p className="text-3xl font-bold">{getTodayStats.totalHours}<span className="text-lg">h</span></p>
-          <p className="text-emerald-200 text-sm">预订总时长</p>
+          <p className="text-2xl font-bold mt-1">{getTodayStats.totalHours}<span className="text-sm">h</span></p>
+          <p className="text-emerald-200 text-xs">预订总时长</p>
         </div>
 
-        <div className="bg-gradient-to-br from-amber-600 to-amber-700 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <Users size={20} className="text-amber-200" />
-            <span className="text-xs bg-amber-500/50 px-2 py-1 rounded-full">进行中</span>
+        <div className="bg-gradient-to-br from-amber-600 to-amber-700 rounded-xl p-3">
+          <div className="flex items-center justify-between">
+            <Users size={14} className="text-amber-200" />
+            <span className="text-[10px] bg-amber-500/50 px-1.5 py-0.5 rounded-full">进行中</span>
           </div>
-          <p className="text-3xl font-bold">{getTodayStats.ongoingMeetings}</p>
-          <p className="text-amber-200 text-sm">正在进行会议</p>
+          <p className="text-2xl font-bold mt-1">{getTodayStats.ongoingMeetings}</p>
+          <p className="text-amber-200 text-xs">正在进行</p>
         </div>
 
-        <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-3">
-            <TrendingUp size={20} className="text-purple-200" />
-            <span className="text-xs bg-purple-500/50 px-2 py-1 rounded-full">本周</span>
+        <div className="bg-gradient-to-br from-purple-600 to-purple-700 rounded-xl p-3">
+          <div className="flex items-center justify-between">
+            <TrendingUp size={14} className="text-purple-200" />
+            <span className="text-[10px] bg-purple-500/50 px-1.5 py-0.5 rounded-full">本周</span>
           </div>
-          <p className="text-3xl font-bold">{getWeekStats.totalBookings}</p>
-          <p className="text-purple-200 text-sm">本周预订总数</p>
+          <p className="text-2xl font-bold mt-1">{getWeekStats.totalBookings}</p>
+          <p className="text-purple-200 text-xs">本周预订总数</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
-        {/* Today's Schedule */}
-        <div className="col-span-2 bg-slate-800 rounded-2xl p-5">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-lg font-bold flex items-center">
-              <Clock size={18} className="mr-2 text-blue-400" />
+      <div className="grid grid-cols-4 gap-4">
+        {/* Today's Schedule - 时间格视图 */}
+        <div className="col-span-3 bg-slate-800 rounded-xl p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h2 className="text-base font-bold flex items-center">
+              <Clock size={16} className="mr-2 text-blue-400" />
               今日会议室使用情况
             </h2>
-            <div className="flex items-center space-x-2">
+            <div className="flex items-center space-x-1">
               {meetingRooms.length > 0 ? meetingRooms.map(room => (
                 <button
                   key={room.id}
                   onClick={() => setSelectedRoom(room.id)}
-                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
                     effectiveSelectedRoom === room.id 
                       ? 'bg-blue-600 text-white' 
                       : 'bg-slate-700 text-slate-300 hover:bg-slate-600'
@@ -379,78 +379,69 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
             </div>
           </div>
 
-          {/* Time Grid */}
-          <div className="relative">
-            {/* Hour labels */}
-            <div className="flex mb-2 pl-16">
-              {HOURS.filter(h => h >= 7 && h <= 21).map(hour => (
-                <div key={hour} className="flex-1 text-center text-xs text-slate-500">
-                  {String(hour).padStart(2, '0')}:00
+          {/* Time Grid - 紧凑水平布局 */}
+          <div className="overflow-x-auto">
+            <div className="min-w-[800px]">
+              {/* Hour labels */}
+              <div className="flex mb-1 pl-12">
+                {HOURS.filter(h => h >= 7 && h <= 21).map(hour => (
+                  <div key={hour} className="flex-1 text-center text-[10px] text-slate-500 min-w-[28px]">
+                    {String(hour).padStart(2, '0')}
+                  </div>
+                ))}
+              </div>
+
+              {/* Room rows */}
+              {meetingRooms.map(room => (
+                <div key={room.id} className="flex items-center mb-1">
+                  <div className="w-12 text-[10px] text-slate-400 truncate pr-1">{room.name}</div>
+                  <div className="flex-1 flex h-6 bg-slate-700/50 rounded overflow-hidden">
+                    {HOURS.filter(h => h >= 7 && h <= 21).map(hour => {
+                      const booking = getBookingForHour(new Date(), hour, room.id);
+                      const isCurrentHour = hour >= currentHour && hour < currentHour + 1;
+                      const isFirstHourOfBooking = booking && new Date(booking.startTime).getHours() === hour;
+                      
+                      return (
+                        <div 
+                          key={hour} 
+                          className={`flex-1 border-r border-slate-600/30 relative min-w-[28px] ${
+                            booking ? getStatusColor(booking.status) : ''
+                          } ${isCurrentHour ? 'bg-slate-600/30' : ''}`}
+                          title={booking ? `${booking.purpose} (${formatTime(new Date(booking.startTime))}-${formatTime(new Date(booking.endTime))})` : ''}
+                        >
+                          {booking && isFirstHourOfBooking && (
+                            <div className="absolute inset-0 flex items-center justify-center px-0.5">
+                              <span className="text-[8px] font-bold text-white truncate">
+                                {room.name.split(' ')[0]}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               ))}
             </div>
-
-            {/* Current time indicator */}
-            <div 
-              className="absolute top-8 h-24 w-0.5 bg-red-500 z-10"
-              style={{ 
-                left: `calc(4rem + ${(currentHour - 7 + currentMinute / 60) / 15 * 100}%)`,
-              }}
-            >
-              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-red-500 rounded-full" />
-            </div>
-
-            {/* Room rows */}
-            {meetingRooms.map(room => (
-              <div key={room.id} className="flex items-center mb-2">
-                <div className="w-16 text-xs text-slate-400 truncate pr-2">{room.name}</div>
-                <div className="flex-1 flex h-10 bg-slate-700/50 rounded-lg overflow-hidden">
-                  {HOURS.filter(h => h >= 7 && h <= 20).map(hour => {
-                    const booking = getBookingForHour(new Date(), hour, room.id);
-                    const isCurrentHour = hour >= currentHour && hour < currentHour + 1;
-                    const isFirstHourOfBooking = booking && new Date(booking.startTime).getHours() === hour;
-                    
-                    return (
-                      <div 
-                        key={hour} 
-                        className={`flex-1 border-r border-slate-600/30 relative ${
-                          booking ? getStatusColor(booking.status) : ''
-                        } ${isCurrentHour ? 'bg-slate-600/30' : ''}`}
-                        title={booking ? `${booking.purpose} (${formatTime(new Date(booking.startTime))}-${formatTime(new Date(booking.endTime))})` : ''}
-                      >
-                        {/* 在预订色块上显示会议室名称 */}
-                        {booking && isFirstHourOfBooking && (
-                          <div className="absolute inset-0 flex items-center justify-center px-1">
-                            <span className="text-[10px] font-bold text-white truncate drop-shadow-md">
-                              {room.name.split(' ')[0]}
-                            </span>
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
           </div>
 
           {/* Legend */}
-          <div className="flex items-center space-x-4 mt-4 text-xs">
+          <div className="flex items-center space-x-3 mt-2 text-[10px]">
             <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-emerald-500 rounded" />
+              <div className="w-2 h-2 bg-green-500 rounded" />
               <span className="text-slate-400">已确认</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-amber-500 rounded" />
+              <div className="w-2 h-2 bg-yellow-500 rounded" />
               <span className="text-slate-400">待审批</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-3 h-3 bg-slate-600 rounded" />
+              <div className="w-2 h-2 bg-slate-600 rounded" />
               <span className="text-slate-400">空闲</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-1.5 h-3 bg-red-500 rounded" />
-              <span className="text-slate-400">当前时间</span>
+              <div className="w-1 h-2 bg-red-500 rounded" />
+              <span className="text-slate-400">当前</span>
             </div>
           </div>
         </div>
