@@ -263,6 +263,13 @@ const MonitorApp: React.FC = () => {
         {updateStats.deleted > 0 && (
           <span className="text-xs text-red-400">-{updateStats.deleted}</span>
         )}
+        <button
+          onClick={() => realtimeServiceRef.current?.refresh()}
+          className="ml-2 px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors"
+          title="手动刷新数据"
+        >
+          刷新
+        </button>
       </div>
 
       <MeetingRoomMonitor bookings={bookings} resources={resources} />

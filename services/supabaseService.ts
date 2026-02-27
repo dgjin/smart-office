@@ -25,6 +25,11 @@ export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON
     autoRefreshToken: true,
     persistSession: true,
   },
+  realtime: {
+    params: {
+      eventsPerSecond: 10,
+    },
+  },
 });
 
 // 测试 Supabase 连接

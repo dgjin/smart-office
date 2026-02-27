@@ -34,10 +34,12 @@ class RealtimeService {
   private reconnectDelay = 1000;
   private maxReconnectDelay = 30000;
   private heartbeatInterval: any = null;
+  private pollingInterval: any = null;
   private lastBookings: Map<string, Booking> = new Map();
   private lastResources: Map<string, Resource> = new Map();
   private pendingUpdates: any[] = [];
   private isProcessing = false;
+  private pollingEnabled = true; // 启用轮询作为实时推送的备选
 
   constructor(config: RealtimeConfig) {
     this.config = config;
@@ -81,17 +83,52 @@ class RealtimeService {
       this.processPendingUpdates();
       
       console.log('连接建立完成');
+      
+      // 启动轮询作为实时推送的备选方案（每30秒刷新一次）
+      this.startPolling();
     } catch (error) {
       console.error('实时连接失败:', error);
       this.handleError(error as Error);
       this.scheduleReconnect();
+      // 即使实时连接失败，也启动轮询
+      this.startPolling();
+    }
+  }
+
+  // 启动轮询
+  private startPolling(): void {
+    if (this.pollingInterval) {
+      console.log('轮询已在运行中');
+      return;
+    }
+    
+    console.log('启动轮询，每30秒刷新一次数据...');
+    this.pollingInterval = setInterval(async () => {
+      console.log('🔄 轮询：刷新数据...');
+      try {
+        await this.fetchAndNotifyBookings();
+        await this.fetchAndNotifyResources();
+        console.log('🔄 轮询：数据刷新完成');
+      } catch (error) {
+        console.error('🔄 轮询：数据刷新失败:', error);
+      }
+    }, 30000); // 30秒
+  }
+
+  // 停止轮询
+  private stopPolling(): void {
+    if (this.pollingInterval) {
+      console.log('停止轮询');
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
     }
   }
 
 
-
   // 断开连接
   public disconnect(): void {
+    this.stopPolling();
+    this.stopHeartbeat();
     this.unsubscribeAll();
     this.setConnectionStatus('disconnected');
     this.reconnectAttempts = 0;
@@ -112,16 +149,16 @@ class RealtimeService {
           table: 'smartoffice_bookings' 
         }, 
         (payload: any) => {
-          console.log('收到预订数据变更事件:', payload);
+          console.log('🔔 收到预订数据变更事件:', payload);
           this.handleBookingChange(payload);
         }
       )
       .subscribe((status: string, err?: any) => {
-        console.log('预订订阅状态:', status, err);
+        console.log('📡 预订订阅状态:', status, err);
         if (status === 'SUBSCRIBED') {
-          console.log('预订数据订阅成功');
+          console.log('✅ 预订数据订阅成功');
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.error('预订数据订阅断开:', status, err);
+          console.error('❌ 预订数据订阅断开:', status, err);
           this.scheduleReconnect();
         }
       });
@@ -141,16 +178,16 @@ class RealtimeService {
           table: 'smartoffice_resources' 
         }, 
         (payload: any) => {
-          console.log('收到资源数据变更事件:', payload);
+          console.log('🔔 收到资源数据变更事件:', payload);
           this.handleResourceChange(payload);
         }
       )
       .subscribe((status: string, err?: any) => {
-        console.log('资源订阅状态:', status, err);
+        console.log('📡 资源订阅状态:', status, err);
         if (status === 'SUBSCRIBED') {
-          console.log('资源数据订阅成功');
+          console.log('✅ 资源数据订阅成功');
         } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
-          console.error('资源数据订阅断开:', status, err);
+          console.error('❌ 资源数据订阅断开:', status, err);
           this.scheduleReconnect();
         }
       });
@@ -446,14 +483,29 @@ class RealtimeService {
 
   // 取消所有订阅
   private unsubscribeAll(): void {
+    console.log('取消所有订阅...');
     if (this.bookingsChannel) {
+      console.log('取消 bookings 订阅');
       this.bookingsChannel.unsubscribe();
       this.bookingsChannel = null;
     }
     if (this.resourcesChannel) {
+      console.log('取消 resources 订阅');
       this.resourcesChannel.unsubscribe();
       this.resourcesChannel = null;
     }
+  }
+
+  // 手动刷新数据（当实时推送失败时的备选方案）
+  public async refresh(): Promise<void> {
+    console.log('手动刷新数据...');
+    await this.fetchAndNotifyBookings();
+    await this.fetchAndNotifyResources();
+  }
+
+  // 检查连接状态
+  public getConnectionStatus(): ConnectionStatus {
+    return this.connectionStatus;
   }
 
   // 设置连接状态
@@ -469,19 +521,6 @@ class RealtimeService {
     if (this.config.onError) {
       this.config.onError(error);
     }
-  }
-
-  // 获取当前连接状态
-  public getConnectionStatus(): ConnectionStatus {
-    return this.connectionStatus;
-  }
-
-  // 手动刷新数据
-  public async refresh(): Promise<void> {
-    await Promise.all([
-      this.fetchAndNotifyBookings(),
-      this.fetchAndNotifyResources()
-    ]);
   }
 }
 
