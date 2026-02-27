@@ -128,7 +128,10 @@ class RealtimeService {
   // 断开连接
   public disconnect(): void {
     this.stopPolling();
-    this.stopHeartbeat();
+    if (this.heartbeatInterval) {
+      clearInterval(this.heartbeatInterval);
+      this.heartbeatInterval = null;
+    }
     this.unsubscribeAll();
     this.setConnectionStatus('disconnected');
     this.reconnectAttempts = 0;
