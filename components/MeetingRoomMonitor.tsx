@@ -160,9 +160,9 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
         if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
         const bookingDate = getLocalDateStr(start);
         const status = b.status || '';
-        // 使用UTC时间进行比较，确保时区一致性
-        const startHour = start.getUTCHours();
-        const endHour = end.getUTCHours();
+        // 使用本地时间进行比较
+        const startHour = start.getHours();
+        const endHour = end.getHours();
         return bookingDate === dateStr && 
                b.resourceId === roomId && 
                hour >= startHour && 
