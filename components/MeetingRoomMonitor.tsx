@@ -237,9 +237,11 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
 
   const getStatusColor = (status: string) => {
     switch (status) {
-      case 'APPROVED': return 'bg-emerald-500';
-      case 'PENDING': return 'bg-amber-500';
-      default: return 'bg-gray-400';
+      case 'APPROVED': return 'bg-green-500';
+      case 'PENDING': return 'bg-yellow-500';
+      case 'REJECTED': return 'bg-red-400';
+      case 'CANCELLED': return 'bg-gray-400';
+      default: return 'bg-blue-400';
     }
   };
 
@@ -407,10 +409,6 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                     const booking = getBookingForHour(new Date(), hour, room.id);
                     const isCurrentHour = hour >= currentHour && hour < currentHour + 1;
                     const isFirstHourOfBooking = booking && new Date(booking.startTime).getHours() === hour;
-                    
-                    if (hour === 9) {
-                      console.log(`房间 ${room.name} ${hour}点:`, { booking, roomId: room.id, bookingResourceId: booking?.resourceId });
-                    }
                     
                     return (
                       <div 
