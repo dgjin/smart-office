@@ -250,8 +250,8 @@ const MonitorApp: React.FC = () => {
 
   return (
     <div className="relative">
-      {/* 连接状态指示器 - 移到左上角 */}
-      <div className="fixed top-4 left-4 z-50 flex items-center space-x-2 bg-slate-800/90 backdrop-blur px-2 py-1 rounded-lg border border-slate-700">
+      {/* 连接状态指示器 - 居中显示 */}
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-50 flex items-center space-x-2 bg-slate-800/90 backdrop-blur px-3 py-1.5 rounded-lg border border-slate-700">
         <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
         <span className="text-[10px] text-slate-300">{getStatusText()}</span>
         {updateStats.added > 0 && (
