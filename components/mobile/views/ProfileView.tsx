@@ -1,5 +1,5 @@
 import React from 'react';
-import { Users, Shield, Building2, GitMerge, Database, LogOut, ChevronRight, MapPin, User, Edit3, Calendar } from 'lucide-react';
+import { Users, Shield, Building2, GitMerge, Database, LogOut, ChevronRight, MapPin, User, Edit3, Calendar, HelpCircle } from 'lucide-react';
 import { PERMISSIONS } from '../../../permissions';
 import { usePermissions } from '../../../hooks/usePermissions';
 
@@ -24,6 +24,7 @@ const THEMES = [
 
 const ALL_MENU_ITEMS = [
   { id: 'BOOKINGS', icon: Calendar, label: '我的申请', permission: PERMISSIONS.VIEW_BOOKINGS },
+  { id: 'HELP', icon: HelpCircle, label: '使用帮助', permission: null },
   { id: 'USERS', icon: Users, label: '成员中心', permission: PERMISSIONS.MANAGE_USERS },
   { id: 'ROLES', icon: Shield, label: '角色管理', permission: PERMISSIONS.MANAGE_ROLES },
   { id: 'DEPARTMENTS', icon: Building2, label: '部门管理', permission: PERMISSIONS.MANAGE_DEPARTMENTS },
@@ -42,14 +43,22 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
   onThemeChange
 }) => {
   const { hasPermission } = usePermissions(currentUser?.role || []);
+  const [showHelp, setShowHelp] = React.useState(false);
   
   const userMenuItems = ALL_MENU_ITEMS.filter(item => 
-    item.id === 'BOOKINGS' && hasPermission(item.permission)
+    (item.id === 'BOOKINGS' || item.id === 'HELP')
+  );
+  
+  // 对 BOOKINGS 检查权限，HELP 不需要权限
+  const filteredUserMenuItems = userMenuItems.filter(item => 
+    item.id === 'HELP' || hasPermission(item.permission)
   );
   
   const adminMenuItems = ALL_MENU_ITEMS.filter(item => 
-    item.id !== 'BOOKINGS' && hasPermission(item.permission)
+    (item.id !== 'BOOKINGS' && item.id !== 'HELP') && hasPermission(item.permission)
   );
+  
+  const helpMenuItem = ALL_MENU_ITEMS.find(item => item.id === 'HELP');
 
   const isFinanceTheme = theme === 'finance';
   const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
@@ -126,10 +135,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
         <div className="px-4 mt-6">
           <h3 className={`text-xs font-bold ${darkSubtext} uppercase mb-3 ml-1`}>常用功能</h3>
           <div className={`${darkCardBg} rounded-2xl border ${darkBorder} overflow-hidden`}>
-            {userMenuItems.map((item, index) => (
+            {filteredUserMenuItems.map((item, index) => (
               <button
                 key={item.id}
-                onClick={() => onViewChange(item.id)}
+                onClick={() => item.id === 'HELP' ? setShowHelp(true) : onViewChange(item.id)}
                 className={`w-full flex items-center justify-between p-4 ${index !== 0 ? `border-t ${darkBorder}` : ''} active:bg-opacity-90 transition-colors`}
               >
                 <div className="flex items-center space-x-3">
@@ -185,6 +194,67 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
           </div>
         </div>
       </div>
+
+      {/* 帮助弹窗 */}
+      {showHelp && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowHelp(false)}>
+          <div className={`${darkCardBg} rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto p-5`} onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`text-lg font-bold ${darkText}`}>使用帮助</h3>
+              <button onClick={() => setShowHelp(false)} className="p-1">✕</button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <h4 className={`font-bold ${darkText} mb-2`}>角色说明</h4>
+                <div className={`${darkSecondary} rounded-lg p-3 text-sm`}>
+                  <p className="mb-2"><span className="font-bold">系统管理员</span>：拥有全部管理权限</p>
+                  <p className="mb-2"><span className="font-bold">审批负责人</span>：负责审批管理</p>
+                  <p className="mb-2"><span className="font-bold">会议服务</span>：负责会议室管理</p>
+                  <p><span className="font-bold">普通员工</span>：基本使用权限</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className={`font-bold ${darkText} mb-2`}>预订状态</h4>
+                <div className={`${darkSecondary} rounded-lg p-3 text-sm`}>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-green-500 rounded mr-2"></span>已确认：预订已通过审批</p>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-yellow-500 rounded mr-2"></span>待审批：等待审批中</p>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-red-500 rounded mr-2"></span>已拒绝：预订被拒绝</p>
+                  <p><span className="inline-block w-3 h-3 bg-gray-400 rounded mr-2"></span>已取消：预订已取消</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className={`font-bold ${darkText} mb-2`}>监控大屏颜色</h4>
+                <div className={`${darkSecondary} rounded-lg p-3 text-sm`}>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-green-600 rounded mr-2"></span>进行中：会议正在进行</p>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-green-400 rounded mr-2"></span>即将开始：会议即将开始</p>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-slate-500 rounded mr-2"></span>已结束：会议已结束</p>
+                  <p className="mb-2"><span className="inline-block w-3 h-3 bg-yellow-500 rounded mr-2"></span>待审批：等待审批</p>
+                  <p><span className="inline-block w-3 h-3 bg-slate-700 rounded mr-2"></span>空闲：无预订</p>
+                </div>
+              </div>
+
+              <div>
+                <h4 className={`font-bold ${darkText} mb-2`}>快捷操作</h4>
+                <div className={`${darkSecondary} rounded-lg p-3 text-sm`}>
+                  <p className="mb-1">• 点击底部导航切换功能</p>
+                  <p className="mb-1">• 长按可编辑我的预订</p>
+                  <p>• 右上角刷新按钮更新数据</p>
+                </div>
+              </div>
+            </div>
+
+            <button 
+              onClick={() => setShowHelp(false)}
+              className={`w-full mt-4 py-2 rounded-lg font-bold ${theme === 'finance' ? 'bg-blue-600' : 'bg-blue-600'} text-white`}
+            >
+              知道了
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
