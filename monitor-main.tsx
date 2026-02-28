@@ -250,22 +250,22 @@ const MonitorApp: React.FC = () => {
 
   return (
     <div className="relative">
-      {/* 连接状态指示器 */}
-      <div className="fixed top-4 right-4 z-50 flex items-center space-x-2 bg-slate-800/90 backdrop-blur px-3 py-2 rounded-full border border-slate-700">
+      {/* 连接状态指示器 - 移到左上角 */}
+      <div className="fixed top-4 left-4 z-50 flex items-center space-x-2 bg-slate-800/90 backdrop-blur px-2 py-1 rounded-lg border border-slate-700">
         <div className={`w-2 h-2 rounded-full ${getStatusColor()}`} />
-        <span className="text-xs text-slate-300">{getStatusText()}</span>
+        <span className="text-[10px] text-slate-300">{getStatusText()}</span>
         {updateStats.added > 0 && (
-          <span className="text-xs text-emerald-400">+{updateStats.added}</span>
+          <span className="text-[10px] text-emerald-400">+{updateStats.added}</span>
         )}
         {updateStats.updated > 0 && (
-          <span className="text-xs text-amber-400">~{updateStats.updated}</span>
+          <span className="text-[10px] text-amber-400">~{updateStats.updated}</span>
         )}
         {updateStats.deleted > 0 && (
-          <span className="text-xs text-red-400">-{updateStats.deleted}</span>
+          <span className="text-[10px] text-red-400">-{updateStats.deleted}</span>
         )}
         <button
           onClick={() => realtimeServiceRef.current?.refresh()}
-          className="ml-2 px-2 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors"
+          className="ml-1 px-1.5 py-0.5 text-[10px] bg-slate-700 hover:bg-slate-600 rounded text-slate-300 transition-colors"
           title="手动刷新数据"
         >
           刷新
@@ -275,8 +275,8 @@ const MonitorApp: React.FC = () => {
       <MeetingRoomMonitor bookings={bookings} resources={resources} />
       
       {/* 最后更新时间 */}
-      <div className="fixed bottom-4 right-4 text-xs text-slate-600">
-        最后更新: {lastUpdate.toLocaleTimeString()}
+      <div className="fixed bottom-4 right-4 text-[10px] text-slate-500">
+        更新: {lastUpdate.toLocaleTimeString()}
       </div>
     </div>
   );
