@@ -235,7 +235,7 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
     };
   }, [bookings, getWeekDates]);
 
-  const getStatusColor = (status: string, isCompleted: boolean = false) => {
+  const getStatusColor = (status: string, isCompleted: boolean = false, isOngoing: boolean = false, isUpcoming: boolean = false) => {
     if (isCompleted) {
       switch (status) {
         case 'APPROVED': return 'bg-slate-500';
@@ -243,6 +243,24 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
         case 'REJECTED': return 'bg-slate-300';
         case 'CANCELLED': return 'bg-slate-300';
         default: return 'bg-slate-400';
+      }
+    }
+    if (isOngoing) {
+      switch (status) {
+        case 'APPROVED': return 'bg-green-600';
+        case 'PENDING': return 'bg-yellow-600';
+        case 'REJECTED': return 'bg-red-500';
+        case 'CANCELLED': return 'bg-gray-500';
+        default: return 'bg-blue-600';
+      }
+    }
+    if (isUpcoming) {
+      switch (status) {
+        case 'APPROVED': return 'bg-green-400';
+        case 'PENDING': return 'bg-yellow-400';
+        case 'REJECTED': return 'bg-red-300';
+        case 'CANCELLED': return 'bg-gray-400';
+        default: return 'bg-blue-400';
       }
     }
     switch (status) {
@@ -258,6 +276,26 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
     try {
       const endTime = new Date(booking.endTime);
       return endTime.getTime() < currentTime.getTime();
+    } catch {
+      return false;
+    }
+  };
+
+  const isBookingOngoing = (booking: Booking): boolean => {
+    try {
+      const startTime = new Date(booking.startTime);
+      const endTime = new Date(booking.endTime);
+      const now = currentTime.getTime();
+      return startTime.getTime() <= now && endTime.getTime() > now;
+    } catch {
+      return false;
+    }
+  };
+
+  const isBookingUpcoming = (booking: Booking): boolean => {
+    try {
+      const startTime = new Date(booking.startTime);
+      return startTime.getTime() > currentTime.getTime();
     } catch {
       return false;
     }
@@ -418,12 +456,15 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                       const booking = getBookingForHour(new Date(), hour, room.id);
                       const isCurrentHour = hour >= currentHour && hour < currentHour + 1;
                       const isFirstHourOfBooking = booking && new Date(booking.startTime).getHours() === hour;
+                      const completed = booking ? isBookingCompleted(booking) : false;
+                      const ongoing = booking ? isBookingOngoing(booking) : false;
+                      const upcoming = booking ? isBookingUpcoming(booking) : false;
                       
                       return (
                         <div 
                           key={hour} 
                           className={`flex-1 border-r border-slate-600/30 relative min-w-[28px] ${
-                            booking ? getStatusColor(booking.status, isBookingCompleted(booking)) : ''
+                            booking ? getStatusColor(booking.status, completed, ongoing, upcoming) : ''
                           } ${isCurrentHour ? 'bg-slate-600/30' : ''}`}
                           title={booking ? `${booking.purpose} (${formatTime(new Date(booking.startTime))}-${formatTime(new Date(booking.endTime))})` : ''}
                         >
@@ -446,20 +487,24 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
           {/* Legend */}
           <div className="flex items-center space-x-3 mt-2 text-[10px]">
             <div className="flex items-center space-x-1">
-              <div className="w-2 h-2 bg-green-500 rounded" />
-              <span className="text-slate-400">已确认</span>
+              <div className="w-2 h-2 bg-green-600 rounded" />
+              <span className="text-slate-400">进行中</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-2 h-2 bg-green-400 rounded" />
+              <span className="text-slate-400">即将开始</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-2 h-2 bg-slate-500 rounded" />
+              <span className="text-slate-400">已结束</span>
             </div>
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-yellow-500 rounded" />
               <span className="text-slate-400">待审批</span>
             </div>
             <div className="flex items-center space-x-1">
-              <div className="w-2 h-2 bg-slate-600 rounded" />
+              <div className="w-2 h-2 bg-slate-700 rounded" />
               <span className="text-slate-400">空闲</span>
-            </div>
-            <div className="flex items-center space-x-1">
-              <div className="w-1 h-2 bg-red-500 rounded" />
-              <span className="text-slate-400">当前</span>
             </div>
           </div>
         </div>
@@ -767,10 +812,12 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                   {dayBookings.slice(0, 3).map(booking => {
                     const room = resources.find(r => r.id === booking.resourceId);
                     const completed = isBookingCompleted(booking);
+                    const ongoing = isBookingOngoing(booking);
+                    const upcoming = isBookingUpcoming(booking);
                     return (
                       <div 
                         key={booking.id}
-                        className={`text-xs p-1.5 rounded ${getStatusColor(booking.status, completed)} truncate ${completed ? 'opacity-50' : ''}`}
+                        className={`text-xs p-1.5 rounded ${getStatusColor(booking.status, completed, ongoing, upcoming)} truncate ${completed ? 'opacity-50' : ''}`}
                         title={`${booking.purpose} - ${room?.name}`}
                       >
                         {formatTime(new Date(booking.startTime))} {room?.name?.split(' ')[0]}
