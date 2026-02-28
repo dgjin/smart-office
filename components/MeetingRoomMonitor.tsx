@@ -235,13 +235,31 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
     };
   }, [bookings, getWeekDates]);
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status: string, isCompleted: boolean = false) => {
+    if (isCompleted) {
+      switch (status) {
+        case 'APPROVED': return 'bg-slate-500';
+        case 'PENDING': return 'bg-slate-400';
+        case 'REJECTED': return 'bg-slate-300';
+        case 'CANCELLED': return 'bg-slate-300';
+        default: return 'bg-slate-400';
+      }
+    }
     switch (status) {
       case 'APPROVED': return 'bg-green-500';
       case 'PENDING': return 'bg-yellow-500';
       case 'REJECTED': return 'bg-red-400';
       case 'CANCELLED': return 'bg-gray-400';
       default: return 'bg-blue-400';
+    }
+  };
+
+  const isBookingCompleted = (booking: Booking): boolean => {
+    try {
+      const endTime = new Date(booking.endTime);
+      return endTime.getTime() < currentTime.getTime();
+    } catch {
+      return false;
     }
   };
 
@@ -405,7 +423,7 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                         <div 
                           key={hour} 
                           className={`flex-1 border-r border-slate-600/30 relative min-w-[28px] ${
-                            booking ? getStatusColor(booking.status) : ''
+                            booking ? getStatusColor(booking.status, isBookingCompleted(booking)) : ''
                           } ${isCurrentHour ? 'bg-slate-600/30' : ''}`}
                           title={booking ? `${booking.purpose} (${formatTime(new Date(booking.startTime))}-${formatTime(new Date(booking.endTime))})` : ''}
                         >
@@ -748,10 +766,11 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                 <div className="space-y-1">
                   {dayBookings.slice(0, 3).map(booking => {
                     const room = resources.find(r => r.id === booking.resourceId);
+                    const completed = isBookingCompleted(booking);
                     return (
                       <div 
                         key={booking.id}
-                        className={`text-xs p-1.5 rounded ${getStatusColor(booking.status)} truncate`}
+                        className={`text-xs p-1.5 rounded ${getStatusColor(booking.status, completed)} truncate ${completed ? 'opacity-50' : ''}`}
                         title={`${booking.purpose} - ${room?.name}`}
                       >
                         {formatTime(new Date(booking.startTime))} {room?.name?.split(' ')[0]}
