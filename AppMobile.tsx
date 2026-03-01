@@ -1114,6 +1114,13 @@ const AppMobile: React.FC = () => {
             onLogout={() => setCurrentUser(null)}
             onViewChange={setActiveTab}
             onThemeChange={setTheme}
+            onUpdateUser={async (userId: string, updates: any) => {
+              await updateUser(userId, updates);
+              setUsers(users.map(u => u.id === userId ? { ...u, ...updates } : u));
+              if (currentUser?.id === userId) {
+                setCurrentUser({ ...currentUser, ...updates });
+              }
+            }}
           />
         )}
 

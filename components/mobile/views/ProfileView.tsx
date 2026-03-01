@@ -1,7 +1,8 @@
 import React from 'react';
-import { Users, Shield, Building2, GitMerge, Database, LogOut, ChevronRight, MapPin, User, Edit3, Calendar, HelpCircle } from 'lucide-react';
+import { Users, Shield, Building2, GitMerge, Database, LogOut, ChevronRight, MapPin, User, Edit3, Calendar, HelpCircle, Key } from 'lucide-react';
 import { PERMISSIONS } from '../../../permissions';
 import { usePermissions } from '../../../hooks/usePermissions';
+import ApiKeySettings from './ApiKeySettings';
 
 interface ProfileViewProps {
   currentUser: any;
@@ -11,6 +12,7 @@ interface ProfileViewProps {
   onLogout: () => void;
   onViewChange: (view: string) => void;
   onThemeChange: (theme: string) => void;
+  onUpdateUser?: (userId: string, updates: any) => Promise<void>;
 }
 
 const THEMES = [
@@ -25,6 +27,7 @@ const THEMES = [
 const ALL_MENU_ITEMS = [
   { id: 'BOOKINGS', icon: Calendar, label: '我的申请', permission: PERMISSIONS.VIEW_BOOKINGS },
   { id: 'HELP', icon: HelpCircle, label: '使用帮助', permission: null },
+  { id: 'API_KEY', icon: Key, label: 'API Key 设置', permission: null },
   { id: 'USERS', icon: Users, label: '成员中心', permission: PERMISSIONS.MANAGE_USERS },
   { id: 'ROLES', icon: Shield, label: '角色管理', permission: PERMISSIONS.MANAGE_ROLES },
   { id: 'DEPARTMENTS', icon: Building2, label: '部门管理', permission: PERMISSIONS.MANAGE_DEPARTMENTS },
@@ -44,18 +47,19 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 }) => {
   const { hasPermission } = usePermissions(currentUser?.role || []);
   const [showHelp, setShowHelp] = React.useState(false);
+  const [showApiKeySettings, setShowApiKeySettings] = React.useState(false);
   
   const userMenuItems = ALL_MENU_ITEMS.filter(item => 
-    (item.id === 'BOOKINGS' || item.id === 'HELP')
+    (item.id === 'BOOKINGS' || item.id === 'HELP' || item.id === 'API_KEY')
   );
   
-  // 对 BOOKINGS 检查权限，HELP 不需要权限
+  // 对 BOOKINGS 检查权限，HELP 和 API_KEY 不需要权限
   const filteredUserMenuItems = userMenuItems.filter(item => 
-    item.id === 'HELP' || hasPermission(item.permission)
+    item.id === 'HELP' || item.id === 'API_KEY' || hasPermission(item.permission)
   );
   
   const adminMenuItems = ALL_MENU_ITEMS.filter(item => 
-    (item.id !== 'BOOKINGS' && item.id !== 'HELP') && hasPermission(item.permission)
+    (item.id !== 'BOOKINGS' && item.id !== 'HELP' && item.id !== 'API_KEY') && hasPermission(item.permission)
   );
   
   const helpMenuItem = ALL_MENU_ITEMS.find(item => item.id === 'HELP');
@@ -138,7 +142,11 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
             {filteredUserMenuItems.map((item, index) => (
               <button
                 key={item.id}
-                onClick={() => item.id === 'HELP' ? setShowHelp(true) : onViewChange(item.id)}
+                onClick={() => {
+                  if (item.id === 'HELP') setShowHelp(true);
+                  else if (item.id === 'API_KEY') setShowApiKeySettings(true);
+                  else onViewChange(item.id);
+                }}
                 className={`w-full flex items-center justify-between p-4 ${index !== 0 ? `border-t ${darkBorder}` : ''} active:bg-opacity-90 transition-colors`}
               >
                 <div className="flex items-center space-x-3">
@@ -248,10 +256,28 @@ export const ProfileView: React.FC<ProfileViewProps> = ({
 
             <button 
               onClick={() => setShowHelp(false)}
-              className={`w-full mt-4 py-2 rounded-lg font-bold ${theme === 'finance' ? 'bg-blue-600' : 'bg-blue-600'} text-white`}
+              className={`w-full mt-4 py-2 rounded-lg font-bold bg-blue-600 text-white`}
             >
               知道了
             </button>
+          </div>
+        </div>
+      )}
+
+      {/* API Key 设置弹窗 */}
+      {showApiKeySettings && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50" onClick={() => setShowApiKeySettings(false)}>
+          <div className={`${darkCardBg} rounded-2xl w-full max-w-md max-h-[80vh] overflow-y-auto`} onClick={e => e.stopPropagation()}>
+            <ApiKeySettings 
+              currentUser={currentUser}
+              onSave={async (encryptedKey) => {
+                if (onUpdateUser) {
+                  await onUpdateUser(currentUser.id, { encryptedApiKey: encryptedKey });
+                  setShowApiKeySettings(false);
+                }
+              }}
+              theme={theme}
+            />
           </div>
         </div>
       )}

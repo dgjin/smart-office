@@ -1042,7 +1042,7 @@ const BookingFormModal = ({ resource, theme, initialDate, onClose, onConfirm, av
   const handleSmartRecommend = async () => {
     if (!purpose) return;
     setLoadingAI(true);
-    const suggestion = await getSmartRecommendation(purpose, participants, availableResources);
+    const suggestion = await getSmartRecommendation(purpose, participants, availableResources, currentUser);
     setAiSuggestion(suggestion);
     setLoadingAI(false);
   };

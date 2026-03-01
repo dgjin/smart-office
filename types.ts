@@ -18,6 +18,7 @@ export interface User {
   landline?: string;
   mobile?: string;
   avatar?: string;
+  encryptedApiKey?: string;
 }
 
 export interface Department {
