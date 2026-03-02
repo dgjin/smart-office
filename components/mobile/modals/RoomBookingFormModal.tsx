@@ -52,7 +52,7 @@ export const RoomBookingFormModal: React.FC<RoomBookingFormModalProps> = ({
   };
 
   const dateOptions = useMemo(() => {
-    return Array.from({ length: 14 }, (_, i) => {
+    return Array.from({ length: 7 }, (_, i) => {
       const d = new Date();
       d.setDate(d.getDate() + i);
       return d;

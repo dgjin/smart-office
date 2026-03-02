@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { AlertTriangle, Calendar, X, Clock, User, Briefcase } from 'lucide-react';
+import { AlertTriangle, Calendar, X, Clock, User, Briefcase, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Resource, Booking } from '../../../types';
 
 interface DeskBookingFormModalProps {
@@ -17,8 +17,13 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
   onClose,
   onConfirm
 }) => {
-  const today = new Date().toISOString().split('T')[0];
-  const [selectedDate, setSelectedDate] = useState(today);
+  const today = new Date();
+  const minStartDate = new Date(today);
+  minStartDate.setDate(minStartDate.getDate() + 3);
+  const minStartDateStr = minStartDate.toISOString().split('T')[0];
+  
+  const [startDate, setStartDate] = useState(minStartDateStr);
+  const [endDate, setEndDate] = useState(minStartDateStr);
   const [selectedTimeRange, setSelectedTimeRange] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
   const [applicantName, setApplicantName] = useState('');
   const [department, setDepartment] = useState('');
@@ -47,35 +52,46 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     setTimeout(() => setToast(null), 3000);
   };
 
-  const dateOptions = useMemo(() => {
-    return Array.from({ length: 14 }, (_, i) => {
-      const d = new Date();
+  const startDateOptions = useMemo(() => {
+    return Array.from({ length: 88 }, (_, i) => {
+      const d = new Date(minStartDate);
       d.setDate(d.getDate() + i);
       return d;
     });
-  }, []);
+  }, [minStartDate]);
 
-  const getBookingsForResource = useMemo(() => {
-    const dateStart = new Date(`${selectedDate}T00:00:00`);
-    const dateEnd = new Date(`${selectedDate}T23:59:59`);
-    
-    return bookings.filter(b => {
-      if (b.resourceId !== resource.id) return false;
-      if (['REJECTED', 'CANCELLED'].includes(b.status)) return false;
-      
-      const bStart = new Date(b.startTime);
-      const isOnSelectedDate = bStart >= dateStart && bStart <= dateEnd;
-      return isOnSelectedDate;
+  const endDateOptions = useMemo(() => {
+    const start = new Date(startDate);
+    return Array.from({ length: 90 }, (_, i) => {
+      const d = new Date(start);
+      d.setDate(d.getDate() + i);
+      return d;
     });
-  }, [bookings, resource.id, selectedDate]);
+  }, [startDate]);
 
-  const isSlotBooked = (time: string): boolean => {
+  const getBookingsForDate = useMemo(() => {
+    return (dateStr: string) => {
+      const dateStart = new Date(`${dateStr}T00:00:00`);
+      const dateEnd = new Date(`${dateStr}T23:59:59`);
+      
+      return bookings.filter(b => {
+        if (b.resourceId !== resource.id) return false;
+        if (['REJECTED', 'CANCELLED'].includes(b.status)) return false;
+        
+        const bStart = new Date(b.startTime);
+        const isOnSelectedDate = bStart >= dateStart && bStart <= dateEnd;
+        return isOnSelectedDate;
+      });
+    };
+  }, [bookings, resource.id]);
+
+  const isSlotBooked = (time: string, dateStr: string): boolean => {
     const [hours, minutes] = time.split(':').map(Number);
-    const slotStart = new Date(selectedDate);
-    slotStart.setHours(hours, minutes, 0, 0);
+    const slotStart = new Date(`${dateStr}T${time}:00`);
     const slotEnd = new Date(slotStart.getTime() + 30 * 60000);
     
-    for (const b of getBookingsForResource) {
+    const dayBookings = getBookingsForDate(dateStr);
+    for (const b of dayBookings) {
       const bStart = new Date(b.startTime);
       const bEnd = new Date(b.endTime);
       const isOverlapping = slotStart.getTime() < bEnd.getTime() && slotEnd.getTime() > bStart.getTime();
@@ -84,10 +100,9 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     return false;
   };
 
-  const isSlotPast = (time: string): boolean => {
+  const isSlotPast = (time: string, dateStr: string): boolean => {
     const [hours, minutes] = time.split(':').map(Number);
-    const slotDate = new Date(selectedDate);
-    slotDate.setHours(hours, minutes, 0, 0);
+    const slotDate = new Date(`${dateStr}T${time}:00`);
     const now = new Date();
     const minTime = new Date(now.getTime() + 10 * 60000);
     return slotDate < minTime;
@@ -95,7 +110,9 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
 
   const handleTimeClick = (time: string) => {
     setHighlightField(null);
-    if (isSlotBooked(time) || isSlotPast(time)) return;
+    const isBooked = isSlotBooked(time, startDate);
+    const isPast = isSlotPast(time, startDate);
+    if (isBooked || isPast) return;
     
     const { start, end } = selectedTimeRange;
     
@@ -119,7 +136,7 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
       const endIndex = timeSlots.indexOf(time);
       
       for (let i = startIndex; i < endIndex; i++) {
-        if (isSlotBooked(timeSlots[i])) {
+        if (isSlotBooked(timeSlots[i], startDate)) {
           showToast('选择的时间段内包含已被占用的时段', 'error');
           setSelectedTimeRange({ start: time, end: null });
           return;
@@ -140,6 +157,13 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     const s = parseInt(selectedTimeRange.start.replace(':', ''));
     const e = parseInt(selectedTimeRange.end.replace(':', ''));
     return t > s && t < e;
+  };
+
+  const calculateBookingDays = (): number => {
+    const start = new Date(startDate);
+    const end = new Date(endDate);
+    const diffTime = Math.abs(end.getTime() - start.getTime());
+    return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   };
 
   const handleSubmit = () => {
@@ -172,10 +196,8 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     const [startH, startM] = selectedTimeRange.start.split(':').map(Number);
     const [endH, endM] = selectedTimeRange.end.split(':').map(Number);
     
-    const startTime = new Date(selectedDate);
-    startTime.setHours(startH, startM, 0, 0);
-    const endTime = new Date(selectedDate);
-    endTime.setHours(endH, endM, 0, 0);
+    const startTime = new Date(`${startDate}T${selectedTimeRange.start}:00`);
+    const endTime = new Date(`${endDate}T${selectedTimeRange.end}:00`);
     const now = new Date();
     
     if (startTime < now) {
@@ -188,13 +210,14 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
       return;
     }
 
-    const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-    if (duration > 8) {
-      showToast('单次预约时长不能超过8小时', 'warning');
+    const bookingDays = calculateBookingDays();
+    if (bookingDays > 8) {
+      showToast('单次预约时长不能超过8小时（按自然日计算）', 'warning');
       return;
     }
-    
-    for (const b of getBookingsForResource) {
+
+    const dayBookings = getBookingsForDate(startDate);
+    for (const b of dayBookings) {
       const bStart = new Date(b.startTime);
       const bEnd = new Date(b.endTime);
       if (startTime < bEnd && endTime > bStart) {
@@ -226,6 +249,12 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     const d = new Date(dateStr);
     return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
   };
+
+  const formatDateDisplay = (date: Date): string => {
+    return `${date.getMonth() + 1}月${date.getDate()}日`;
+  };
+
+  const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex flex-col" style={{ maxWidth: '448px', margin: '0 auto' }}>
@@ -295,18 +324,21 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
           </div>
 
           <div className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>
-            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>选择日期</label>
-            <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-hide">
-              {dateOptions.map(d => {
+            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>开始日期（3天后可选）</label>
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-hide">
+              {startDateOptions.slice(0, 14).map(d => {
                 const dateStr = d.toISOString().split('T')[0];
-                const isSelected = dateStr === selectedDate;
-                const dayName = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-                const isToday = dateStr === today;
+                const isSelected = dateStr === startDate;
+                const dayName = dayNames[d.getDay()];
+                const isToday = dateStr === minStartDateStr;
                 return (
                   <button
                     key={dateStr}
                     onClick={() => { 
-                      setSelectedDate(dateStr); 
+                      setStartDate(dateStr);
+                      if (new Date(endDate) < d) {
+                        setEndDate(dateStr);
+                      }
                       setSelectedTimeRange({ start: null, end: null }); 
                       setHighlightField(null);
                     }}
@@ -320,16 +352,53 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
                   >
                     <span className="text-[10px] opacity-80">周{dayName}</span>
                     <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
-                    {isToday && !isSelected && <span className={`text-[8px] ${isFinanceTheme ? 'text-emerald-400' : 'text-emerald-500'}`}>今天</span>}
                   </button>
                 );
               })}
             </div>
           </div>
 
+          <div className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>
+            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>结束日期</label>
+            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-hide">
+              {endDateOptions.slice(0, 30).map(d => {
+                const dateStr = d.toISOString().split('T')[0];
+                const isSelected = dateStr === endDate;
+                const dayName = dayNames[d.getDay()];
+                const isBeforeStart = d < new Date(startDate);
+                return (
+                  <button
+                    key={dateStr}
+                    disabled={isBeforeStart}
+                    onClick={() => { 
+                      setEndDate(dateStr); 
+                      setSelectedTimeRange({ start: null, end: null }); 
+                      setHighlightField(null);
+                    }}
+                    className={`flex flex-col items-center justify-center w-14 h-16 rounded-xl border-2 transition-all shrink-0 ${
+                      isSelected 
+                        ? (isFinanceTheme ? 'bg-emerald-500 border-emerald-500 text-slate-900' : `bg-${theme}-600 border-${theme}-600 text-white`)
+                        : isBeforeStart
+                          ? (isFinanceTheme ? 'bg-slate-700 border-slate-600 text-slate-600 cursor-not-allowed' : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed')
+                          : (isFinanceTheme ? 'bg-slate-800 border-slate-600 text-slate-400' : 'bg-white border-gray-100 text-gray-400')
+                    }`}
+                  >
+                    <span className="text-[10px] opacity-80">周{dayName}</span>
+                    <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
+                  </button>
+                );
+              })}
+            </div>
+            {startDate !== endDate && (
+              <p className={`text-xs mt-2 ${themeColors.lightText}`}>
+                已选择 {formatDateDisplay(new Date(startDate))} - {formatDateDisplay(new Date(endDate))}，共 {calculateBookingDays()} 天
+              </p>
+            )}
+          </div>
+
           <div ref={timeSlotRef} className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>
             <div className="flex items-center justify-between mb-3">
-              <label className={`text-[10px] font-bold uppercase ${themeColors.lightText}`}>使用时段 *</label>
+              <label className={`text-[10px] font-bold uppercase ${themeColors.lightText}`}>使用时段（按开始日期计算）*</label>
               {selectedTimeRange.start && selectedTimeRange.end && (
                 <span className={`text-xs font-bold ${isFinanceTheme ? 'text-emerald-400' : `text-${theme}-600`}`}>
                   {selectedTimeRange.start} - {selectedTimeRange.end}
@@ -345,8 +414,8 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
             
             <div className="grid grid-cols-4 gap-2">
               {timeSlots.map(time => {
-                const booked = isSlotBooked(time);
-                const past = isSlotPast(time);
+                const booked = isSlotBooked(time, startDate);
+                const past = isSlotPast(time, startDate);
                 const selected = isSlotSelected(time);
                 const inRange = isSlotInRange(time);
                 
@@ -373,11 +442,11 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
               })}
             </div>
             
-            {getBookingsForResource.length > 0 && (
+            {getBookingsForDate(startDate).length > 0 && (
               <div className={`mt-3 pt-3 border-t ${isFinanceTheme ? 'border-slate-600' : 'border-gray-100'}`}>
-                <p className={`text-[10px] font-bold mb-2 ${themeColors.lightText}`}>已预订时段：</p>
+                <p className={`text-[10px] font-bold mb-2 ${themeColors.lightText}`}>开始日期已预订时段：</p>
                 <div className="space-y-1">
-                  {getBookingsForResource.map((b, idx) => (
+                  {getBookingsForDate(startDate).map((b, idx) => (
                     <div key={idx} className={`flex items-center justify-between text-xs px-3 py-2 rounded-lg border ${
                       isFinanceTheme ? 'bg-red-900/40 text-red-400 border-red-800' : 'bg-rose-50 text-rose-600 border-rose-100'
                     }`}>
