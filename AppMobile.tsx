@@ -60,7 +60,7 @@ const OFFLINE_CACHE_KEY = 'SMART_OFFICE_OFFLINE_CACHE';
 
 // --- Theme Config ---
 const THEMES = [
-  { id: 'finance', name: '金融黑', color: 'bg-[#0F172A]', text: 'text-[#F8FAFC]', border: 'border-[#334155]', bg: 'bg-[#0F172A]', lightColor: '#F59E0B', accent: '#8B5CF6' },
+  { id: 'finance', name: '金融黑', color: 'bg-slate-900', text: 'text-slate-100', border: 'border-slate-600', bg: 'bg-slate-900', lightColor: '#F59E0B', accent: '#8B5CF6' },
   { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-indigo-600', border: 'border-indigo-100', bg: 'bg-indigo-50', lightColor: '#4F46E5' },
   { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-emerald-600', border: 'border-emerald-100', bg: 'bg-emerald-50', lightColor: '#059669' },
   { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-orange-600', border: 'border-orange-100', bg: 'bg-orange-50', lightColor: '#EA580C' },
@@ -154,13 +154,13 @@ const MobileStatCard = ({ title, value, icon: Icon, color, onClick, isDark = fal
 // --- Mobile Resource Card ---
 const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) => {
   const isFinanceTheme = theme === 'finance';
-  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
-  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
-  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
-  const darkSecondary = isFinanceTheme ? 'bg-[#334155] text-white/80' : 'bg-gray-100 text-gray-600';
+  const darkBg = isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-slate-100' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-slate-400' : 'text-gray-400';
+  const darkSecondary = isFinanceTheme ? 'bg-slate-700 text-slate-200' : 'bg-gray-100 text-gray-600';
   const typeColor = resource.type === 'ROOM' 
-    ? (isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-indigo-50 text-indigo-600')
-    : (isFinanceTheme ? 'bg-[#FBBF24]/10 text-[#FBBF24]' : 'bg-emerald-50 text-emerald-600');
+    ? (isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-50 text-indigo-600')
+    : (isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600');
   
   return (
     <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
@@ -181,7 +181,7 @@ const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) =>
         <span>{resource.features?.slice(0, 2).join(' · ') || '标准配置'}</span>
       </div>
       <div className="flex space-x-2">
-        <button onClick={() => onBook(resource)} className={`flex-1 py-2.5 ${isFinanceTheme ? 'bg-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 text-white`} rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
+        <button onClick={() => onBook(resource)} className={`flex-1 py-2.5 ${isFinanceTheme ? 'bg-amber-500 text-slate-900' : `bg-${theme}-600 text-white`} rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
           立即预约
         </button>
         {resource.type === 'DESK' && (
@@ -198,22 +198,22 @@ const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) =>
 const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onToggle }: any) => {
   const isExpanded = expanded;
   const isFinanceTheme = theme === 'finance';
-  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
-  const darkBorder = isFinanceTheme ? 'border-[#334155]' : 'border-gray-50';
-  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
-  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
-  const darkSecondary = isFinanceTheme ? 'text-white/80' : 'text-gray-700';
-  const darkIcon = isFinanceTheme ? 'text-gray-400' : 'text-gray-300';
+  const darkBg = isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
+  const darkBorder = isFinanceTheme ? 'border-slate-600' : 'border-gray-50';
+  const darkText = isFinanceTheme ? 'text-slate-100' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-slate-400' : 'text-gray-400';
+  const darkSecondary = isFinanceTheme ? 'text-slate-300' : 'text-gray-700';
+  const darkIcon = isFinanceTheme ? 'text-slate-400' : 'text-gray-300';
   const typeColor = booking.type === 'ROOM' 
-    ? (isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-indigo-50 text-indigo-600')
-    : (isFinanceTheme ? 'bg-[#FBBF24]/10 text-[#FBBF24]' : 'bg-emerald-50 text-emerald-600');
-  const cancelBtn = isFinanceTheme ? 'bg-[#334155] text-rose-400 border-[#475569]' : 'bg-rose-50 text-rose-600 border border-rose-100';
+    ? (isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-50 text-indigo-600')
+    : (isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600');
+  const cancelBtn = isFinanceTheme ? 'bg-slate-700 text-rose-400 border-slate-500' : 'bg-rose-50 text-rose-600 border border-rose-100';
   
   const tagColors = {
-    amber: isFinanceTheme ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-amber-50 text-amber-600',
-    indigo: isFinanceTheme ? 'bg-[#8B5CF6]/10 text-[#8B5CF6]' : 'bg-indigo-50 text-indigo-600',
-    emerald: isFinanceTheme ? 'bg-[#10B981]/10 text-[#10B981]' : 'bg-emerald-50 text-emerald-600',
-    rose: isFinanceTheme ? 'bg-[#F43F5E]/10 text-[#F43F5E]' : 'bg-rose-50 text-rose-600'
+    amber: isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-50 text-amber-600',
+    indigo: isFinanceTheme ? 'bg-violet-500/20 text-violet-400' : 'bg-indigo-50 text-indigo-600',
+    emerald: isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600',
+    rose: isFinanceTheme ? 'bg-rose-500/20 text-rose-400' : 'bg-rose-50 text-rose-600'
   };
   
   return (
@@ -305,12 +305,12 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
 // --- Mobile Approval Card ---
 const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprove, onReject }: any) => {
   const isFinanceTheme = theme === 'finance';
-  const darkBg = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
-  const darkText = isFinanceTheme ? 'text-white' : 'text-gray-800';
-  const darkSubtext = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
-  const darkUserBg = isFinanceTheme ? 'bg-[#334155] text-[#F59E0B]' : `bg-${theme}-100 text-${theme}-600`;
-  const darkRejectBtn = isFinanceTheme ? 'border-[#334155] text-white/60' : 'border border-gray-200 text-gray-500';
-  const darkApproveBtn = isFinanceTheme ? 'bg-[#8B5CF6]' : `bg-${theme}-600`;
+  const darkBg = isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
+  const darkText = isFinanceTheme ? 'text-slate-100' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-slate-400' : 'text-gray-400';
+  const darkUserBg = isFinanceTheme ? 'bg-slate-700 text-amber-400' : `bg-${theme}-100 text-${theme}-600`;
+  const darkRejectBtn = isFinanceTheme ? 'border-slate-500 text-slate-400' : 'border border-gray-200 text-gray-500';
+  const darkApproveBtn = isFinanceTheme ? 'bg-violet-500' : `bg-${theme}-600`;
   
   return (
     <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
@@ -849,7 +849,7 @@ const AppMobile: React.FC = () => {
               <div className="grid grid-cols-2 gap-3">
                 <button 
                   onClick={() => setActiveTab('RESOURCES')}
-                  className="bg-[#F59E0B] text-[#0F172A] p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
+                  className="bg-amber-500 text-slate-900 p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Monitor size={20} />
@@ -859,7 +859,7 @@ const AppMobile: React.FC = () => {
                 </button>
                 <button 
                   onClick={() => setActiveTab('RESOURCES')}
-                  className="bg-[#FBBF24] text-[#0F172A] p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
+                  className="bg-yellow-500 text-slate-900 p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Coffee size={20} />
