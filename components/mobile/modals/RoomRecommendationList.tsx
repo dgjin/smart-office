@@ -7,7 +7,7 @@ import {
   getRecommendations,
   getRecommendationConfig,
   createRecommendationRequest
-} from '../../services/recommendationService';
+} from '../../../services/recommendationService';
 
 interface RoomRecommendationListProps {
   userId: string;
