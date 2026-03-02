@@ -318,6 +318,9 @@ const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprov
   const darkRejectBtn = isFinanceTheme ? 'border-slate-500 text-slate-400' : 'border border-gray-200 text-gray-500';
   const darkApproveBtn = isFinanceTheme ? 'bg-violet-500' : `bg-${theme}-600`;
   
+  const currentNode = workflow[booking.currentNodeIndex];
+  const isLastNode = booking.currentNodeIndex === workflow.length - 1;
+  
   return (
     <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
       <div className="flex items-start space-x-3 mb-3">
@@ -329,9 +332,52 @@ const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprov
           <p className={`text-[10px] ${darkSubtext} mt-0.5`}>{booking.startTime.replace('T', ' ')} 至 {booking.endTime.replace('T', ' ')}</p>
         </div>
       </div>
+      
+      {workflow.length > 0 && (
+        <div className={`mb-3 p-2 rounded-lg ${isFinanceTheme ? 'bg-slate-700' : 'bg-gray-50'}`}>
+          <div className="flex items-center justify-between mb-1">
+            <span className={`text-[10px] ${darkSubtext}`}>
+              审批进度：第 {booking.currentNodeIndex + 1} / {workflow.length} 级
+            </span>
+            <span className={`text-[10px] font-bold ${isFinanceTheme ? 'text-amber-400' : `text-${theme}-600`}`}>
+              {currentNode?.name || '待审批'}
+            </span>
+          </div>
+          <div className="flex items-center space-x-1">
+            {workflow.map((node: any, idx: number) => (
+              <div key={idx} className="flex-1 flex items-center">
+                <div className={`flex-1 h-1.5 rounded-full ${
+                  idx < booking.currentNodeIndex 
+                    ? (isFinanceTheme ? 'bg-emerald-500' : 'bg-green-500')
+                    : idx === booking.currentNodeIndex
+                      ? (isFinanceTheme ? 'bg-amber-500' : `bg-${theme}-500`)
+                      : (isFinanceTheme ? 'bg-slate-600' : 'bg-gray-200')
+                }`} />
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
+      {booking.approvalHistory && booking.approvalHistory.length > 0 && (
+        <div className={`mb-3 text-[10px] ${darkSubtext}`}>
+          <p className="mb-1">审批记录：</p>
+          <div className="space-y-1">
+            {booking.approvalHistory.map((history: any, idx: number) => (
+              <div key={idx} className="flex items-center space-x-2">
+                <span className="text-green-500">✓</span>
+                <span>{history.nodeName} - {history.approverName}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      
       <div className="flex space-x-2">
         <button onClick={() => onReject('不符合规定')} className={`flex-1 py-2.5 border ${darkRejectBtn} rounded-xl font-bold text-xs active:scale-[0.98] transition-transform`}>驳回</button>
-        <button onClick={onApprove} className={`flex-1 py-2.5 ${darkApproveBtn} text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>通过</button>
+        <button onClick={onApprove} className={`flex-1 py-2.5 ${darkApproveBtn} text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
+          {isLastNode ? '最终通过' : '通过'}
+        </button>
       </div>
     </div>
   );
