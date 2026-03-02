@@ -1,3 +1,4 @@
 // Modals export
-export { BookingFormModal } from './BookingFormModal';
+export { RoomBookingFormModal } from './RoomBookingFormModal';
+export { DeskBookingFormModal } from './DeskBookingFormModal';
 export { RoomRecommendationList } from './RoomRecommendationList';

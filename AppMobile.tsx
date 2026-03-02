@@ -48,7 +48,8 @@ import ProfileView from './components/mobile/views/ProfileView';
 import ProfileEditView from './components/mobile/views/ProfileEditView';
 import MeetingServiceView from './components/mobile/views/MeetingServiceView';
 import {
-  BookingFormModal,
+  RoomBookingFormModal,
+  DeskBookingFormModal,
   RoomRecommendationList,
 } from './components/mobile/modals';
 
@@ -1183,13 +1184,23 @@ const AppMobile: React.FC = () => {
       )}
 
       {showBookingModal && selectedResource && (
-        <BookingFormModal
-          resource={selectedResource}
-          bookings={bookings}
-          theme={theme}
-          onClose={() => setShowBookingModal(false)}
-          onConfirm={handleBooking}
-        />
+        selectedResource.type === 'DESK' ? (
+          <DeskBookingFormModal
+            resource={selectedResource}
+            bookings={bookings}
+            theme={theme}
+            onClose={() => setShowBookingModal(false)}
+            onConfirm={handleBooking}
+          />
+        ) : (
+          <RoomBookingFormModal
+            resource={selectedResource}
+            bookings={bookings}
+            theme={theme}
+            onClose={() => setShowBookingModal(false)}
+            onConfirm={handleBooking}
+          />
+        )
       )}
 
       {showRecommendation && currentUser && (
