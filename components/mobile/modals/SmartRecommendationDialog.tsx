@@ -180,9 +180,18 @@ ${userPrompt}
           const parsed = JSON.parse(jsonMatch[0]);
           analysis = parsed.analysis || responseText;
           
-          if (parsed.recommendations) {
+          if (parsed.recommendations && Array.isArray(parsed.recommendations)) {
             recommendations = parsed.recommendations.map((rec: any) => {
-              const resource = resources.find(r => r.id === rec.resourceId);
+              let resource = resources.find(r => r.id === rec.resourceId);
+              
+              if (!resource && rec.resourceId) {
+                const idLower = rec.resourceId.toLowerCase();
+                resource = resources.find(r => 
+                  r.id.toLowerCase().includes(idLower) || 
+                  r.name.toLowerCase().includes(idLower)
+                );
+              }
+              
               if (resource) {
                 return {
                   resource,
@@ -198,15 +207,17 @@ ${userPrompt}
         console.error('Failed to parse AI response:', e);
       }
 
-      if (recommendations.length === 0) {
-        const roomResources = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE').slice(0, 3);
-        const topResources = roomResources
-          .map(r => ({
+      if (recommendations.length === 0 || !recommendations[0]) {
+        const roomResources = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE');
+        
+        if (roomResources.length > 0) {
+          const topResources = roomResources.slice(0, 3).map(r => ({
             resource: r,
-            reason: `${r.name} 当前可用，适合会议使用`,
-            matchScore: 70
+            reason: `${r.name} 位于${r.location}，可容纳${r.capacity}人，设施：${r.features?.join('、') || '无'}`,
+            matchScore: 75
           }));
-        recommendations = topResources;
+          recommendations = topResources;
+        }
       }
 
       const assistantMessage: ChatMessage = {
