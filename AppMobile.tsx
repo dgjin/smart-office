@@ -11,7 +11,7 @@ import {
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff,
   Home, ClipboardList, Settings, User, Wifi, WifiOff, ArrowUp, ArrowDown,
-  Sparkles
+  Sparkles, Palette
 } from 'lucide-react';
 import { User as UserType, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants.tsx';
@@ -380,6 +380,7 @@ const AppMobile: React.FC = () => {
   const [activeTab, setActiveTab] = useState('DASHBOARD');
   const [currentUser, setCurrentUser] = useState<UserType | null>(null);
   const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'finance');
+  const [showThemeSelector, setShowThemeSelector] = useState(false);
   
   const { hasPermission } = usePermissions(currentUser?.role || []);
   
@@ -836,6 +837,13 @@ const AppMobile: React.FC = () => {
                   <span className="text-lg font-black italic">SmartOffice</span>
                 </div>
                 <div className="flex items-center space-x-3">
+                  <button 
+                    onClick={() => setShowThemeSelector(!showThemeSelector)} 
+                    className="p-2 bg-white/10 rounded-full"
+                    title="切换风格"
+                  >
+                    <Palette size={18} />
+                  </button>
                   <button onClick={() => setShowQRScanner(true)} className="p-2 bg-white/10 rounded-full">
                     <QrCode size={18} />
                   </button>
@@ -1214,6 +1222,43 @@ const AppMobile: React.FC = () => {
           onClose={() => setShowQRScanner(false)}
           onScanSuccess={(msg: string) => addNotification("签到成功", msg, "SUCCESS")}
         />
+      )}
+
+      {showThemeSelector && (
+        <div className="fixed inset-0 z-[250] bg-black/50 flex items-center justify-center p-4" onClick={() => setShowThemeSelector(false)}>
+          <div 
+            className={`${themeColors.cardBg} rounded-2xl p-4 w-full max-w-sm`}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className={`font-bold ${themeColors.text}`}>选择风格</h3>
+              <button onClick={() => setShowThemeSelector(false)} className={themeColors.mutedText}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              {THEMES.map(t => (
+                <button
+                  key={t.id}
+                  onClick={() => {
+                    setTheme(t.id);
+                    setShowThemeSelector(false);
+                  }}
+                  className={`p-3 rounded-xl border-2 flex items-center space-x-2 transition-all ${
+                    theme === t.id 
+                      ? `border-${t.id === 'finance' ? 'amber' : t.id}-500 bg-${t.id === 'finance' ? 'amber' : t.id}-500/10` 
+                      : `${themeColors.border} ${themeColors.mutedText} hover:${themeColors.text}`
+                  }`}
+                >
+                  <div className={`w-6 h-6 rounded-full ${t.color}`} />
+                  <span className={`font-bold ${theme === t.id ? (t.id === 'finance' ? 'text-amber-500' : `text-${t.id}-500`) : themeColors.text}`}>
+                    {t.name}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
       )}
 
       {showBookingModal && selectedResource && (
