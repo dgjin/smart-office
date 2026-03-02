@@ -35,6 +35,7 @@ import {
   DepartmentManagement,
   WorkflowManagement,
   ResourceManagement,
+  RecommendationConfigView,
 } from './components/mobile/management';
 import {
   MobileAdminPage,
@@ -48,6 +49,7 @@ import ProfileEditView from './components/mobile/views/ProfileEditView';
 import MeetingServiceView from './components/mobile/views/MeetingServiceView';
 import {
   BookingFormModal,
+  RoomRecommendationList,
 } from './components/mobile/modals';
 
 const STORAGE_KEY = 'SMART_OFFICE_DATA_V35';
@@ -394,6 +396,15 @@ const AppMobile: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [showRecommendation, setShowRecommendation] = useState(false);
+  const [recommendationParams, setRecommendationParams] = useState<{
+    resourceType: 'ROOM' | 'DESK';
+    date: string;
+    startTime: string;
+    endTime: string;
+    participants: number;
+    requiredFeatures: string[];
+  } | null>(null);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [expandedBookingIds, setExpandedBookingIds] = useState<Set<string>>(new Set());
   const [bookingConflict, setBookingConflict] = useState<any>(null);
@@ -928,7 +939,17 @@ const AppMobile: React.FC = () => {
                   key={resource.id}
                   resource={resource}
                   theme={theme}
-                  onBook={(r: Resource) => { setSelectedResource(r); setShowBookingModal(true); }}
+                  onBook={(r: Resource) => {
+                    setRecommendationParams({
+                      resourceType: r.type,
+                      date: new Date().toISOString().split('T')[0],
+                      startTime: '',
+                      endTime: '',
+                      participants: r.capacity || 1,
+                      requiredFeatures: r.features || [],
+                    });
+                    setShowRecommendation(true);
+                  }}
                   onViewCalendar={() => {}}
                 />
               ))}
@@ -1080,6 +1101,15 @@ const AppMobile: React.FC = () => {
           ) : <NoPermissionView theme={theme} />
         )}
 
+        {activeTab === 'RECOMMENDATION_CONFIG' && (
+          hasPermission(PERMISSIONS.CONFIGURE_RECOMMENDATION) ? (
+            <RecommendationConfigView
+              theme={theme}
+              onBack={() => setActiveTab('PROFILE')}
+            />
+          ) : <NoPermissionView theme={theme} />
+        )}
+
         {activeTab === 'WORKFLOW_CONFIG' && (
           hasPermission(PERMISSIONS.CONFIG_WORKFLOW) ? (
             <WorkflowManagement
@@ -1114,13 +1144,6 @@ const AppMobile: React.FC = () => {
             onLogout={() => setCurrentUser(null)}
             onViewChange={setActiveTab}
             onThemeChange={setTheme}
-            onUpdateUser={async (userId: string, updates: any) => {
-              await updateUser(userId, updates);
-              setUsers(users.map(u => u.id === userId ? { ...u, ...updates } : u));
-              if (currentUser?.id === userId) {
-                setCurrentUser({ ...currentUser, ...updates });
-              }
-            }}
           />
         )}
 
@@ -1174,6 +1197,25 @@ const AppMobile: React.FC = () => {
           theme={theme}
           onClose={() => setShowBookingModal(false)}
           onConfirm={handleBooking}
+        />
+      )}
+
+      {showRecommendation && recommendationParams && currentUser && (
+        <RoomRecommendationList
+          userId={currentUser.id}
+          resourceType={recommendationParams.resourceType}
+          startTime={recommendationParams.startTime}
+          endTime={recommendationParams.endTime}
+          participants={recommendationParams.participants}
+          requiredFeatures={recommendationParams.requiredFeatures}
+          resources={resources}
+          userBookings={bookings}
+          theme={theme}
+          onSelect={(resource) => {
+            setSelectedResource(resource);
+            setShowBookingModal(true);
+          }}
+          onClose={() => setShowRecommendation(false)}
         />
       )}
 

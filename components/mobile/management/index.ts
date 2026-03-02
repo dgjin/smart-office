@@ -5,3 +5,4 @@ export { DepartmentManagement } from './DepartmentManagement';
 export { WorkflowManagement } from './WorkflowManagement';
 export { ResourceManagement } from './ResourceManagement';
 export { DataCenter } from './DataCenter';
+export { RecommendationConfigView } from './RecommendationConfigView';
