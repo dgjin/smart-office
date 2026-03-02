@@ -10,7 +10,8 @@ import {
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff,
-  Home, ClipboardList, Settings, User, Wifi, WifiOff, ArrowUp, ArrowDown
+  Home, ClipboardList, Settings, User, Wifi, WifiOff, ArrowUp, ArrowDown,
+  Sparkles
 } from 'lucide-react';
 import { User as UserType, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification } from './types';
 import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants.tsx';
@@ -857,16 +858,27 @@ const AppMobile: React.FC = () => {
 
             {/* Quick Actions */}
             <div className="px-4 mt-4">
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-3 gap-3">
+                <button 
+                  onClick={() => {
+                    setShowRecommendation(true);
+                  }}
+                  className="bg-violet-500 text-white p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <Sparkles size={20} />
+                  </div>
+                  <p className="font-bold text-sm">智能推荐</p>
+                </button>
                 <button 
                   onClick={() => setActiveTab('MEETING_ROOMS')}
                   className="bg-amber-500 text-slate-900 p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Monitor size={20} />
-                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{stats.availableRooms} 可用</span>
+                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{stats.availableRooms}</span>
                   </div>
-                  <p className="font-bold text-sm">预订会议室</p>
+                  <p className="font-bold text-sm">会议室</p>
                 </button>
                 <button 
                   onClick={() => setActiveTab('WORKSTATIONS')}
@@ -874,9 +886,9 @@ const AppMobile: React.FC = () => {
                 >
                   <div className="flex items-center justify-between mb-2">
                     <Coffee size={20} />
-                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{stats.availableDesks} 可用</span>
+                    <span className="text-xs bg-white/20 px-2 py-0.5 rounded-full">{stats.availableDesks}</span>
                   </div>
-                  <p className="font-bold text-sm">申请工位</p>
+                  <p className="font-bold text-sm">工位</p>
                 </button>
               </div>
             </div>
