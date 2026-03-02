@@ -325,9 +325,9 @@ export const RoomBookingFormModal: React.FC<RoomBookingFormModalProps> = ({
             </div>
             
             <div className="flex items-center space-x-3 mb-3 text-[10px]">
-              <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-slate-600' : 'bg-gray-100'}`}></span>可选</span>
-              <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-red-900/50' : 'bg-rose-400'}`}></span>已占用</span>
-              <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-amber-500' : `bg-${theme}-600`}`}></span>已选</span>
+              <span className={`flex items-center ${isFinanceTheme ? 'text-gray-400' : 'text-gray-600'}`}><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-slate-600' : 'bg-gray-100'}`}></span>可选</span>
+              <span className={`flex items-center ${isFinanceTheme ? 'text-gray-400' : 'text-gray-600'}`}><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-red-900/50' : 'bg-rose-400'}`}></span>已占用</span>
+              <span className={`flex items-center ${isFinanceTheme ? 'text-gray-400' : 'text-gray-600'}`}><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-amber-500' : `bg-${theme}-600`}`}></span>已选</span>
             </div>
             
             <div className="grid grid-cols-4 gap-2">

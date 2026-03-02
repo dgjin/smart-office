@@ -201,6 +201,7 @@ export const AuthView: React.FC<AuthViewProps> = ({ onLogin, theme, isLoading })
               <p className={`text-xs ${isFinanceTheme ? 'text-[#F59E0B]' : 'text-gray-500'} font-semibold mb-1`}>测试账号:</p>
               <div className="space-y-1 text-[9px]">
                 <p className={`${isFinanceTheme ? 'text-white' : 'text-gray-600'}`}>管理员: admin@company.com / 123456</p>
+                <p className={`${isFinanceTheme ? 'text-white' : 'text-gray-600'}`}>审批人: approver@company.com / 123456</p>
                 <p className={`${isFinanceTheme ? 'text-white' : 'text-gray-600'}`}>员工: user@company.com / 123456</p>
               </div>
             </div>

@@ -149,29 +149,34 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
     return filtered;
   };
 
+  // 获取指定小时段的预订 - 使用与 getBookingsForDate 完全相同的过滤逻辑
   const getBookingForHour = (date: Date, hour: number, roomId: string) => {
-    const dateStr = getLocalDateStr(date);
-    return bookings.find(b => {
+    // 首先使用 getBookingsForDate 获取今日该会议室的所有预订（保证逻辑一致）
+    const todayBookings = getBookingsForDate(date, roomId);
+    
+    // 然后过滤出覆盖当前小时的预订
+    const matchingBookings = todayBookings.filter(b => {
       try {
-        if (!b || typeof b !== 'object') return false;
-        if (!b.startTime || !b.endTime) return false;
         const start = new Date(b.startTime);
         const end = new Date(b.endTime);
-        if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
-        const bookingDate = getLocalDateStr(start);
-        const status = b.status || '';
-        // 使用本地时间进行比较
-        const startHour = start.getHours();
-        const endHour = end.getHours();
-        return bookingDate === dateStr && 
-               b.resourceId === roomId && 
-               hour >= startHour && 
-               hour < endHour &&
-               !['REJECTED', 'CANCELLED'].includes(status);
+        // 创建当前小时的开始和结束时间点进行精确比较
+        const hourStart = new Date(date);
+        hourStart.setHours(hour, 0, 0, 0);
+        const hourEnd = new Date(date);
+        hourEnd.setHours(hour + 1, 0, 0, 0);
+        // 判断该预订是否与当前小时有重叠
+        // 预订在当前小时内有重叠的条件：预订开始时间 < 小时结束时间 && 预订结束时间 > 小时开始时间
+        const matchHour = start.getTime() < hourEnd.getTime() && end.getTime() > hourStart.getTime();
+        return matchHour;
       } catch (e) {
         return false;
       }
     });
+    
+    // 按开始时间排序，返回第一个（早的优先）
+    return matchingBookings.sort((a, b) => 
+      new Date(a.startTime).getTime() - new Date(b.startTime).getTime()
+    )[0] || null;
   };
 
   const getTodayStats = useMemo(() => {
@@ -190,16 +195,17 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
       }
     }, 0);
     
-    const currentUTCHour = currentTime.getUTCHours();
     const ongoingMeetings = todayBookings.filter(b => {
       try {
         if (!b || !b.startTime || !b.endTime) return false;
         const start = new Date(b.startTime);
         const end = new Date(b.endTime);
         if (isNaN(start.getTime()) || isNaN(end.getTime())) return false;
-        const startHour = start.getUTCHours();
-        const endHour = end.getUTCHours();
-        return currentUTCHour >= startHour && currentUTCHour < endHour;
+        // 使用完整的时间戳进行比较，而不是只比较小时
+        const currentTimeMs = currentTime.getTime();
+        const startMs = start.getTime();
+        const endMs = end.getTime();
+        return currentTimeMs >= startMs && currentTimeMs < endMs;
       } catch (e) {
         return false;
       }
@@ -302,9 +308,11 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
   };
 
   const formatTime = (date: Date) => {
+    // 使用本地时间格式化，与时间格显示保持一致
     return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
   };
 
+  // 使用本地时间，与时间格显示保持一致
   const currentHour = currentTime.getHours();
   const currentMinute = currentTime.getMinutes();
 
@@ -464,8 +472,8 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                         <div 
                           key={hour} 
                           className={`flex-1 border-r border-slate-600/30 relative min-w-[28px] ${
-                            booking ? getStatusColor(booking.status, completed, ongoing, upcoming) : ''
-                          } ${isCurrentHour ? 'bg-slate-600/30' : ''}`}
+                            booking ? getStatusColor(booking.status, completed, ongoing, upcoming) : isCurrentHour ? 'bg-slate-600/30' : ''
+                          }`}
                           title={booking ? `${booking.purpose} (${formatTime(new Date(booking.startTime))}-${formatTime(new Date(booking.endTime))})` : ''}
                         >
                           {booking && isFirstHourOfBooking && (
@@ -485,22 +493,26 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
           </div>
 
           {/* Legend */}
-          <div className="flex items-center space-x-3 mt-2 text-[10px]">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-2 mt-2 text-[10px]">
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-green-600 rounded" />
-              <span className="text-slate-400">进行中</span>
+              <span className="text-slate-400">进行中(已批准)</span>
             </div>
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-green-400 rounded" />
-              <span className="text-slate-400">即将开始</span>
+              <span className="text-slate-400">即将开始(已批准)</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-2 h-2 bg-yellow-600 rounded" />
+              <span className="text-slate-400">进行中(待审批)</span>
+            </div>
+            <div className="flex items-center space-x-1">
+              <div className="w-2 h-2 bg-yellow-400 rounded" />
+              <span className="text-slate-400">即将开始(待审批)</span>
             </div>
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-slate-500 rounded" />
               <span className="text-slate-400">已结束</span>
-            </div>
-            <div className="flex items-center space-x-1">
-              <div className="w-2 h-2 bg-yellow-500 rounded" />
-              <span className="text-slate-400">待审批</span>
             </div>
             <div className="flex items-center space-x-1">
               <div className="w-2 h-2 bg-slate-700 rounded" />
@@ -621,11 +633,9 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                   filteredBookings = filteredBookings.filter(b => {
                     const start = new Date(b.startTime);
                     const end = new Date(b.endTime);
-                    // 使用UTC时间进行比较，确保时区一致性
-                    const startHour = start.getUTCHours();
-                    const endHour = end.getUTCHours();
-                    const currentUTCHour = new Date().getUTCHours();
-                    return currentUTCHour >= startHour && currentUTCHour < endHour;
+                    const now = new Date().getTime();
+                    // 使用完整时间戳比较，确保跨小时会议也能正确识别
+                    return now >= start.getTime() && now < end.getTime();
                   });
                 } else {
                   filteredBookings = filteredBookings.filter(b => b.status === filterStatus);
@@ -667,7 +677,9 @@ export const MeetingRoomMonitor: React.FC<MeetingRoomMonitorProps> = ({ bookings
                     const room = resources.find(r => r.id === booking.resourceId);
                     const start = new Date(booking.startTime);
                     const end = new Date(booking.endTime);
-                    const isOngoing = currentHour >= start.getHours() && currentHour < end.getHours();
+                    // 使用完整时间戳比较，确保跨小时预订也能正确识别
+                    const now = currentTime.getTime();
+                    const isOngoing = now >= start.getTime() && now < end.getTime();
                     const isExpanded = expandedBooking === booking.id;
                     
                     return (

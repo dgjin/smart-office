@@ -22,6 +22,7 @@ import {
   createBooking, updateBooking, createResource, updateResource, deleteResource,
   createUser, updateUser, deleteUser, createRole, updateRole, deleteRole,
   createDepartment, updateDepartment, deleteDepartment, updateWorkflow as updateWorkflowDB,
+  approveBooking,
   batchImportUsers, batchImportResources, batchImportDepartments,
   exportAllData, restoreAllData, subscribeToBookings, subscribeToResources,
   testConnection,
@@ -709,11 +710,24 @@ const AppMobile: React.FC = () => {
       };
       
       const timeInfo = `${formatDate(startTime)} - ${formatDate(endTime)}`;
-      const statusInfo = workflow.length === 0 ? '已自动通过' : `需经 ${workflow.length} 级审批`;
+      
+      // 构建审批信息
+      let approvalInfo = '';
+      if (workflow.length === 0) {
+        approvalInfo = '✅ 已自动通过';
+      } else {
+        const firstNode = workflow[0];
+        const firstRole = roles.find(r => r.id === firstNode?.approverRole);
+        const approvers = users.filter(u => u.role?.includes(firstNode?.approverRole));
+        const approverNames = approvers.length > 0 
+          ? approvers.map(u => u.name).join('、')
+          : '暂无指定审批人';
+        approvalInfo = `👉 下一环节: ${firstNode?.name || '未知'} (${firstRole?.name || '未知角色'})\n👤 审批人: ${approverNames}`;
+      }
       
       addNotification(
         "🎉 预约申请已提交", 
-        `📍 ${resource.name}\n🕐 ${timeInfo}\n📋 ${purpose}\n✨ ${statusInfo}`, 
+        `📍 ${resource.name}\n🕐 ${timeInfo}\n📋 ${purpose}\n${approvalInfo}`, 
         "SUCCESS"
       );
       setSaveStatus('saved');
@@ -743,17 +757,14 @@ const AppMobile: React.FC = () => {
   const handleApprove = async (booking: Booking) => {
     try {
       setSaveStatus('saving');
-      const isLast = booking.currentNodeIndex === workflow.length - 1;
-      const updatedBooking = await updateBooking(booking.id, {
-        currentNodeIndex: isLast ? booking.currentNodeIndex : booking.currentNodeIndex + 1,
-        status: isLast ? 'APPROVED' : 'PENDING',
-        approvalHistory: [...booking.approvalHistory, { 
-          nodeName: workflow[booking.currentNodeIndex].name, 
-          approverName: currentUser?.name || '未知', 
-          status: 'APPROVED', 
-          timestamp: new Date().toISOString() 
-        }]
-      });
+      // 使用服务端原子接口进行审批，避免前端越权与并发问题
+      const updatedBooking = await approveBooking(
+        booking.id,
+        currentUser?.id || 'unknown',
+        currentUser?.name || '未知',
+        booking.currentNodeIndex,
+        'APPROVED'
+      );
       setBookings(prev => prev.map(b => b.id === booking.id ? updatedBooking : b));
       
       const resource = resources.find(r => r.id === booking.resourceId);
@@ -762,6 +773,8 @@ const AppMobile: React.FC = () => {
         const d = new Date(dateStr);
         return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       };
+      
+      const isLast = booking.currentNodeIndex === workflow.length - 1;
       
       if (isLast) {
         addNotification(
@@ -773,17 +786,25 @@ const AppMobile: React.FC = () => {
         const nextNode = workflow[booking.currentNodeIndex + 1];
         const nextRole = roles.find(r => r.id === nextNode?.approverRole);
         const nextApprovers = users.filter(u => u.role?.includes(nextNode?.approverRole));
+        const approverNames = nextApprovers.length > 0
+          ? nextApprovers.map(u => u.name).join('、')
+          : '暂无指定审批人';
         
         addNotification(
           "✅ 预审通过", 
-          `已通过 ${applicant?.name || '用户'} 的预约申请\n📍 ${resource?.name || '资源'}\n🕐 ${formatDate(booking.startTime)}\n👉 下一审批: ${nextNode?.name || '未知'} (${nextRole?.name || '未知角色'})`, 
+          `已通过 ${applicant?.name || '用户'} 的预约申请\n📍 ${resource?.name || '资源'}\n🕐 ${formatDate(booking.startTime)}\n👉 下一环节: ${nextNode?.name || '未知'} (${nextRole?.name || '未知角色'})\n👤 审批人: ${approverNames}`, 
           "SUCCESS"
         );
       }
       setSaveStatus('saved');
     } catch (error) {
       console.error('审批失败:', error);
-      addNotification("❌ 审批失败", "网络错误，请稍后重试", "WARNING");
+      const msg = (error as any)?.message || '';
+      if (msg.includes('CONFLICT')) {
+        addNotification('操作失败', '审批已被其他人处理或状态已变更', 'WARNING');
+      } else {
+        addNotification('❌ 审批失败', '网络错误，请稍后重试', 'WARNING');
+      }
       setSaveStatus('error');
     }
   };
@@ -791,16 +812,14 @@ const AppMobile: React.FC = () => {
   const handleReject = async (booking: Booking, comment: string) => {
     try {
       setSaveStatus('saving');
-      const updatedBooking = await updateBooking(booking.id, {
-        status: 'REJECTED',
-        approvalHistory: [...booking.approvalHistory, { 
-          nodeName: workflow[booking.currentNodeIndex].name, 
-          approverName: currentUser?.name || '未知', 
-          status: 'REJECTED', 
-          comment, 
-          timestamp: new Date().toISOString() 
-        }]
-      });
+      const updatedBooking = await approveBooking(
+        booking.id,
+        currentUser?.id || 'unknown',
+        currentUser?.name || '未知',
+        booking.currentNodeIndex,
+        'REJECTED',
+        comment,
+      );
       setBookings(prev => prev.map(b => b.id === booking.id ? updatedBooking : b));
       
       const resource = resources.find(r => r.id === booking.resourceId);

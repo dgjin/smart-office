@@ -332,7 +332,7 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
               )}
             </div>
             
-            <div className="flex items-center space-x-3 mb-3 text-[10px]">
+            <div className={`flex items-center space-x-3 mb-3 text-[10px] ${isFinanceTheme ? 'text-gray-400' : 'text-gray-600'}`}>
               <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-[#334155]' : 'bg-gray-100'}`}></span>可选</span>
               <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-red-900/50' : 'bg-rose-400'}`}></span>已占用</span>
               <span className="flex items-center"><span className={`w-3 h-3 rounded mr-1 ${isFinanceTheme ? 'bg-gray-600' : 'bg-gray-400'}`}></span>已过期</span>

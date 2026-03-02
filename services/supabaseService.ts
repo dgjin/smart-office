@@ -17,6 +17,7 @@ const TABLES = {
   ROLES: 'smartoffice_roles',
   DEPARTMENTS: 'smartoffice_departments',
   WORKFLOW: 'smartoffice_workflow',
+  AUDIT: 'smartoffice_approval_audit',
 } as const;
 
 // 创建 Supabase 客户端
@@ -28,6 +29,12 @@ export const supabase: SupabaseClient = createClient(SUPABASE_URL, SUPABASE_ANON
   realtime: {
     params: {
       eventsPerSecond: 10,
+    },
+  },
+  global: {
+    headers: {
+      'Accept': 'application/json',
+      'Content-Type': 'application/json',
     },
   },
 });
@@ -48,37 +55,8 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
-// ==================== 用户相关操作 ====================
 
-export async function getUsers(): Promise<User[]> {
-  const { data, error } = await supabase
-    .from(TABLES.USERS)
-    .select('*')
-    .order('created_at', { ascending: false });
-  
-  if (error) {
-    console.error('获取用户失败:', error);
-    throw error;
-  }
-  
-  return data?.map(transformUserFromDB) || [];
-}
-
-export async function getUserById(id: string): Promise<User | null> {
-  const { data, error } = await supabase
-    .from(TABLES.USERS)
-    .select('*')
-    .eq('id', id)
-    .single();
-  
-  if (error) {
-    console.error('获取用户失败:', error);
-    return null;
-  }
-  
-  return data ? transformUserFromDB(data) : null;
-}
-
+// 根据邮箱获取用户
 export async function getUserByEmail(email: string): Promise<User | null> {
   const { data, error } = await supabase
     .from(TABLES.USERS)
@@ -87,73 +65,106 @@ export async function getUserByEmail(email: string): Promise<User | null> {
     .single();
   
   if (error) {
+    if (error.code === 'PGRST116') {
+      // 找不到记录
+      return null;
+    }
     console.error('获取用户失败:', error);
-    return null;
+    throw error;
   }
   
   return data ? transformUserFromDB(data) : null;
 }
 
+// 密码加密函数 (SHA-256)
+async function hashPassword(password: string): Promise<string> {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// 邮箱和密码登录
 export async function loginWithEmailAndPassword(email: string, password: string): Promise<User | null> {
   try {
-    const user = await getUserByEmail(email);
-    if (!user) {
-      // 如果数据库中没有找到用户，使用默认用户数据
-      if (email === 'admin@company.com' && password === '123456') {
-        return {
-          id: 'admin-1',
-          name: '系统管理员',
-          email: 'admin@company.com',
-          role: ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'],
-          department: '信息技术部'
-        };
-      }
-      if (email === 'user@company.com' && password === '123456') {
-        return {
-          id: 'user-1',
-          name: '测试员工',
-          email: 'user@company.com',
-          role: ['EMPLOYEE'],
-          department: '行政部'
-        };
-      }
+    console.log('登录尝试:', email);
+    
+    // 先获取用户信息（包括密码哈希）
+    const { data: userData, error: userError } = await supabase
+      .from(TABLES.USERS)
+      .select('*')
+      .eq('email', email)
+      .single();
+    
+    if (userError || !userData) {
+      console.log('用户不存在:', email);
       return null;
     }
     
-    // 这里应该使用密码哈希验证，暂时使用简单的字符串比较
-    // 同时支持明文密码和哈希密码的验证
-    if (user.password && user.password !== password && user.password.length > 20) {
-      // 如果密码长度大于20，可能是哈希过的密码
-      // 这里简化处理，直接返回用户
-      // 在实际生产环境中，应该使用 bcrypt 等库进行密码哈希验证
-    } else if (user.password && user.password !== password) {
-      return null;
+    console.log('找到用户:', userData.name);
+    console.log('数库密码:', userData.password);
+    console.log('密码长度:', userData.password?.length);
+    
+    const dbPassword = userData.password?.trim();
+    let isValid = false;
+    
+    // 方式1: 如果是 bcrypt 格式（以 $2a$, $2b$, $2y$ 开头）
+    if (dbPassword?.startsWith('$2')) {
+      console.log('检测到 bcrypt 格式，尝试验证...');
+      try {
+        const { data: verifyResult } = await supabase
+          .rpc('smartoffice_verify_password', {
+            p_password: password,
+            p_hash: dbPassword
+          });
+        console.log('bcrypt 验证结果:', verifyResult);
+        isValid = verifyResult === true;
+      } catch (e) {
+        console.log('bcrypt 验证失败:', e);
+      }
     }
     
-    return user;
+    // 方式2: 如果是 SHA-256 格式（64位十六进制）
+    if (!isValid && dbPassword?.length === 64) {
+      console.log('检测到 SHA-256 格式，尝试验证...');
+      const hashedPassword = await hashPassword(password);
+      console.log('计算的 SHA-256:', hashedPassword);
+      isValid = dbPassword === hashedPassword;
+      console.log('SHA-256 验证结果:', isValid);
+    }
+    
+    // 方式3: 明文密码（不推荐，仅用于迁移）
+    if (!isValid) {
+      console.log('尝试明文比较...');
+      isValid = dbPassword === password;
+      console.log('明文验证结果:', isValid);
+    }
+    
+    if (isValid) {
+      return transformUserFromDB(userData);
+    }
+    
+    return null;
   } catch (error) {
     console.error('登录失败:', error);
-    // 如果连接数据库失败，使用默认用户数据
-    if (email === 'admin@company.com' && password === '123456') {
-      return {
-        id: 'admin-1',
-        name: '系统管理员',
-        email: 'admin@company.com',
-        role: ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'],
-        department: '信息技术部'
-      };
-    }
-    if (email === 'user@company.com' && password === '123456') {
-      return {
-        id: 'user-1',
-        name: '测试员工',
-        email: 'user@company.com',
-        role: ['EMPLOYEE'],
-        department: '行政部'
-      };
-    }
     return null;
   }
+}
+
+// 获取所有用户
+export async function getUsers(): Promise<User[]> {
+  const { data, error } = await supabase
+    .from(TABLES.USERS)
+    .select('*')
+    .order('created_at', { ascending: false });
+  
+  if (error) {
+    console.error('获取用户列表失败:', error);
+    throw error;
+  }
+  
+  return data?.map(transformUserFromDB) || [];
 }
 
 export async function createUserWithPassword(userData: Omit<User, 'id'>): Promise<User | null> {
@@ -515,33 +526,115 @@ export async function getWorkflow(): Promise<ApprovalNode[]> {
 }
 
 export async function updateWorkflow(nodes: ApprovalNode[]): Promise<void> {
-  // 先删除所有现有节点
-  const { error: deleteError } = await supabase
-    .from(TABLES.WORKFLOW)
-    .delete()
-    .neq('id', '');
-  
-  if (deleteError) {
-    console.error('清空工作流失败:', deleteError);
-    throw deleteError;
-  }
-  
-  // 插入新节点
+  // 使用 upsert（插入或更新），避免全表删除导致短暂不一致
   const dbNodes = nodes.map((node, index) => ({
     id: node.id,
     name: node.name,
     approver_role: node.approverRole,
     sort_order: index,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
   }));
-  
-  const { error: insertError } = await supabase
+
+  const { error } = await supabase
     .from(TABLES.WORKFLOW)
-    .insert(dbNodes);
-  
-  if (insertError) {
-    console.error('插入工作流节点失败:', insertError);
-    throw insertError;
+    .upsert(dbNodes, { onConflict: 'id' });
+
+  if (error) {
+    console.error('upsert 工作流节点失败:', error);
+    throw error;
   }
+}
+
+/**
+ * 在数据库层做原子审批操作：
+ * - 验证 booking 存在且 current_node_index 与预期一致（避免并发冲突）
+ * - 根据 decision 推进或置为已拒绝
+ * - 向独立审计表插入一条不可变记录
+ */
+export async function approveBooking(
+  bookingId: string,
+  approverId: string,
+  approverName: string,
+  expectedNodeIndex: number,
+  decision: 'APPROVED' | 'REJECTED',
+  comment?: string
+): Promise<Booking> {
+  // 读取当前 booking
+  const { data: dbBooking, error: fetchError } = await supabase
+    .from(TABLES.BOOKINGS)
+    .select('*')
+    .eq('id', bookingId)
+    .single();
+
+  if (fetchError) {
+    console.error('读取 booking 失败:', fetchError);
+    throw fetchError;
+  }
+  if (!dbBooking) throw new Error('BOOKING_NOT_FOUND');
+
+  const currentNodeIndex = dbBooking.current_node_index || 0;
+  if (currentNodeIndex !== expectedNodeIndex) {
+    throw new Error('CONFLICT: booking already processed');
+  }
+
+  // 获取工作流以判断是否为最后一级
+  const workflow = await getWorkflow();
+  const isLast = expectedNodeIndex === (workflow.length - 1);
+
+  const approvalRecord = {
+    nodeName: workflow[expectedNodeIndex]?.name || '未知',
+    approverName: approverName || '未知',
+    status: decision,
+    comment: comment || '',
+    timestamp: new Date().toISOString(),
+  };
+
+  const newApprovalHistory = Array.isArray(dbBooking.approval_history) ? [...dbBooking.approval_history, approvalRecord] : [approvalRecord];
+
+  const newCurrentNodeIndex = (decision === 'APPROVED' && !isLast) ? currentNodeIndex + 1 : currentNodeIndex;
+  const newStatus = decision === 'REJECTED' ? 'REJECTED' : (decision === 'APPROVED' && isLast ? 'APPROVED' : 'PENDING');
+
+  // 原子更新：只在 current_node_index 未被修改的情况下更新
+  const { data: updatedData, error: updateError } = await supabase
+    .from(TABLES.BOOKINGS)
+    .update({
+      current_node_index: newCurrentNodeIndex,
+      status: newStatus,
+      approval_history: newApprovalHistory,
+    })
+    .eq('id', bookingId)
+    .eq('current_node_index', currentNodeIndex)
+    .select()
+    .single();
+
+  if (updateError) {
+    console.error('审批更新失败:', updateError);
+    throw updateError;
+  }
+
+  if (!updatedData) {
+    // 未命中更新条件，视为并发冲突
+    throw new Error('CONFLICT: booking updated by other actor');
+  }
+
+  // 写入审计表（不可回滚的审计记录）
+  try {
+    await supabase.from(TABLES.AUDIT).insert([{
+      booking_id: bookingId,
+      node_index: expectedNodeIndex,
+      node_name: workflow[expectedNodeIndex]?.name || null,
+      approver_id: approverId,
+      approver_name: approverName,
+      status: decision,
+      comment: comment || null,
+    }]);
+  } catch (auditErr) {
+    // 审计写入失败不应阻止主流程成功，但需要日志记录
+    console.error('写入审批审计失败:', auditErr);
+  }
+
+  return transformBookingFromDB(updatedData);
 }
 
 // ==================== 数据转换函数 ====================

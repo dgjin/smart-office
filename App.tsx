@@ -1591,7 +1591,19 @@ const App: React.FC = () => {
     setBookings(prev => [newBooking, ...prev]);
     setShowBookingModal(false);
     setCalendarDateForBooking(null);
-    addNotification("预约申请已提交", `资源 ${resource.name} 的预约已进入审批流程。`, "SUCCESS");
+    
+    // 构建审批信息
+    let approvalMsg = `资源 ${resource.name} 的预约已进入审批流程。`;
+    if (workflow.length > 0) {
+      const firstNode = workflow[0];
+      const firstRole = roles.find(r => r.id === firstNode?.approverRole);
+      const approvers = users.filter(u => u.role?.includes(firstNode?.approverRole));
+      const approverNames = approvers.length > 0 
+        ? approvers.map(u => u.name).join('、')
+        : '暂无指定审批人';
+      approvalMsg = `下一环节: ${firstNode?.name || '未知'} (${firstRole?.name || '未知角色'})\n审批人: ${approverNames}`;
+    }
+    addNotification("🎉 预约申请已提交", approvalMsg, "SUCCESS");
   };
 
   const handleCancelBooking = (id: string) => {
@@ -1605,7 +1617,18 @@ const App: React.FC = () => {
   const handleApprove = (booking: Booking) => {
     const isLast = booking.currentNodeIndex === workflow.length - 1;
     setBookings(prev => prev.map(b => b.id === booking.id ? { ...b, currentNodeIndex: isLast ? b.currentNodeIndex : b.currentNodeIndex + 1, status: isLast ? 'APPROVED' : 'PENDING', approvalHistory: [...b.approvalHistory, { nodeName: workflow[b.currentNodeIndex].name, approverName: currentUser?.name || '未知', status: 'APPROVED', timestamp: new Date().toISOString() }] } : b));
-    addNotification("审批完成", isLast ? "申请已通过最终核准。" : "申请已通过本环节预审。", "SUCCESS");
+    
+    if (isLast) {
+      addNotification("✅ 审批完成", "申请已通过最终核准。", "SUCCESS");
+    } else {
+      const nextNode = workflow[booking.currentNodeIndex + 1];
+      const nextRole = roles.find(r => r.id === nextNode?.approverRole);
+      const nextApprovers = users.filter(u => u.role?.includes(nextNode?.approverRole));
+      const approverNames = nextApprovers.length > 0 
+        ? nextApprovers.map(u => u.name).join('、')
+        : '暂无指定审批人';
+      addNotification("✅ 预审通过", `下一环节: ${nextNode?.name || '未知'} (${nextRole?.name || '未知角色'})\n审批人: ${approverNames}`, "SUCCESS");
+    }
   };
 
   const handleReject = (booking: Booking, comment: string) => {
