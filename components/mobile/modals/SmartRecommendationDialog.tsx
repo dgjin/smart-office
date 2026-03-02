@@ -111,27 +111,49 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
 
     try {
       const roomResources = resources.filter(r => r.type === 'ROOM');
-      const userPrompt = userMessage.content;
       
-      const prompt = `分析用户的会议室预订需求，从以下信息中提取关键需求：
-1. 位置/楼层偏好（如"16层"、"3楼"、"东区"等）
-2. 参会人数
-3. 需要的设备（如"投影"、"视频会议"、"白板"等）
-4. 时间（日期和时间段）
-5. 特殊需求（如"安静"、"面试"、"培训"等）
+      const resourcesInfo = roomResources.map(r => 
+        `会议室ID: ${r.id}, 名称: ${r.name}, 位置: ${r.location}, 容量: ${r.capacity || 1}人, 设施: ${r.features?.join(', ') || '无'}, 状态: ${r.status}`
+      ).join('\n');
 
-会议室资源：
-${roomResources.map(r => `ID:${r.id}, 名称:${r.name}, 位置:${r.location}, 容量:${r.capacity}人, 设施:${r.features?.join(',') || '无'}, 状态:${r.status}`).join(' | ')}
+      const userPrompt = userMessage.content;
+      const prompt = `你是一个智能会议室推荐助手。
 
-用户需求: ${userPrompt}
+【核心任务】根据用户需求和会议室的实际情况进行智能推荐。
 
-请直接返回JSON格式的需求分析，不要推荐会议室：
+【会议室资源池】（必须从中选择推荐）
+${resourcesInfo}
+
+【用户需求分析要求】
+请仔细分析用户提出的需求，特别关注：
+1. 位置/楼层偏好：用户提到"16层"、"3楼"、"东区"、"西区"等具体位置
+2. 参会人数：需要容纳的人数
+3. 设备需求：如"投影"、"视频会议"、"白板"、"音响"等
+4. 时间需求：用户提到的日期和时间
+5. 特殊需求：如"安静"、"靠窗"、"面试"、"培训"等
+
+【推荐匹配规则】
+- 必须从上面的【会议室资源池】中选择推荐的会议室
+- 推荐的会议室必须在资源池中存在，且状态为AVAILABLE
+- 匹配度评分依据：
+  * 位置匹配（完全满足用户偏好位置=40分，部分匹配=20分）
+  * 容量匹配（正好满足或略超=30分，容量不足=0分）
+  * 设备匹配（满足所有设备=20分，部分满足=10分，不满足=0分）
+  * 状态可用（AVAILABLE=10分，其他=0分）
+
+【用户需求】
+${userPrompt}
+
+请返回JSON格式的推荐结果：
 {
-  "analysis": "用户需求分析结果",
-  "location": "提取到的位置偏好，没有则null",
-  "capacity": "提取到的人数需求，没有则null",  
-  "features": ["提取到的设备需求数组"],
-  "time": "提取到的时间需求，没有则null"
+  "analysis": "分析用户需求，特别说明用户提到的位置偏好、参会人数、设备需求等",
+  "recommendations": [
+    {
+      "resourceId": "必须是上面资源池中存在的会议室ID",
+      "reason": "详细说明该会议室如何匹配用户需求（位置、容量、设备等）",
+      "matchScore": 综合评分(0-100)
+    }
+  ]
 }`;
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
@@ -140,8 +162,8 @@ ${roomResources.map(r => `ID:${r.id}, 名称:${r.name}, 位置:${r.location}, �
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
           generationConfig: {
-            temperature: 0.3,
-            maxOutputTokens: 1024,
+            temperature: 0.7,
+            maxOutputTokens: 2048,
           }
         })
       });
@@ -149,100 +171,57 @@ ${roomResources.map(r => `ID:${r.id}, 名称:${r.name}, 位置:${r.location}, �
       const data = await response.json();
       const responseText = data.candidates?.[0]?.content?.parts?.[0]?.text || '';
 
-      let userNeeds = {
-        location: null as string | null,
-        capacity: null as number | null,
-        features: [] as string[],
-        time: null as string | null
-      };
+      let recommendations: ResourceRecommendation[] = [];
+      let analysis = responseText;
 
       try {
         const jsonMatch = responseText.match(/\{[\s\S]*\}/);
         if (jsonMatch) {
           const parsed = JSON.parse(jsonMatch[0]);
-          userNeeds = {
-            location: parsed.location || null,
-            capacity: parsed.capacity ? parseInt(parsed.capacity) : null,
-            features: parsed.features || [],
-            time: parsed.time || null
-          };
+          analysis = parsed.analysis || responseText;
+          
+          if (parsed.recommendations && Array.isArray(parsed.recommendations)) {
+            recommendations = parsed.recommendations.map((rec: any) => {
+              let resource = resources.find(r => r.id === rec.resourceId);
+              
+              if (!resource && rec.resourceId) {
+                const idLower = rec.resourceId.toLowerCase();
+                resource = resources.find(r => 
+                  r.id.toLowerCase().includes(idLower) || 
+                  r.name.toLowerCase().includes(idLower)
+                );
+              }
+              
+              if (resource) {
+                return {
+                  resource,
+                  reason: rec.reason,
+                  matchScore: rec.matchScore
+                };
+              }
+              return null;
+            }).filter(Boolean);
+          }
         }
       } catch (e) {
-        console.error('解析用户需求失败:', e);
+        console.error('Failed to parse AI response:', e);
       }
 
-      const scoredRooms = roomResources.map(room => {
-        let score = 0;
-        const reasons: string[] = [];
-
-        if (userNeeds.location && room.location) {
-          const locLower = userNeeds.location.toLowerCase();
-          const roomLocLower = room.location.toLowerCase();
-          if (roomLocLower.includes(locLower) || locLower.includes(roomLocLower.split('层')[0] || '')) {
-            score += 40;
-            reasons.push(`位置匹配：位于${room.location}`);
-          } else {
-            score += 10;
-            reasons.push(`位置：${room.location}`);
-          }
-        } else {
-          score += 20;
-          reasons.push(`位置：${room.location}`);
+      if (recommendations.length === 0 || !recommendations[0]) {
+        const roomResources = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE');
+        
+        if (roomResources.length > 0) {
+          const shuffled = [...roomResources].sort(() => Math.random() - 0.5);
+          const topResources = shuffled.slice(0, 3).map(r => ({
+            resource: r,
+            reason: `${r.name} 位于${r.location}，可容纳${r.capacity}人，设施：${r.features?.join('、') || '无'}`,
+            matchScore: 75
+          }));
+          recommendations = topResources;
         }
+      }
 
-        if (userNeeds.capacity) {
-          if (room.capacity && room.capacity >= userNeeds.capacity) {
-            score += 30;
-            reasons.push(`容量满足：可容纳${room.capacity}人`);
-          } else {
-            score += 5;
-            reasons.push(`容量：${room.capacity}人`);
-          }
-        } else {
-          score += 15;
-          reasons.push(`容量：${room.capacity}人`);
-        }
-
-        if (userNeeds.features.length > 0 && room.features) {
-          const matchedFeatures = userNeeds.features.filter(f => 
-            room.features?.some(rf => rf.toLowerCase().includes(f.toLowerCase()) || f.toLowerCase().includes(rf.toLowerCase()))
-          );
-          if (matchedFeatures.length === userNeeds.features.length) {
-            score += 20;
-            reasons.push(`设备齐全：${room.features.join('、')}`);
-          } else if (matchedFeatures.length > 0) {
-            score += 10;
-            reasons.push(`部分设备：${matchedFeatures.join('、')}`);
-          } else {
-            score += 5;
-            reasons.push(`设施：${room.features.join('、') || '无'}`);
-          }
-        } else {
-          score += 10;
-          if (room.features?.length) {
-            reasons.push(`设施：${room.features.join('、')}`);
-          }
-        }
-
-        if (room.status === 'AVAILABLE') {
-          score += 10;
-        }
-
-        return {
-          resource: room,
-          reason: reasons.join('，') + `，综合评分${score}分`,
-          matchScore: Math.min(score, 100)
-        };
-      });
-
-      scoredRooms.sort((a, b) => b.matchScore - a.matchScore);
-      const recommendations = scoredRooms.slice(0, 3);
-
-      const analysis = userNeeds.location || userNeeds.capacity || userNeeds.features.length > 0
-        ? `根据您的需求分析：${userNeeds.location ? `位置偏好：${userNeeds.location}，` : ''}${userNeeds.capacity ? `参会人数：${userNeeds.capacity}人，` : ''}${userNeeds.features.length > 0 ? `需要设备：${userNeeds.features.join('、')}` : ''}`
-        : '已为您推荐以下会议室：';
-
-      console.log('本地智能推荐结果:', { recommendations, userNeeds });
+      console.log('AI推荐结果解析:', { recommendations, responseText: responseText.substring(0, 200) });
 
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),

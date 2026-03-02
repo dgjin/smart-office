@@ -63,12 +63,12 @@ const OFFLINE_CACHE_KEY = 'SMART_OFFICE_OFFLINE_CACHE';
 
 // --- Theme Config ---
 const THEMES = [
-  { id: 'finance', name: '金融黑', color: 'bg-slate-900', text: 'text-slate-100', border: 'border-slate-600', bg: 'bg-slate-900', lightColor: '#F59E0B', accent: '#8B5CF6' },
-  { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-indigo-600', border: 'border-indigo-100', bg: 'bg-indigo-50', lightColor: '#4F46E5' },
-  { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-emerald-600', border: 'border-emerald-100', bg: 'bg-emerald-50', lightColor: '#059669' },
-  { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-orange-600', border: 'border-orange-100', bg: 'bg-orange-50', lightColor: '#EA580C' },
-  { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-rose-600', border: 'border-rose-100', bg: 'bg-rose-50', lightColor: '#E11D48' },
-  { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-purple-600', border: 'border-purple-100', bg: 'bg-purple-50', lightColor: '#7C3AED' },
+  { id: 'finance', name: '金融黑', color: 'bg-slate-900', text: 'text-slate-100', border: 'border-slate-600', bg: 'bg-slate-900', lightColor: '#F59E0B', accent: '#8B5CF6', cardBg: 'bg-slate-800', inputBg: 'bg-slate-700', mutedText: 'text-slate-400' },
+  { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#4F46E5', accent: '#6366F1', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
+  { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#059669', accent: '#10B981', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
+  { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#EA580C', accent: '#F97316', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
+  { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#E11D48', accent: '#F43F5E', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
+  { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#7C3AED', accent: '#A855F7', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
 ];
 
 // Get theme colors helper
@@ -80,8 +80,11 @@ const getThemeColors = (theme: string) => {
     border: themeConfig.border,
     bg: themeConfig.bg,
     lightColor: themeConfig.lightColor,
-    accent: themeConfig.accent,
-    isDark: theme === 'finance'
+    accent: themeConfig.accent || themeConfig.lightColor,
+    isDark: theme === 'finance',
+    cardBg: themeConfig.cardBg || themeConfig.bg,
+    inputBg: themeConfig.inputBg || themeConfig.bg,
+    mutedText: themeConfig.mutedText || 'text-gray-500',
   };
 };
 
@@ -137,18 +140,18 @@ const RoleTag = ({ roleId, roles, theme }: any) => {
 
 // --- Mobile Stat Card ---
 const MobileStatCard = ({ title, value, icon: Icon, color, onClick, isDark = false }: any) => {
-  const darkBg = isDark ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
-  const darkText = isDark ? 'text-white' : 'text-gray-800';
-  const darkSubtext = isDark ? 'text-white/60' : 'text-gray-400';
+  const cardBg = isDark ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
+  const textColor = isDark ? 'text-white' : 'text-gray-800';
+  const subtextColor = isDark ? 'text-slate-400' : 'text-gray-400';
   
   return (
-    <button onClick={onClick} className={`${darkBg} p-4 rounded-2xl border shadow-sm flex items-center space-x-3 active:scale-[0.98] transition-transform`}>
-      <div className={`w-10 h-10 rounded-xl ${isDark ? `bg-${color}-500/10 text-${color}-500` : `bg-${color}-50 text-${color}-600`} flex items-center justify-center`}>
+    <button onClick={onClick} className={`${cardBg} p-4 rounded-2xl border shadow-sm flex items-center space-x-3 active:scale-[0.98] transition-transform`}>
+      <div className={`w-10 h-10 rounded-xl ${isDark ? `bg-${color}-500/20 text-${color}-400` : `bg-${color}-50 text-${color}-600`} flex items-center justify-center`}>
         <Icon size={20} />
       </div>
       <div>
-        <p className={`text-[10px] font-bold ${darkSubtext} uppercase`}>{title}</p>
-        <h3 className={`text-lg font-black ${darkText}`}>{value}</h3>
+        <p className={`text-[10px] font-bold ${subtextColor} uppercase`}>{title}</p>
+        <h3 className={`text-lg font-black ${textColor}`}>{value}</h3>
       </div>
     </button>
   );
@@ -937,9 +940,9 @@ const AppMobile: React.FC = () => {
         {(activeTab === 'MEETING_ROOMS' || activeTab === 'WORKSTATIONS') && (
           <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4 ${themeColors.bg}`}>
               <div className="flex items-center space-x-3">
-                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
+                <button onClick={() => setActiveTab('DASHBOARD')} className={`p-2 -ml-2 ${theme === 'finance' ? 'text-slate-400' : 'text-gray-500'}`}>
                   <ChevronLeft size={24} />
                 </button>
                 <h1 className="text-lg font-bold text-white">
@@ -947,13 +950,17 @@ const AppMobile: React.FC = () => {
                 </h1>
               </div>
               <div className="mt-3 relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18} />
+                <Search className={`absolute left-3 top-1/2 -translate-y-1/2 ${theme === 'finance' ? 'text-slate-500' : 'text-gray-400'}`} size={18} />
                 <input 
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder={`搜索${activeTab === 'MEETING_ROOMS' ? '会议室' : '工位'}名称或位置...`}
-                  className="w-full pl-10 pr-4 py-2.5 bg-[#334155] border border-[#475569] rounded-xl outline-none text-sm text-white placeholder-white/40"
+                  className={`w-full pl-10 pr-4 py-2.5 rounded-xl outline-none text-sm ${
+                    theme === 'finance' 
+                      ? 'bg-slate-700 border-slate-600 text-white placeholder-slate-400' 
+                      : 'bg-white border-gray-200 text-gray-800 placeholder-gray-400'
+                  }`}
                 />
               </div>
             </div>
@@ -985,10 +992,10 @@ const AppMobile: React.FC = () => {
         {activeTab === 'BOOKINGS' && (
           <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4 ${themeColors.bg}`}>
               <div className="flex items-center justify-between">
                 <div className="flex items-center space-x-3">
-                  <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
+                  <button onClick={() => setActiveTab('DASHBOARD')} className={`p-2 -ml-2 ${theme === 'finance' ? 'text-slate-400' : 'text-gray-500'}`}>
                     <ChevronLeft size={24} />
                   </button>
                   <h1 className="text-lg font-bold text-white">我的申请</h1>
@@ -1033,9 +1040,9 @@ const AppMobile: React.FC = () => {
           hasPermission(PERMISSIONS.VIEW_APPROVAL_CENTER) ? (
           <div className="animate-in fade-in min-h-screen">
             {/* Header */}
-            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
+            <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4 ${themeColors.bg}`}>
               <div className="flex items-center space-x-3">
-                <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
+                <button onClick={() => setActiveTab('DASHBOARD')} className={`p-2 -ml-2 ${theme === 'finance' ? 'text-slate-400' : 'text-gray-500'}`}>
                   <ChevronLeft size={24} />
                 </button>
                 <div>
