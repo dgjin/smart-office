@@ -181,6 +181,26 @@ export function generateMatchReasons(
   return reasons;
 }
 
+export function createRecommendationRequest(
+  userId: string,
+  resourceType: ResourceType,
+  startTime: string,
+  endTime: string,
+  participants: number = 1,
+  requiredFeatures: string[] = [],
+  purpose?: string
+): RecommendationRequest {
+  return {
+    userId,
+    resourceType,
+    startTime,
+    endTime,
+    participants,
+    requiredFeatures,
+    purpose,
+  };
+}
+
 export function getRecommendations(
   request: RecommendationRequest,
   resources: Resource[],
