@@ -888,14 +888,14 @@ const AppMobile: React.FC = () => {
                 </button>
               </div>
               {myBookings.slice(0, 3).map(booking => (
-                <div key={booking.id} className={`bg-[#1E293B] p-3 rounded-xl border ${themeColors.border} mb-2 flex items-center justify-between`}>
+                <div key={booking.id} className={`${themeColors.bg} p-3 rounded-xl border ${themeColors.border} mb-2 flex items-center justify-between`}>
                   <div className="flex items-center space-x-3">
-                    <div className={`w-8 h-8 rounded-lg ${booking.type === 'ROOM' ? 'bg-[#F59E0B]/10 text-[#F59E0B]' : 'bg-[#FBBF24]/10 text-[#FBBF24]'} flex items-center justify-center`}>
+                    <div className={`w-8 h-8 rounded-lg ${booking.type === 'ROOM' ? (theme === 'finance' ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-50 text-indigo-600') : (theme === 'finance' ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600')} flex items-center justify-center`}>
                       {booking.type === 'ROOM' ? <Monitor size={14} /> : <Briefcase size={14} />}
                     </div>
                     <div>
                       <p className={`font-bold text-sm ${themeColors.text} line-clamp-1`}>{booking.purpose}</p>
-                      <p className={`text-[10px] ${themeColors.lightColor}`}>{booking.startTime.split('T')[0]}</p>
+                      <p className={`text-[10px] ${theme === 'finance' ? 'text-slate-400' : 'text-gray-400'}`}>{booking.startTime.split('T')[0]}</p>
                     </div>
                   </div>
                   <StatusBadge status={booking.status} theme={theme} />
