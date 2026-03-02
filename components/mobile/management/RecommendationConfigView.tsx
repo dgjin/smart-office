@@ -6,7 +6,7 @@ import {
   saveRecommendationConfig, 
   RecommendationConfig,
   DEFAULT_RECOMMENDATION_CONFIG
-} from '../../services/recommendationService';
+} from '../../../services/recommendationService';
 
 interface RecommendationConfigProps {
   theme: string;
