@@ -1,5 +1,5 @@
 import React from 'react';
-import { Home, MapPin, ClipboardList, User, Coffee, ShieldCheck } from 'lucide-react';
+import { Home, MapPin, ClipboardList, User, Coffee, ShieldCheck, Monitor } from 'lucide-react';
 import { PERMISSIONS } from '../../../permissions';
 import { usePermissions } from '../../../hooks/usePermissions';
 
@@ -16,6 +16,7 @@ const ALL_NAV_ITEMS = [
   { id: 'MEETING_ROOMS', icon: Coffee, label: '会议室', permission: PERMISSIONS.VIEW_RESOURCES },
   { id: 'WORKSTATIONS', icon: MapPin, label: '工位', permission: PERMISSIONS.VIEW_RESOURCES },
   { id: 'APPROVAL_CENTER', icon: ClipboardList, label: '审批', permission: PERMISSIONS.VIEW_APPROVAL_CENTER },
+  { id: 'MONITOR_SCREEN', icon: Monitor, label: '监控大屏', permission: PERMISSIONS.VIEW_MONITOR_SCREEN, isExternal: true, url: '/monitor.html' },
   { id: 'PROFILE', icon: User, label: '我的', permission: PERMISSIONS.VIEW_PROFILE },
 ];
 
@@ -30,6 +31,14 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange, th
   const bgColor = isFinanceTheme ? 'bg-[#1E293B] border-[#334155]' : 'bg-white border-gray-100';
   const inactiveColor = isFinanceTheme ? 'text-white/60' : 'text-gray-400';
 
+  const handleClick = (tab: typeof ALL_NAV_ITEMS[0]) => {
+    if (tab.isExternal && tab.url) {
+      window.open(tab.url, '_blank');
+    } else {
+      onTabChange(tab.id);
+    }
+  };
+
   return (
     <div className={`fixed bottom-0 left-0 right-0 ${bgColor} border-t pb-safe z-50 font-['IBM_Plex_Sans']`} style={{ maxWidth: '416px', margin: '0 auto', left: '0', right: '0' }}>
       <div className="flex items-center justify-around h-16">
@@ -41,7 +50,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ activeTab, onTabChange, th
           return (
             <button
               key={tab.id}
-              onClick={() => onTabChange(tab.id)}
+              onClick={() => handleClick(tab)}
               className={`flex flex-col items-center justify-center flex-1 h-full relative ${isActive ? themeColor : inactiveColor}`}
             >
               <div className="relative">
