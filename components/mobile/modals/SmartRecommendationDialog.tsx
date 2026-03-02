@@ -211,7 +211,8 @@ ${userPrompt}
         const roomResources = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE');
         
         if (roomResources.length > 0) {
-          const topResources = roomResources.slice(0, 3).map(r => ({
+          const shuffled = [...roomResources].sort(() => Math.random() - 0.5);
+          const topResources = shuffled.slice(0, 3).map(r => ({
             resource: r,
             reason: `${r.name} 位于${r.location}，可容纳${r.capacity}人，设施：${r.features?.join('、') || '无'}`,
             matchScore: 75
@@ -219,6 +220,8 @@ ${userPrompt}
           recommendations = topResources;
         }
       }
+
+      console.log('AI推荐结果解析:', { recommendations, responseText: responseText.substring(0, 200) });
 
       const assistantMessage: ChatMessage = {
         id: (Date.now() + 1).toString(),
