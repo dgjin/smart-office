@@ -113,10 +113,37 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
       const roomResources = resources.filter(r => r.type === 'ROOM');
       
       const resourcesInfo = roomResources.map(r => 
-        `ID: ${r.id}, 名称: ${r.name}, 类型: 会议室, 位置: ${r.location}, 容量: ${r.capacity || 1}人, 设施: ${r.features?.join(', ') || '无'}`
+        `会议室ID: ${r.id}, 名称: ${r.name}, 位置: ${r.location}, 容量: ${r.capacity || 1}人, 设施: ${r.features?.join(', ') || '无'}, 状态: ${r.status}`
       ).join('\n');
 
-      const prompt = SYSTEM_PROMPT.replace('{resources}', resourcesInfo) + `\n\n用户需求: ${userMessage.content}`;
+      const userPrompt = userMessage.content;
+      const prompt = `你是一个智能会议室推荐助手。
+
+【重要】你必须根据用户的需求推荐最合适的会议室。
+
+用户需求分析要点：
+1. 位置/楼层偏好：如果用户提到"16层"、"3楼"、"东区"、"西区"、"南边"等，必须优先推荐该位置的会议室
+2. 参会人数：必须推荐容量满足或略超需求的会议室
+3. 设备需求：如果用户提到"投影"、"视频会议"、"白板"等，必须推荐具备该设备的会议室
+4. 时间需求：注意用户提到的时间
+
+【会议室列表】
+${resourcesInfo}
+
+【用户需求】
+${userPrompt}
+
+请分析用户需求并返回推荐结果，JSON格式：
+{
+  "analysis": "你对用户需求的分析，明确说明用户提到的位置偏好",
+  "recommendations": [
+    {
+      "resourceId": "资源ID",
+      "reason": "详细推荐理由，必须说明该会议室如何满足用户需求（包括位置、设备、容量等方面）",
+      "matchScore": 匹配度(0-100)
+    }
+  ]
+}`;
 
       const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${import.meta.env.VITE_GEMINI_API_KEY}`, {
         method: 'POST',
