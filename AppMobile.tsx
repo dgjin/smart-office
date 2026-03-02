@@ -63,12 +63,12 @@ const OFFLINE_CACHE_KEY = 'SMART_OFFICE_OFFLINE_CACHE';
 
 // --- Theme Config ---
 const THEMES = [
-  { id: 'finance', name: '金融黑', color: 'bg-slate-900', text: 'text-slate-100', border: 'border-slate-600', bg: 'bg-slate-900', lightColor: '#F59E0B', accent: '#8B5CF6', cardBg: 'bg-slate-800', inputBg: 'bg-slate-700', mutedText: 'text-slate-400' },
-  { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#4F46E5', accent: '#6366F1', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
-  { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#059669', accent: '#10B981', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
-  { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#EA580C', accent: '#F97316', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
-  { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#E11D48', accent: '#F43F5E', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
-  { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-gray-900', border: 'border-gray-200', bg: 'bg-gray-50', lightColor: '#7C3AED', accent: '#A855F7', cardBg: 'bg-white', inputBg: 'bg-gray-100', mutedText: 'text-gray-500' },
+  { id: 'finance', name: '金融黑', color: 'bg-slate-900', text: 'text-slate-100', border: 'border-slate-600', bg: 'bg-slate-900', lightColor: '#F59E0B', accent: '#8B5CF6', cardBg: 'bg-slate-800', inputBg: 'bg-slate-700', mutedText: 'text-slate-400', headerBg: 'bg-slate-800' },
+  { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-indigo-900', border: 'border-indigo-200', bg: 'bg-indigo-50', lightColor: '#4F46E5', accent: '#6366F1', cardBg: 'bg-white', inputBg: 'bg-indigo-50', mutedText: 'text-indigo-500', headerBg: 'bg-indigo-600' },
+  { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-emerald-900', border: 'border-emerald-200', bg: 'bg-emerald-50', lightColor: '#059669', accent: '#10B981', cardBg: 'bg-white', inputBg: 'bg-emerald-50', mutedText: 'text-emerald-600', headerBg: 'bg-emerald-600' },
+  { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-orange-900', border: 'border-orange-200', bg: 'bg-orange-50', lightColor: '#EA580C', accent: '#F97316', cardBg: 'bg-white', inputBg: 'bg-orange-50', mutedText: 'text-orange-600', headerBg: 'bg-orange-600' },
+  { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-rose-900', border: 'border-rose-200', bg: 'bg-rose-50', lightColor: '#E11D48', accent: '#F43F5E', cardBg: 'bg-white', inputBg: 'bg-rose-50', mutedText: 'text-rose-600', headerBg: 'bg-rose-600' },
+  { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-purple-900', border: 'border-purple-200', bg: 'bg-purple-50', lightColor: '#7C3AED', accent: '#A855F7', cardBg: 'bg-white', inputBg: 'bg-purple-50', mutedText: 'text-purple-600', headerBg: 'bg-purple-600' },
 ];
 
 // Get theme colors helper
@@ -85,6 +85,7 @@ const getThemeColors = (theme: string) => {
     cardBg: themeConfig.cardBg || themeConfig.bg,
     inputBg: themeConfig.inputBg || themeConfig.bg,
     mutedText: themeConfig.mutedText || 'text-gray-500',
+    headerBg: themeConfig.headerBg || themeConfig.cardBg,
   };
 };
 
