@@ -52,6 +52,7 @@ import {
   RoomBookingFormModal,
   DeskBookingFormModal,
   RoomRecommendationList,
+  SmartRecommendationDialog,
 } from './components/mobile/modals';
 
 const STORAGE_KEY = 'SMART_OFFICE_DATA_V35';
@@ -1229,9 +1230,8 @@ const AppMobile: React.FC = () => {
       )}
 
       {showRecommendation && currentUser && (
-        <RoomRecommendationList
-          userId={currentUser.id}
-          resources={activeTab === 'WORKSTATIONS' ? resources.filter(r => r.type === 'DESK') : resources.filter(r => r.type === 'ROOM')}
+        <SmartRecommendationDialog
+          resources={resources}
           userBookings={bookings}
           theme={theme}
           onSelect={(resource) => {
