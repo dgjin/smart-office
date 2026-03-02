@@ -939,15 +939,7 @@ const AppMobile: React.FC = () => {
                   key={resource.id}
                   resource={resource}
                   theme={theme}
-                  onBook={(r: Resource) => {
-                    setRecommendationParams({
-                      resourceType: r.type,
-                      date: new Date().toISOString().split('T')[0],
-                      startTime: '',
-                      endTime: '',
-                      participants: r.capacity || 1,
-                      requiredFeatures: r.features || [],
-                    });
+                  onBook={() => {
                     setShowRecommendation(true);
                   }}
                   onViewCalendar={() => {}}
@@ -1200,14 +1192,9 @@ const AppMobile: React.FC = () => {
         />
       )}
 
-      {showRecommendation && recommendationParams && currentUser && (
+      {showRecommendation && currentUser && (
         <RoomRecommendationList
           userId={currentUser.id}
-          resourceType={recommendationParams.resourceType}
-          startTime={recommendationParams.startTime}
-          endTime={recommendationParams.endTime}
-          participants={recommendationParams.participants}
-          requiredFeatures={recommendationParams.requiredFeatures}
           resources={resources}
           userBookings={bookings}
           theme={theme}
