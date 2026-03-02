@@ -154,9 +154,20 @@ export const RoomRecommendationList: React.FC<RoomRecommendationListProps> = ({
                 >
                   -
                 </button>
-                <span className={`flex-1 text-center font-bold text-lg ${darkText}`}>{formData.participants} 人</span>
+                <input
+                  type="number"
+                  min="1"
+                  max="99"
+                  value={formData.participants}
+                  onChange={(e) => {
+                    const value = parseInt(e.target.value) || 1;
+                    setFormData(prev => ({ ...prev, participants: Math.min(99, Math.max(1, value)) }));
+                  }}
+                  className={`w-16 text-center font-bold text-lg ${darkInputBg} ${darkText} border ${darkBorder} rounded-lg p-2`}
+                />
+                <span className={`text-sm ${darkSubtext}`}>人</span>
                 <button
-                  onClick={() => setFormData(prev => ({ ...prev, participants: Math.min(20, prev.participants + 1) }))}
+                  onClick={() => setFormData(prev => ({ ...prev, participants: Math.min(99, prev.participants + 1) }))}
                   className={`w-10 h-10 rounded-lg ${darkInputBg} ${darkText} font-bold`}
                 >
                   +
