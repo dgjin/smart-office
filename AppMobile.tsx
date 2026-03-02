@@ -549,10 +549,20 @@ const AppMobile: React.FC = () => {
     return { totalResources, availableRooms, availableDesks, activeBookings };
   }, [resources, bookings]);
 
-  const filteredResources = resources.filter(r => 
-    r.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    r.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredResources = useMemo(() => {
+    let filtered = resources;
+    
+    if (activeTab === 'MEETING_ROOMS') {
+      filtered = resources.filter(r => r.type === 'ROOM');
+    } else if (activeTab === 'WORKSTATIONS') {
+      filtered = resources.filter(r => r.type === 'DESK');
+    }
+    
+    return filtered.filter(r => 
+      r.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
+      r.location.toLowerCase().includes(searchQuery.toLowerCase())
+    );
+  }, [resources, activeTab, searchQuery]);
 
   const myBookings = useMemo(() => {
     return bookings
@@ -849,7 +859,7 @@ const AppMobile: React.FC = () => {
             <div className="px-4 mt-4">
               <div className="grid grid-cols-2 gap-3">
                 <button 
-                  onClick={() => setActiveTab('RESOURCES')}
+                  onClick={() => setActiveTab('MEETING_ROOMS')}
                   className="bg-amber-500 text-slate-900 p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -859,7 +869,7 @@ const AppMobile: React.FC = () => {
                   <p className="font-bold text-sm">预订会议室</p>
                 </button>
                 <button 
-                  onClick={() => setActiveTab('RESOURCES')}
+                  onClick={() => setActiveTab('WORKSTATIONS')}
                   className="bg-yellow-500 text-slate-900 p-4 rounded-2xl shadow-lg active:scale-[0.98] transition-transform text-left"
                 >
                   <div className="flex items-center justify-between mb-2">
@@ -911,7 +921,7 @@ const AppMobile: React.FC = () => {
           </div>
         )}
 
-        {activeTab === 'RESOURCES' && (
+        {(activeTab === 'MEETING_ROOMS' || activeTab === 'WORKSTATIONS') && (
           <div className="animate-in fade-in min-h-screen">
             {/* Header */}
             <div className={`sticky top-0 z-10 border-b ${themeColors.border} p-4`} style={{ backgroundColor: '#1E293B' }}>
@@ -919,7 +929,9 @@ const AppMobile: React.FC = () => {
                 <button onClick={() => setActiveTab('DASHBOARD')} className="p-2 -ml-2 text-white/60">
                   <ChevronLeft size={24} />
                 </button>
-                <h1 className="text-lg font-bold text-white">空间资源库</h1>
+                <h1 className="text-lg font-bold text-white">
+                  {activeTab === 'MEETING_ROOMS' ? '会议室预订' : '工位申请'}
+                </h1>
               </div>
               <div className="mt-3 relative">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-white/40" size={18} />
@@ -927,7 +939,7 @@ const AppMobile: React.FC = () => {
                   type="text" 
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="搜索资源名称或位置..."
+                  placeholder={`搜索${activeTab === 'MEETING_ROOMS' ? '会议室' : '工位'}名称或位置...`}
                   className="w-full pl-10 pr-4 py-2.5 bg-[#334155] border border-[#475569] rounded-xl outline-none text-sm text-white placeholder-white/40"
                 />
               </div>
@@ -941,7 +953,8 @@ const AppMobile: React.FC = () => {
                   resource={resource}
                   theme={theme}
                   onBook={() => {
-                    setShowRecommendation(true);
+                    setSelectedResource(resource);
+                    setShowBookingModal(true);
                   }}
                   onViewCalendar={() => {}}
                 />
@@ -980,7 +993,7 @@ const AppMobile: React.FC = () => {
                   <History size={48} className="mx-auto mb-4 opacity-30" />
                   <p className="text-sm">暂无预约申请记录</p>
                   <button 
-                    onClick={() => setActiveTab('RESOURCES')}
+                    onClick={() => setActiveTab('MEETING_ROOMS')}
                     className={`mt-4 px-6 py-2 ${themeColors.accent} text-white rounded-xl font-bold text-sm`}
                   >
                     去预约
@@ -1206,7 +1219,7 @@ const AppMobile: React.FC = () => {
       {showRecommendation && currentUser && (
         <RoomRecommendationList
           userId={currentUser.id}
-          resources={resources}
+          resources={activeTab === 'WORKSTATIONS' ? resources.filter(r => r.type === 'DESK') : resources.filter(r => r.type === 'ROOM')}
           userBookings={bookings}
           theme={theme}
           onSelect={(resource) => {

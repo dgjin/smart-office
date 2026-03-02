@@ -13,8 +13,8 @@ interface BottomNavProps {
 
 const ALL_NAV_ITEMS = [
   { id: 'DASHBOARD', icon: Home, label: '首页', permission: PERMISSIONS.VIEW_DASHBOARD },
-  { id: 'RESOURCES', icon: MapPin, label: '资源', permission: PERMISSIONS.VIEW_RESOURCES },
-  { id: 'MEETING_SERVICE', icon: Coffee, label: '会议服务', permission: PERMISSIONS.VIEW_MEETING_SERVICE },
+  { id: 'MEETING_ROOMS', icon: Coffee, label: '会议室', permission: PERMISSIONS.VIEW_RESOURCES },
+  { id: 'WORKSTATIONS', icon: MapPin, label: '工位', permission: PERMISSIONS.VIEW_RESOURCES },
   { id: 'APPROVAL_CENTER', icon: ClipboardList, label: '审批', permission: PERMISSIONS.VIEW_APPROVAL_CENTER },
   { id: 'PROFILE', icon: User, label: '我的', permission: PERMISSIONS.VIEW_PROFILE },
 ];
