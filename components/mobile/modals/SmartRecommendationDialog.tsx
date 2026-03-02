@@ -23,7 +23,7 @@ interface SmartRecommendationDialogProps {
   onClose: () => void;
 }
 
-const SYSTEM_PROMPT = `你是一个智能会议室和工位推荐助手。请根据用户的需求推荐最合适的资源。
+const SYSTEM_PROMPT = `你是一个智能会议室推荐助手。请根据用户的需求推荐最合适的会议室。
 
 用户可能需要的信息包括：
 - 会议类型（日常会议、面试、培训、客户洽谈等）
@@ -61,15 +61,15 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
     {
       id: '1',
       role: 'assistant',
-      content: `您好！我是智能推荐助手 🤖
+      content: `您好！我是智能会议室推荐助手 🤖
 
-我可以帮您推荐最合适的会议室或工位。请告诉我您的需求，例如：
+我可以帮您推荐最合适的会议室。请告诉我您的需求，例如：
 
 • "我需要预约一个能容纳10人的会议室，明天上午9点到11点"
 • "我们需要一间有视频会议设备的会议室，用于客户洽谈"
-• "我想申请一个工位，需要安静的环境"
+• "预约一个小型会议室，周三下午2-4点"
 
-请描述您的需求，我会为您分析并推荐最合适的资源！`
+请描述您的需求，我会为您分析并推荐最合适的会议室！`
     }
   ]);
   const [input, setInput] = useState('');
@@ -106,8 +106,10 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
     setIsLoading(true);
 
     try {
-      const resourcesInfo = resources.map(r => 
-        `ID: ${r.id}, 名称: ${r.name}, 类型: ${r.type === 'ROOM' ? '会议室' : '工位'}, 位置: ${r.location}, 容量: ${r.capacity || 1}人, 设施: ${r.features?.join(', ') || '无'}`
+      const roomResources = resources.filter(r => r.type === 'ROOM');
+      
+      const resourcesInfo = roomResources.map(r => 
+        `ID: ${r.id}, 名称: ${r.name}, 类型: 会议室, 位置: ${r.location}, 容量: ${r.capacity || 1}人, 设施: ${r.features?.join(', ') || '无'}`
       ).join('\n');
 
       const prompt = SYSTEM_PROMPT.replace('{resources}', resourcesInfo) + `\n\n用户需求: ${userMessage.content}`;
@@ -155,12 +157,11 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
       }
 
       if (recommendations.length === 0) {
-        const topResources = resources
-          .filter(r => r.status === 'AVAILABLE')
-          .slice(0, 3)
+        const roomResources = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE').slice(0, 3);
+        const topResources = roomResources
           .map(r => ({
             resource: r,
-            reason: `${r.name} 当前可用，${r.type === 'ROOM' ? '适合会议使用' : '适合办公使用'}`,
+            reason: `${r.name} 当前可用，适合会议使用`,
             matchScore: 70
           }));
         recommendations = topResources;
@@ -178,12 +179,18 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
       console.error('Failed to get recommendation:', error);
       
       const fallbackMessage: ChatMessage = {
-        id: (Date.now() + 1).toString(),
+        id: Date.now().toString(),
         role: 'assistant',
         content: '抱歉，我暂时无法处理您的请求。请稍后重试或尝试简化您的需求描述。',
         recommendations: []
       };
-      setMessages(prev => [...prev, fallbackMessage]);
+      setMessages(prev => {
+        const lastMessage = prev[prev.length - 1];
+        if (lastMessage?.role === 'assistant' && lastMessage.content === fallbackMessage.content) {
+          return prev;
+        }
+        return [...prev, fallbackMessage];
+      });
     } finally {
       setIsLoading(false);
     }
@@ -305,7 +312,7 @@ export const SmartRecommendationDialog: React.FC<SmartRecommendationDialogProps>
               {[
                 '预约明天上午9点的会议室',
                 '需要能容纳15人的会议室',
-                '申请一个工位，需要安静'
+                '需要视频会议设备'
               ].map((prompt, idx) => (
                 <button
                   key={idx}
