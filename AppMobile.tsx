@@ -203,7 +203,7 @@ const MobileResourceCard = ({ resource, theme, onBook, onViewCalendar }: any) =>
 };
 
 // --- Mobile Booking Card ---
-const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onToggle }: any) => {
+const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onToggle, onViewDetail }: any) => {
   const isExpanded = expanded;
   const isFinanceTheme = theme === 'finance';
   const darkBg = isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
@@ -212,18 +212,36 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
   const darkSubtext = isFinanceTheme ? 'text-slate-400' : 'text-gray-400';
   const darkSecondary = isFinanceTheme ? 'text-slate-300' : 'text-gray-700';
   const darkIcon = isFinanceTheme ? 'text-slate-400' : 'text-gray-300';
-  const typeColor = booking.type === 'ROOM' 
+  const typeColor = booking.type === 'ROOM'
     ? (isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-50 text-indigo-600')
     : (isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600');
   const cancelBtn = isFinanceTheme ? 'bg-slate-700 text-rose-400 border-slate-500' : 'bg-rose-50 text-rose-600 border border-rose-100';
-  
+
   const tagColors = {
     amber: isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-50 text-amber-600',
     indigo: isFinanceTheme ? 'bg-violet-500/20 text-violet-400' : 'bg-indigo-50 text-indigo-600',
     emerald: isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-50 text-emerald-600',
     rose: isFinanceTheme ? 'bg-rose-500/20 text-rose-400' : 'bg-rose-50 text-rose-600'
   };
-  
+
+  // 计算长期预订天数
+  const getLongTermDays = () => {
+    if (!booking.isLongTerm) return 0;
+    if (booking.longTermType === 'weekly' && booking.selectedWeekDays && booking.weekCount) {
+      return booking.selectedWeekDays.length * booking.weekCount;
+    }
+    if (booking.longTermStartDate && booking.longTermEndDate) {
+      return Math.ceil((new Date(booking.longTermEndDate).getTime() - new Date(booking.longTermStartDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
+    return 0;
+  };
+
+  // 格式化日期显示
+  const formatDateDisplay = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  };
+
   return (
     <div className={`${darkBg} rounded-2xl border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg' : 'shadow-sm'}`}>
       <div onClick={onToggle} className={`p-4 cursor-pointer flex items-center justify-between active:bg-opacity-90 transition-colors`}>
@@ -231,13 +249,35 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
           <div className={`w-10 h-10 rounded-xl ${typeColor} flex items-center justify-center`}>
             {booking.type === 'ROOM' ? <Monitor size={18} /> : <Briefcase size={18} />}
           </div>
-          <div>
-            <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{booking.purpose}</h4>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center space-x-2">
+              <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{booking.purpose}</h4>
+              {booking.isLongTerm && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded-full ${isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>
+                  长期
+                </span>
+              )}
+            </div>
             <div className="flex items-center space-x-2 mt-0.5">
               <span className={`text-[10px] font-medium ${darkSubtext}`}>{resource?.name || '未知资源'}</span>
               <span className={`text-[10px] ${darkIcon}`}>·</span>
-              <span className={`text-[10px] font-medium ${darkSubtext}`}>{booking.startTime.split('T')[0]}</span>
+              {booking.isLongTerm ? (
+                <span className={`text-[10px] font-medium ${darkSubtext}`}>
+                  {booking.longTermType === 'weekly' && booking.selectedWeekDays
+                    ? `每周${booking.selectedWeekDays.sort().map((d: number) => ['日', '一', '二', '三', '四', '五', '六'][d]).join('、')}，共${booking.weekCount}周`
+                    : `${formatDateDisplay(booking.longTermStartDate)} - ${formatDateDisplay(booking.longTermEndDate)}`
+                  }
+                </span>
+              ) : (
+                <span className={`text-[10px] font-medium ${darkSubtext}`}>{booking.startTime.split('T')[0]}</span>
+              )}
             </div>
+            {booking.isLongTerm && (
+              <div className="flex items-center space-x-2 mt-0.5">
+                <span className={`text-[10px] ${darkSubtext}`}>每天 {booking.dailyStartTime} - {booking.dailyEndTime}</span>
+                <span className={`text-[10px] ${isFinanceTheme ? 'text-emerald-400' : 'text-emerald-600'}`}>({getLongTermDays()}天)</span>
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center space-x-2">
@@ -248,10 +288,43 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
       {isExpanded && (
         <div className={`px-4 pb-4 pt-2 border-t ${darkBorder} animate-in slide-in-from-top-2 fade-in`}>
           <div className="space-y-2.5 mb-4">
-            <div className="flex items-center justify-between text-xs">
-              <span className={darkSubtext}>时间段</span>
-              <span className={`font-bold ${darkSecondary}`}>{booking.startTime.replace('T', ' ').slice(0, 16)} - {booking.endTime.split('T')[1].slice(0, 5)}</span>
-            </div>
+            {booking.isLongTerm ? (
+              // 长期预订时间展示
+              <>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={darkSubtext}>预订类型</span>
+                  <span className={`font-bold ${darkSecondary}`}>
+                    {booking.longTermType === 'weekly' ? '按周重复' : '连续日期'}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={darkSubtext}>日期范围</span>
+                  <span className={`font-bold ${darkSecondary}`}>
+                    {formatDateDisplay(booking.longTermStartDate)} - {formatDateDisplay(booking.longTermEndDate)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between text-xs">
+                  <span className={darkSubtext}>每天时段</span>
+                  <span className={`font-bold ${isFinanceTheme ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                    {booking.dailyStartTime} - {booking.dailyEndTime}
+                  </span>
+                </div>
+                {booking.longTermType === 'weekly' && booking.selectedWeekDays && (
+                  <div className="flex items-center justify-between text-xs">
+                    <span className={darkSubtext}>每周</span>
+                    <span className={`font-bold ${darkSecondary}`}>
+                      周{booking.selectedWeekDays.sort().map((d: number) => ['日', '一', '二', '三', '四', '五', '六'][d]).join('、')}
+                    </span>
+                  </div>
+                )}
+              </>
+            ) : (
+              // 单次预订时间展示
+              <div className="flex items-center justify-between text-xs">
+                <span className={darkSubtext}>时间段</span>
+                <span className={`font-bold ${darkSecondary}`}>{booking.startTime.replace('T', ' ').slice(0, 16)} - {booking.endTime.split('T')[1].slice(0, 5)}</span>
+              </div>
+            )}
             <div className="flex items-center justify-between text-xs">
               <span className={darkSubtext}>参与人数</span>
               <span className={`font-bold ${darkSecondary}`}>{booking.participants || 1} 人</span>
@@ -299,11 +372,26 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
               </div>
             )}
           </div>
-          {['PENDING', 'APPROVED'].includes(booking.status) && (
-            <button onClick={(e) => { e.stopPropagation(); onCancel(booking.id); }} className={`w-full py-2.5 ${cancelBtn} rounded-xl font-bold text-xs border active:scale-[0.98] transition-transform`}>
-              撤销申请
+
+          {/* 操作按钮 */}
+          <div className="flex space-x-2">
+            <button
+              onClick={(e) => { e.stopPropagation(); onViewDetail(booking); }}
+              className={`flex-1 py-2.5 rounded-xl font-bold text-xs border active:scale-[0.98] transition-transform ${
+                isFinanceTheme ? 'border-slate-500 text-slate-300' : 'border-gray-300 text-gray-600'
+              }`}
+            >
+              查看详情
             </button>
-          )}
+            {['PENDING', 'APPROVED'].includes(booking.status) && (
+              <button
+                onClick={(e) => { e.stopPropagation(); onCancel(booking.id); }}
+                className={`flex-1 py-2.5 ${cancelBtn} rounded-xl font-bold text-xs border active:scale-[0.98] transition-transform`}
+              >
+                撤销申请
+              </button>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -311,7 +399,7 @@ const MobileBookingCard = ({ booking, resource, theme, onCancel, expanded, onTog
 };
 
 // --- Mobile Approval Card ---
-const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprove, onReject }: any) => {
+const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprove, onReject, onViewDetail }: any) => {
   const isFinanceTheme = theme === 'finance';
   const darkBg = isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-100';
   const darkText = isFinanceTheme ? 'text-slate-100' : 'text-gray-800';
@@ -319,10 +407,22 @@ const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprov
   const darkUserBg = isFinanceTheme ? 'bg-slate-700 text-amber-400' : `bg-${theme}-100 text-${theme}-600`;
   const darkRejectBtn = isFinanceTheme ? 'border-slate-500 text-slate-400' : 'border border-gray-200 text-gray-500';
   const darkApproveBtn = isFinanceTheme ? 'bg-violet-500' : `bg-${theme}-600`;
-  
+
   const currentNode = workflow[booking.currentNodeIndex];
   const isLastNode = booking.currentNodeIndex === workflow.length - 1;
-  
+
+  // 计算长期预订的天数
+  const getLongTermDays = () => {
+    if (!booking.isLongTerm) return 0;
+    if (booking.longTermType === 'weekly' && booking.selectedWeekDays && booking.weekCount) {
+      return booking.selectedWeekDays.length * booking.weekCount;
+    }
+    if (booking.longTermStartDate && booking.longTermEndDate) {
+      return Math.ceil((new Date(booking.longTermEndDate).getTime() - new Date(booking.longTermStartDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+    }
+    return 0;
+  };
+
   return (
     <div className={`${darkBg} p-4 rounded-2xl border shadow-sm`}>
       <div className="flex items-start space-x-3 mb-3">
@@ -330,8 +430,30 @@ const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprov
           {user?.name?.[0] || '?'}
         </div>
         <div className="flex-1 min-w-0">
-          <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{user?.name} 申请 {resource?.name}</h4>
-          <p className={`text-[10px] ${darkSubtext} mt-0.5`}>{booking.startTime.replace('T', ' ')} 至 {booking.endTime.replace('T', ' ')}</p>
+          <div className="flex items-center space-x-2">
+            <h4 className={`font-bold ${darkText} text-sm line-clamp-1`}>{user?.name} 申请 {resource?.name}</h4>
+            {booking.isLongTerm && (
+              <span className={`text-[10px] px-2 py-0.5 rounded-full ${isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>
+                长期
+              </span>
+            )}
+          </div>
+          <p className={`text-[10px] ${darkSubtext} mt-0.5`}>
+            {booking.isLongTerm ? (
+              booking.longTermType === 'weekly' && booking.selectedWeekDays ? (
+                `每周${booking.selectedWeekDays.sort().map((d: number) => ['日', '一', '二', '三', '四', '五', '六'][d]).join('、')}，共${booking.weekCount}周 (${getLongTermDays()}天)`
+              ) : (
+                `${booking.longTermStartDate} 至 ${booking.longTermEndDate} (${getLongTermDays()}天)`
+              )
+            ) : (
+              `${booking.startTime.replace('T', ' ')} 至 ${booking.endTime.replace('T', ' ')}`
+            )}
+          </p>
+          {booking.isLongTerm && (
+            <p className={`text-[10px] ${darkSubtext} mt-0.5`}>
+              每天 {booking.dailyStartTime} - {booking.dailyEndTime}
+            </p>
+          )}
         </div>
       </div>
       
@@ -377,8 +499,310 @@ const MobileApprovalCard = ({ booking, resource, user, workflow, theme, onApprov
       
       <div className="flex space-x-2">
         <button onClick={() => onReject('不符合规定')} className={`flex-1 py-2.5 border ${darkRejectBtn} rounded-xl font-bold text-xs active:scale-[0.98] transition-transform`}>驳回</button>
+        <button onClick={onViewDetail} className={`flex-1 py-2.5 border ${isFinanceTheme ? 'border-slate-500 text-slate-300' : 'border-gray-300 text-gray-600'} rounded-xl font-bold text-xs active:scale-[0.98] transition-transform`}>
+          查看详情
+        </button>
         <button onClick={onApprove} className={`flex-1 py-2.5 ${darkApproveBtn} text-white rounded-xl font-bold text-xs shadow-md active:scale-[0.98] transition-transform`}>
           {isLastNode ? '最终通过' : '通过'}
+        </button>
+      </div>
+    </div>
+  );
+};
+
+// --- Universal Booking Detail Modal (Mobile Optimized) ---
+const BookingDetailModal = ({ booking, resource, user, theme, onClose }: any) => {
+  const isFinanceTheme = theme === 'finance';
+  const darkBg = isFinanceTheme ? 'bg-slate-900' : 'bg-gray-50';
+  const cardBg = isFinanceTheme ? 'bg-slate-800' : 'bg-white';
+  const darkText = isFinanceTheme ? 'text-slate-100' : 'text-gray-800';
+  const darkSubtext = isFinanceTheme ? 'text-slate-400' : 'text-gray-500';
+  const accentColor = isFinanceTheme ? 'text-amber-400' : `text-${theme}-600`;
+
+  // 生成长期预订日期列表
+  const generateBookingDates = () => {
+    if (!booking.isLongTerm) return [];
+    const dates: string[] = [];
+    if (booking.longTermType === 'weekly' && booking.selectedWeekDays && booking.weekCount) {
+      const start = new Date(booking.longTermStartDate);
+      for (let week = 0; week < booking.weekCount; week++) {
+        for (const dayOfWeek of booking.selectedWeekDays) {
+          const targetDate = new Date(start);
+          targetDate.setDate(start.getDate() + week * 7 + ((dayOfWeek - start.getDay() + 7) % 7));
+          if (targetDate >= new Date(booking.longTermStartDate)) {
+            dates.push(targetDate.toISOString().split('T')[0]);
+          }
+        }
+      }
+    } else if (booking.longTermStartDate && booking.longTermEndDate) {
+      const current = new Date(booking.longTermStartDate);
+      const end = new Date(booking.longTermEndDate);
+      while (current <= end) {
+        dates.push(current.toISOString().split('T')[0]);
+        current.setDate(current.getDate() + 1);
+      }
+    }
+    return dates.sort();
+  };
+
+  const bookingDates = generateBookingDates();
+
+  // 格式化日期时间
+  const formatDateTime = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  };
+
+  // 格式化日期
+  const formatDate = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return `${d.getMonth() + 1}月${d.getDate()}日`;
+  };
+
+  // 获取星期几
+  const getWeekDay = (dateStr: string) => {
+    const d = new Date(dateStr);
+    return ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+  };
+
+  return (
+    <div className={`fixed inset-0 z-[200] ${darkBg} flex flex-col max-w-md mx-auto`}>
+      {/* Header - 固定顶部 */}
+      <div className={`sticky top-0 z-10 border-b ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'} p-4 ${cardBg}`}>
+        <div className="flex items-center justify-between">
+          <button 
+            onClick={onClose} 
+            className={`p-3 -ml-2 rounded-full active:scale-95 transition-transform ${isFinanceTheme ? 'text-slate-400 hover:bg-slate-700' : 'text-gray-500 hover:bg-gray-100'}`}
+          >
+            <ChevronLeft size={24} />
+          </button>
+          <div className="text-center flex-1">
+            <h1 className={`text-lg font-bold ${darkText}`}>预订详情</h1>
+            <p className={`text-xs ${darkSubtext}`}>
+              {booking.isLongTerm ? `共 ${bookingDates.length} 个日期` : '单次预订'}
+            </p>
+          </div>
+          <div className="w-10" />
+        </div>
+      </div>
+
+      {/* Content - 可滚动区域 */}
+      <div className="flex-1 overflow-y-auto">
+        {/* 顶部概览卡片 */}
+        <div className={`p-4 ${cardBg} border-b ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+          <div className="flex items-center space-x-4 mb-4">
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center text-2xl font-bold ${isFinanceTheme ? 'bg-violet-500/20 text-violet-400' : `bg-${theme}-100 text-${theme}-600`}`}>
+              {user?.name?.[0] || '?'}
+            </div>
+            <div className="flex-1">
+              <h2 className={`text-xl font-bold ${darkText}`}>{user?.name}</h2>
+              <p className={`text-sm ${darkSubtext}`}>{user?.department || '未知部门'}</p>
+            </div>
+          </div>
+
+          {/* 资源信息 */}
+          <div className={`p-4 rounded-xl ${isFinanceTheme ? 'bg-slate-700/50' : 'bg-gray-50'}`}>
+            <div className="flex items-center justify-between mb-2">
+              <span className={`text-sm ${darkSubtext}`}>会议室</span>
+              <span className={`text-base font-bold ${darkText}`}>{resource?.name}</span>
+            </div>
+            <div className="flex items-center justify-between">
+              <span className={`text-sm ${darkSubtext}`}>容量</span>
+              <span className={`text-sm ${darkText}`}>{resource?.capacity || '-'} 人</span>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {/* 会议主题 */}
+          <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+            <h3 className={`text-sm font-medium ${darkSubtext} mb-2`}>会议主题</h3>
+            <p className={`text-lg font-bold ${darkText}`}>{booking.purpose}</p>
+          </div>
+
+          {/* 时间信息 */}
+          <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+            <h3 className={`text-sm font-medium ${darkSubtext} mb-3`}>预订时间</h3>
+            
+            {booking.isLongTerm ? (
+              // 长期预订时间展示
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>预订类型</span>
+                  <span className={`text-sm font-medium px-2 py-1 rounded-full ${isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>
+                    {booking.longTermType === 'weekly' ? '按周重复' : '连续日期'}
+                  </span>
+                </div>
+                
+                {booking.longTermType === 'weekly' && booking.selectedWeekDays ? (
+                  <div className="flex items-center justify-between">
+                    <span className={`text-sm ${darkSubtext}`}>每周</span>
+                    <span className={`text-sm font-medium ${darkText}`}>
+                      周{booking.selectedWeekDays.sort().map((d: number) => ['日', '一', '二', '三', '四', '五', '六'][d]).join('、')}
+                      ，共{booking.weekCount}周
+                    </span>
+                  </div>
+                ) : null}
+                
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>日期范围</span>
+                  <span className={`text-sm font-medium ${darkText}`}>
+                    {formatDate(booking.longTermStartDate)} - {formatDate(booking.longTermEndDate)}
+                  </span>
+                </div>
+                
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>每天时段</span>
+                  <span className={`text-sm font-bold ${accentColor}`}>
+                    {booking.dailyStartTime} - {booking.dailyEndTime}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              // 单次预订时间展示
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>开始时间</span>
+                  <span className={`text-base font-bold ${accentColor}`}>
+                    {formatDateTime(booking.startTime)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>结束时间</span>
+                  <span className={`text-base font-bold ${darkText}`}>
+                    {formatDateTime(booking.endTime)}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className={`text-sm ${darkSubtext}`}>星期</span>
+                  <span className={`text-sm ${darkText}`}>
+                    周{getWeekDay(booking.startTime)}
+                  </span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* 长期预订日期列表 */}
+          {booking.isLongTerm && bookingDates.length > 0 && (
+            <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+              <h3 className={`text-sm font-medium ${darkSubtext} mb-3`}>预订日期列表</h3>
+              <div className="grid grid-cols-3 gap-2">
+                {bookingDates.map((date: string, idx: number) => {
+                  const d = new Date(date);
+                  return (
+                    <div 
+                      key={idx} 
+                      className={`p-3 rounded-xl text-center ${isFinanceTheme ? 'bg-slate-700' : 'bg-gray-50'}`}
+                    >
+                      <p className={`text-sm font-bold ${darkText}`}>{d.getDate()}日</p>
+                      <p className={`text-xs ${darkSubtext}`}>{d.getMonth() + 1}月 周{['日', '一', '二', '三', '四', '五', '六'][d.getDay()]}</p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 参会信息 */}
+          <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+            <h3 className={`text-sm font-medium ${darkSubtext} mb-3`}>参会信息</h3>
+            <div className="space-y-2">
+              <div className="flex items-center justify-between">
+                <span className={`text-sm ${darkSubtext}`}>参会人数</span>
+                <span className={`text-sm font-medium ${darkText}`}>{booking.participants || 1} 人</span>
+              </div>
+            </div>
+          </div>
+
+          {/* 特殊需求 */}
+          {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService || booking.needsNameCard) && (
+            <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+              <h3 className={`text-sm font-medium ${darkSubtext} mb-3`}>特殊需求</h3>
+              <div className="flex flex-wrap gap-2">
+                {booking.hasLeader && (
+                  <span className={`text-xs px-3 py-2 rounded-full font-medium ${isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-600'}`}>
+                    👤 领导参会
+                  </span>
+                )}
+                {booking.isVideoConference && (
+                  <span className={`text-xs px-3 py-2 rounded-full font-medium ${isFinanceTheme ? 'bg-blue-500/20 text-blue-400' : 'bg-blue-100 text-blue-600'}`}>
+                    📹 视频会议
+                  </span>
+                )}
+                {booking.needsTeaService && (
+                  <span className={`text-xs px-3 py-2 rounded-full font-medium ${isFinanceTheme ? 'bg-rose-500/20 text-rose-400' : 'bg-rose-100 text-rose-600'}`}>
+                    🍵 茶水服务
+                  </span>
+                )}
+                {booking.needsNameCard && (
+                  <span className={`text-xs px-3 py-2 rounded-full font-medium ${isFinanceTheme ? 'bg-purple-500/20 text-purple-400' : 'bg-purple-100 text-purple-600'}`}>
+                    🏷️ 桌牌
+                  </span>
+                )}
+              </div>
+              {booking.leaderDetails && (
+                <div className="mt-3 p-3 rounded-lg bg-opacity-50 bg-gray-100">
+                  <p className={`text-xs ${darkSubtext} mb-1`}>领导详情</p>
+                  <p className={`text-sm ${darkText}`}>{booking.leaderDetails}</p>
+                </div>
+              )}
+              {booking.nameCardDetails && (
+                <div className="mt-3 p-3 rounded-lg bg-opacity-50 bg-gray-100">
+                  <p className={`text-xs ${darkSubtext} mb-1`}>桌牌详情</p>
+                  <p className={`text-sm ${darkText}`}>{booking.nameCardDetails}</p>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* 审批状态 */}
+          <div className={`${cardBg} p-4 rounded-2xl border ${isFinanceTheme ? 'border-slate-700' : 'border-gray-200'}`}>
+            <h3 className={`text-sm font-medium ${darkSubtext} mb-3`}>审批状态</h3>
+            <div className="flex items-center justify-between">
+              <span className={`text-sm ${darkSubtext}`}>当前状态</span>
+              <span className={`text-sm font-medium px-3 py-1.5 rounded-full ${
+                booking.status === 'APPROVED' 
+                  ? (isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : 'bg-emerald-100 text-emerald-600')
+                  : booking.status === 'REJECTED'
+                  ? (isFinanceTheme ? 'bg-rose-500/20 text-rose-400' : 'bg-rose-100 text-rose-600')
+                  : (isFinanceTheme ? 'bg-amber-500/20 text-amber-400' : 'bg-amber-100 text-amber-600')
+              }`}>
+                {booking.status === 'APPROVED' ? '✓ 已通过' : booking.status === 'REJECTED' ? '✗ 已驳回' : '⏳ 待审批'}
+              </span>
+            </div>
+            {booking.approvalHistory && booking.approvalHistory.length > 0 && (
+              <div className="mt-3 space-y-2">
+                {booking.approvalHistory.map((record: any, idx: number) => (
+                  <div key={idx} className={`p-3 rounded-lg ${isFinanceTheme ? 'bg-slate-700/50' : 'bg-gray-50'}`}>
+                    <div className="flex items-center justify-between">
+                      <span className={`text-xs font-medium ${darkText}`}>{record.nodeName}</span>
+                      <span className={`text-xs ${record.status === 'APPROVED' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                        {record.status === 'APPROVED' ? '通过' : '驳回'}
+                      </span>
+                    </div>
+                    <p className={`text-xs ${darkSubtext} mt-1`}>{record.approverName} · {new Date(record.timestamp).toLocaleString()}</p>
+                    {record.comment && (
+                      <p className={`text-xs ${darkSubtext} mt-1 italic`}>"{record.comment}"</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* 底部安全区域 */}
+        <div className="h-20" />
+      </div>
+
+      {/* Close Button - 固定底部 */}
+      <div className={`fixed bottom-0 left-0 right-0 p-4 border-t ${isFinanceTheme ? 'border-slate-700 bg-slate-800' : 'border-gray-200 bg-white'} max-w-md mx-auto`}>
+        <button 
+          onClick={onClose} 
+          className={`w-full py-4 rounded-xl font-bold text-white text-base active:scale-[0.98] transition-transform ${isFinanceTheme ? 'bg-violet-500' : `bg-${theme}-600`}`}
+        >
+          关闭
         </button>
       </div>
     </div>
@@ -451,6 +875,7 @@ const AppMobile: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showBookingModal, setShowBookingModal] = useState(false);
+  const [selectedBookingForDetail, setSelectedBookingForDetail] = useState<Booking | null>(null);
   const [showRecommendation, setShowRecommendation] = useState(false);
   const [recommendationParams, setRecommendationParams] = useState<{
     resourceType: 'ROOM' | 'DESK';
@@ -463,6 +888,36 @@ const AppMobile: React.FC = () => {
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [expandedBookingIds, setExpandedBookingIds] = useState<Set<string>>(new Set());
   const [bookingConflict, setBookingConflict] = useState<any>(null);
+
+  // 系统配置
+  const [systemConfig, setSystemConfig] = useState<{ maxBookingDays: number }>({ maxBookingDays: 20 });
+
+  // 加载系统配置
+  useEffect(() => {
+    const loadConfig = () => {
+      try {
+        const savedConfig = localStorage.getItem('systemConfig');
+        if (savedConfig) {
+          const config = JSON.parse(savedConfig);
+          setSystemConfig({ maxBookingDays: config.maxBookingDays || 20 });
+        }
+      } catch (err) {
+        console.error('加载系统配置失败:', err);
+      }
+    };
+
+    loadConfig();
+
+    // 监听配置更新
+    const handleConfigUpdate = (e: any) => {
+      if (e.detail?.maxBookingDays) {
+        setSystemConfig({ maxBookingDays: e.detail.maxBookingDays });
+      }
+    };
+
+    window.addEventListener('systemConfigUpdated', handleConfigUpdate);
+    return () => window.removeEventListener('systemConfigUpdated', handleConfigUpdate);
+  }, []);
 
   // 从 Supabase 加载初始数据
   useEffect(() => {
@@ -592,7 +1047,11 @@ const AppMobile: React.FC = () => {
     setTimeout(() => { setNotifications(prev => prev.filter(n => n.id !== newNotif.id)); }, 3000);
   };
 
-  const canApprove = (booking: Booking) => booking.status === 'PENDING' && currentUser?.role.includes(workflow[booking.currentNodeIndex]?.approverRole);
+  const canApprove = (booking: Booking) => {
+    // 只显示主记录或非长期预订（从记录 isMaster=false 应该被过滤）
+    if (booking.isLongTerm && booking.isMaster === false) return false;
+    return booking.status === 'PENDING' && currentUser?.role.includes(workflow[booking.currentNodeIndex]?.approverRole);
+  };
   const pendingCount = bookings.filter(b => canApprove(b)).length;
 
   const stats = useMemo(() => {
@@ -621,6 +1080,7 @@ const AppMobile: React.FC = () => {
   const myBookings = useMemo(() => {
     return bookings
       .filter(b => b.userId === currentUser?.id)
+      .filter(b => !(b.isLongTerm && b.isMaster === false)) // 过滤掉长期预订的从记录
       .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   }, [bookings, currentUser]);
 
@@ -632,74 +1092,224 @@ const AppMobile: React.FC = () => {
   };
 
   const handleBooking = async (data: any) => {
-    const { resourceId, purpose, startTime, endTime, participants, hasLeader, leaderDetails, isVideoConference, needsTeaService } = data;
+    const { 
+      resourceId, purpose, startTime, endTime, participants, 
+      hasLeader, leaderDetails, isVideoConference, needsTeaService,
+      needsNameCard, nameCardDetails,
+      isLongTerm, longTermGroupId, longTermStartDate, longTermEndDate, 
+      dailyStartTime, dailyEndTime, bookings: longTermBookings,
+      longTermType, selectedWeekDays, weekCount
+    } = data;
+    
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
-    
-    const now = new Date();
-    const start = new Date(startTime);
-    const end = new Date(endTime);
-    const requestedDuration = (end.getTime() - start.getTime()) / 60000;
-
-    if (end <= start) {
-      addNotification("预约失败", "结束时间必须晚于开始时间", "WARNING");
-      return;
-    }
-
-    if (start < now && resource.type === 'ROOM') {
-      const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
-      setBookingConflict({ 
-        resource, 
-        requestedStart: startTime, 
-        requestedEnd: endTime, 
-        purpose,
-        resourceBookings: bookings.filter(b => b.resourceId === resourceId && b.status !== 'REJECTED' && b.status !== 'CANCELLED'), 
-        errorType: 'PAST_TIME', 
-        suggestion 
-      });
-      return;
-    }
-
-    const conflict = bookings.find(b => 
-       b.resourceId === resourceId && 
-       (b.status === 'APPROVED' || b.status === 'PENDING') && 
-       (start < new Date(b.endTime) && end > new Date(b.startTime))
-    );
-
-    if (conflict) {
-      const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
-      setBookingConflict({ 
-        resource, 
-        requestedStart: startTime, 
-        requestedEnd: endTime, 
-        purpose,
-        resourceBookings: bookings.filter(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING')), 
-        errorType: 'CONFLICT', 
-        suggestion 
-      });
-      return;
-    }
-
-    const newBooking: Omit<Booking, 'id'> = { 
-      userId: currentUser.id, 
-      resourceId, 
-      type: resource.type, 
-      startTime, 
-      endTime, 
-      status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
-      purpose, 
-      participants: participants || 1, 
-      createdAt: new Date().toISOString(), 
-      currentNodeIndex: 0, 
-      approvalHistory: [],
-      hasLeader,
-      leaderDetails,
-      isVideoConference,
-      needsTeaService
-    };
 
     try {
       setSaveStatus('saving');
+
+      // 长期预订：创建主从记录结构
+      if (isLongTerm && longTermBookings && longTermBookings.length > 0) {
+        const createdBookings: Booking[] = [];
+        
+        // 先生成主记录ID
+        const masterId = `lt_master_${Date.now()}`;
+        
+        // 创建主记录（用于审批流程）
+        const masterBooking: Omit<Booking, 'id'> = { 
+          userId: currentUser.id, 
+          resourceId, 
+          type: resource.type, 
+          // 主记录使用第一个日期的时段
+          startTime: longTermBookings[0].startTime, 
+          endTime: longTermBookings[0].endTime, 
+          status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
+          purpose, 
+          participants: participants || 1, 
+          createdAt: new Date().toISOString(), 
+          currentNodeIndex: 0, 
+          approvalHistory: [],
+          hasLeader,
+          leaderDetails,
+          isVideoConference,
+          needsTeaService,
+          needsNameCard,
+          nameCardDetails,
+          isLongTerm: true,
+          longTermGroupId,
+          longTermStartDate,
+          longTermEndDate,
+          dailyStartTime,
+          dailyEndTime,
+          longTermType,
+          selectedWeekDays,
+          weekCount,
+          isMaster: true,  // 标记为主记录
+        };
+
+        const createdMaster = await createBooking(masterBooking);
+        createdBookings.push(createdMaster);
+        
+        // 创建从记录（跟随主记录状态）
+        for (let i = 0; i < longTermBookings.length; i++) {
+          const dayBooking = longTermBookings[i];
+          const slaveBooking: Omit<Booking, 'id'> = { 
+            userId: currentUser.id, 
+            resourceId, 
+            type: resource.type, 
+            startTime: dayBooking.startTime, 
+            endTime: dayBooking.endTime, 
+            // 从记录初始状态为 PENDING，等待主记录审批
+            status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
+            purpose, 
+            participants: participants || 1, 
+            createdAt: new Date().toISOString(), 
+            currentNodeIndex: 0, 
+            approvalHistory: [],
+            hasLeader,
+            leaderDetails,
+            isVideoConference,
+            needsTeaService,
+            needsNameCard,
+            nameCardDetails,
+            isLongTerm: true,
+            longTermGroupId,
+            longTermStartDate,
+            longTermEndDate,
+            dailyStartTime,
+            dailyEndTime,
+            longTermType,
+            selectedWeekDays,
+            weekCount,
+            isMaster: false,  // 标记为从记录
+            masterId: createdMaster.id,  // 关联主记录
+          };
+
+          const createdSlave = await createBooking(slaveBooking);
+          createdBookings.push(createdSlave);
+        }
+
+        setBookings(prev => [...createdBookings, ...prev]);
+        setShowBookingModal(false);
+        
+        const formatDate = (dateStr: string) => {
+          const d = new Date(dateStr);
+          return `${d.getMonth() + 1}月${d.getDate()}日`;
+        };
+        
+        // 构建预订信息提示
+        let bookingInfo = '';
+        if (longTermType === 'weekly' && selectedWeekDays && weekCount) {
+          const weekDaysStr = selectedWeekDays.sort().map((d: number) => ['日', '一', '二', '三', '四', '五', '六'][d]).join('、');
+          bookingInfo = `📍 ${resource.name}\n📅 每周${weekDaysStr}，共${weekCount}周 (${longTermBookings.length}天)\n🕐 每天 ${dailyStartTime} - ${dailyEndTime}\n📋 ${purpose}`;
+        } else {
+          const timeInfo = `${formatDate(longTermStartDate)} - ${formatDate(longTermEndDate)}`;
+          bookingInfo = `📍 ${resource.name}\n📅 ${timeInfo} (${longTermBookings.length}天)\n🕐 每天 ${dailyStartTime} - ${dailyEndTime}\n📋 ${purpose}`;
+        }
+        
+        // 构建审批信息
+        let approvalInfo = '';
+        if (workflow.length === 0) {
+          approvalInfo = '\n✅ 已自动通过';
+        } else {
+          const firstNode = workflow[0];
+          const firstRole = roles.find(r => r.id === firstNode?.approverRole);
+          const approvers = users.filter(u => u.role?.includes(firstNode?.approverRole));
+          const approverNames = approvers.length > 0 
+            ? approvers.map(u => u.name).join('、')
+            : '暂无指定审批人';
+          approvalInfo = `\n👉 下一环节: ${firstNode?.name || '未知'} (${firstRole?.name || '未知角色'})\n👤 审批人: ${approverNames}`;
+        }
+        
+        // 构建提示信息
+        const notificationMessage = `${bookingInfo}${approvalInfo}\n\n💡 提示：您可以在"我的预订"中查看和管理所有长期预订`;
+        
+        addNotification(
+          longTermType === 'weekly' ? "🎉 按周预订申请已提交" : "🎉 长期预订申请已提交", 
+          notificationMessage, 
+          "SUCCESS"
+        );
+        
+        // 显示额外的提示弹窗（可选）
+        if (longTermBookings.length > 5) {
+          setTimeout(() => {
+            addNotification(
+              "📋 预订提醒", 
+              `您已成功预订 ${longTermBookings.length} 天的会议室。系统会在每次会议前15分钟发送提醒通知。`, 
+              "INFO"
+            );
+          }, 2000);
+        }
+        
+        setSaveStatus('saved');
+        return;
+      }
+
+      // 单次预订
+      const now = new Date();
+      const start = new Date(startTime);
+      const end = new Date(endTime);
+      const requestedDuration = (end.getTime() - start.getTime()) / 60000;
+
+      if (end <= start) {
+        addNotification("预约失败", "结束时间必须晚于开始时间", "WARNING");
+        return;
+      }
+
+      if (start < now && resource.type === 'ROOM') {
+        const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
+        setBookingConflict({ 
+          resource, 
+          requestedStart: startTime, 
+          requestedEnd: endTime, 
+          purpose,
+          resourceBookings: bookings.filter(b => b.resourceId === resourceId && b.status !== 'REJECTED' && b.status !== 'CANCELLED'), 
+          errorType: 'PAST_TIME', 
+          suggestion 
+        });
+        return;
+      }
+
+      const conflict = bookings.find(b => 
+         b.resourceId === resourceId && 
+         (b.status === 'APPROVED' || b.status === 'PENDING') && 
+         (start < new Date(b.endTime) && end > new Date(b.startTime))
+      );
+
+      if (conflict) {
+        const suggestion = findNextAvailableSlot(resourceId, bookings, requestedDuration);
+        setBookingConflict({ 
+          resource, 
+          requestedStart: startTime, 
+          requestedEnd: endTime, 
+          purpose,
+          resourceBookings: bookings.filter(b => b.resourceId === resourceId && (b.status === 'APPROVED' || b.status === 'PENDING')), 
+          errorType: 'CONFLICT', 
+          suggestion 
+        });
+        return;
+      }
+
+      const newBooking: Omit<Booking, 'id'> = { 
+        userId: currentUser.id, 
+        resourceId, 
+        type: resource.type, 
+        startTime, 
+        endTime, 
+        status: workflow.length === 0 ? 'APPROVED' : 'PENDING', 
+        purpose, 
+        participants: participants || 1, 
+        createdAt: new Date().toISOString(), 
+        currentNodeIndex: 0, 
+        approvalHistory: [],
+        hasLeader,
+        leaderDetails,
+        isVideoConference,
+        needsTeaService,
+        needsNameCard,
+        nameCardDetails,
+        isLongTerm: false
+      };
+
       const createdBooking = await createBooking(newBooking);
       setBookings(prev => [createdBooking, ...prev]);
       setShowBookingModal(false);
@@ -1095,7 +1705,7 @@ const AppMobile: React.FC = () => {
                 </div>
               ) : (
                 myBookings.map(booking => (
-                  <MobileBookingCard 
+                  <MobileBookingCard
                     key={booking.id}
                     booking={booking}
                     resource={resources.find(r => r.id === booking.resourceId)}
@@ -1103,6 +1713,7 @@ const AppMobile: React.FC = () => {
                     onCancel={handleCancelBooking}
                     expanded={expandedBookingIds.has(booking.id)}
                     onToggle={() => toggleBookingExpand(booking.id)}
+                    onViewDetail={setSelectedBookingForDetail}
                   />
                 ))
               )}
@@ -1138,7 +1749,7 @@ const AppMobile: React.FC = () => {
                 </div>
               ) : (
                 bookings.filter(b => canApprove(b)).map(booking => (
-                  <MobileApprovalCard 
+                  <MobileApprovalCard
                     key={booking.id}
                     booking={booking}
                     resource={resources.find(r => r.id === booking.resourceId)}
@@ -1147,6 +1758,7 @@ const AppMobile: React.FC = () => {
                     theme={theme}
                     onApprove={() => handleApprove(booking)}
                     onReject={(comment: string) => handleReject(booking, comment)}
+                    onViewDetail={() => setSelectedBookingForDetail(booking)}
                   />
                 ))
               )}
@@ -1341,10 +1953,21 @@ const AppMobile: React.FC = () => {
             resource={selectedResource}
             bookings={bookings}
             theme={theme}
+            maxBookingDays={systemConfig?.maxBookingDays || 20}
             onClose={() => setShowBookingModal(false)}
             onConfirm={handleBooking}
           />
         )
+      )}
+
+      {selectedBookingForDetail && (
+        <BookingDetailModal
+          booking={selectedBookingForDetail}
+          resource={resources.find(r => r.id === selectedBookingForDetail.resourceId)}
+          user={users.find(u => u.id === selectedBookingForDetail.userId)}
+          theme={theme}
+          onClose={() => setSelectedBookingForDetail(null)}
+        />
       )}
 
       {showRecommendation && currentUser && (

@@ -18,6 +18,7 @@ export default defineConfig({
       input: {
         main: path.resolve(__dirname, 'index.html'),
         monitor: path.resolve(__dirname, 'monitor.html'),
+        'room-display': path.resolve(__dirname, 'room-display.html'),
       },
     },
   },

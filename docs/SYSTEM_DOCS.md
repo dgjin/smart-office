@@ -47,6 +47,7 @@
 │  │  - 部门表 (smartoffice_departments)                  │   │
 │  │  - 工作流表 (smartoffice_workflow)                   │   │
 │  │  - 审计表 (smartoffice_approval_audit)               │   │
+│  │  - 系统配置表 (smartoffice_system_config)            │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -99,6 +100,7 @@ const PERMISSIONS = {
   CONFIG_WORKFLOW: '工作流配置',
   ACCESS_DATA_CENTER: '数据中心',
   CONFIGURE_RECOMMENDATION: '推荐配置',
+  CONFIGURE_SYSTEM: '系统配置',  // 新增：系统配置权限
 
   // 高级权限
   VIEW_ALL_BOOKINGS: '查看所有预订',
@@ -204,6 +206,34 @@ interface RecurringConfig {
   frequency: 'daily' | 'weekly' | 'monthly';
   count: number; // 1-10
   interval: number; // 间隔
+}
+```
+
+#### 3.4.4 长期预订
+```typescript
+interface LongTermBookingConfig {
+  isLongTerm: boolean;           // 是否为长期预订
+  longTermGroupId: string;       // 长期预订组ID
+  longTermStartDate: string;     // 开始日期 (YYYY-MM-DD)
+  longTermEndDate: string;       // 结束日期 (YYYY-MM-DD)
+  dailyStartTime: string;        // 每天开始时间 (HH:MM)
+  dailyEndTime: string;          // 每天结束时间 (HH:MM)
+  bookings: DayBooking[];        // 每天的预订详情
+}
+
+interface DayBooking {
+  date: string;                  // 日期
+  startTime: string;             // 开始时间 (ISO)
+  endTime: string;               // 结束时间 (ISO)
+}
+```
+
+**系统配置:**
+```typescript
+interface SystemConfig {
+  maxBookingDays: number;        // 最长预订天数 (默认20)
+  updatedAt: string;             // 更新时间
+  updatedBy: string;             // 更新人ID
 }
 ```
 
@@ -354,6 +384,13 @@ function transformBookingFromDB(dbBooking: any): Booking {
     needsTeaService: dbBooking.needs_tea_service,
     needsNameCard: dbBooking.needs_name_card,
     nameCardDetails: dbBooking.name_card_details,
+    // 长期预订字段
+    isLongTerm: dbBooking.is_long_term,
+    longTermGroupId: dbBooking.long_term_group_id,
+    longTermStartDate: dbBooking.long_term_start_date,
+    longTermEndDate: dbBooking.long_term_end_date,
+    dailyStartTime: dbBooking.daily_start_time,
+    dailyEndTime: dbBooking.daily_end_time,
   };
 }
 ```
@@ -440,6 +477,11 @@ npm run preview
 - 检查工作流配置是否正确
 - 确认审批节点有对应的角色用户
 - 查看审批历史记录
+
+### Q6: 长期预订创建失败
+- 检查数据库是否已添加长期预订字段
+- 执行 `docs/database_migration_long_term_booking.sql`
+- 确认 `handleBooking` 函数已更新支持长期预订
 
 ---
 

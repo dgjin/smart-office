@@ -2,7 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { MeetingRoomMonitor } from './components/MeetingRoomMonitor';
 import { createRealtimeService, ConnectionStatus, BookingDelta, ResourceDelta } from './services/realtimeService';
-import { Booking, Resource } from './types';
+import { getUsers } from './services/supabaseService';
+import { Booking, Resource, User } from './types';
 
 // 错误边界组件
 class ErrorBoundary extends React.Component<
@@ -95,6 +96,7 @@ const MonitorApp: React.FC = () => {
 
   const [bookings, setBookings] = React.useState<Booking[]>(defaultBookings);
   const [resources, setResources] = React.useState<Resource[]>(defaultResources);
+  const [users, setUsers] = React.useState<User[]>([]);
   const [isInitialLoad, setIsInitialLoad] = React.useState(true);
   const [connectionStatus, setConnectionStatus] = React.useState<ConnectionStatus>('disconnected');
   const [lastUpdate, setLastUpdate] = React.useState<Date>(new Date());
@@ -109,10 +111,31 @@ const MonitorApp: React.FC = () => {
     console.log('MonitorApp 状态变化:', {
       bookingsCount: bookings.length,
       resourcesCount: resources.length,
+      usersCount: users.length,
       connectionStatus,
       hasInitialData: hasBookingsData || hasResourcesData
     });
-  }, [bookings, resources, connectionStatus, hasBookingsData, hasResourcesData]);
+  }, [bookings, resources, users, connectionStatus, hasBookingsData, hasResourcesData]);
+
+  // 加载用户数据
+  React.useEffect(() => {
+    const loadUsers = async () => {
+      try {
+        console.log('开始加载用户数据...');
+        const userData = await getUsers();
+        console.log('用户数据加载成功:', userData.length, '条');
+        setUsers(userData);
+      } catch (error) {
+        console.error('加载用户数据失败:', error);
+      }
+    };
+
+    loadUsers();
+
+    // 每30秒刷新一次用户数据
+    const interval = setInterval(loadUsers, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   // 只有同时收到预订和资源数据后才显示界面
   const hasInitialData = hasBookingsData || hasResourcesData;
@@ -272,7 +295,7 @@ const MonitorApp: React.FC = () => {
         </button>
       </div>
 
-      <MeetingRoomMonitor bookings={bookings} resources={resources} />
+      <MeetingRoomMonitor bookings={bookings} resources={resources} users={users} />
       
       {/* 最后更新时间 */}
       <div className="fixed bottom-4 right-4 text-[10px] text-slate-500">

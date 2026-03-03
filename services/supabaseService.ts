@@ -618,6 +618,25 @@ export async function approveBooking(
     throw new Error('CONFLICT: booking updated by other actor');
   }
 
+  // 如果是长期预订的主记录，批量更新所有从记录
+  if (dbBooking.is_long_term && dbBooking.is_master) {
+    try {
+      // 更新所有关联的从记录
+      await supabase
+        .from(TABLES.BOOKINGS)
+        .update({
+          status: newStatus,
+          approval_history: newApprovalHistory,
+        })
+        .eq('master_id', bookingId);
+      
+      console.log(`已批量更新长期预订组 ${bookingId} 的所有从记录状态为 ${newStatus}`);
+    } catch (batchError) {
+      console.error('批量更新从记录失败:', batchError);
+      // 不阻止主流程，但记录错误
+    }
+  }
+
   // 写入审计表（不可回滚的审计记录）
   try {
     await supabase.from(TABLES.AUDIT).insert([{
@@ -707,6 +726,22 @@ export function transformBookingFromDB(dbBooking: any): Booking {
     leaderDetails: dbBooking.leader_details,
     isVideoConference: dbBooking.is_video_conference,
     needsTeaService: dbBooking.needs_tea_service,
+    needsNameCard: dbBooking.needs_name_card,
+    nameCardDetails: dbBooking.name_card_details,
+    // 长期预订字段
+    isLongTerm: dbBooking.is_long_term,
+    longTermGroupId: dbBooking.long_term_group_id,
+    longTermStartDate: dbBooking.long_term_start_date,
+    longTermEndDate: dbBooking.long_term_end_date,
+    dailyStartTime: dbBooking.daily_start_time,
+    dailyEndTime: dbBooking.daily_end_time,
+    // 按周预订字段
+    longTermType: dbBooking.long_term_type,
+    selectedWeekDays: dbBooking.selected_week_days,
+    weekCount: dbBooking.week_count,
+    // 主从记录字段
+    isMaster: dbBooking.is_master,
+    masterId: dbBooking.master_id,
   };
 }
 
@@ -726,6 +761,22 @@ function transformBookingToDB(booking: Partial<Booking>): any {
     ...(booking.leaderDetails && { leader_details: booking.leaderDetails }),
     ...(booking.isVideoConference !== undefined && { is_video_conference: booking.isVideoConference }),
     ...(booking.needsTeaService !== undefined && { needs_tea_service: booking.needsTeaService }),
+    ...(booking.needsNameCard !== undefined && { needs_name_card: booking.needsNameCard }),
+    ...(booking.nameCardDetails && { name_card_details: booking.nameCardDetails }),
+    // 长期预订字段
+    ...(booking.isLongTerm !== undefined && { is_long_term: booking.isLongTerm }),
+    ...(booking.longTermGroupId && { long_term_group_id: booking.longTermGroupId }),
+    ...(booking.longTermStartDate && { long_term_start_date: booking.longTermStartDate }),
+    ...(booking.longTermEndDate && { long_term_end_date: booking.longTermEndDate }),
+    ...(booking.dailyStartTime && { daily_start_time: booking.dailyStartTime }),
+    ...(booking.dailyEndTime && { daily_end_time: booking.dailyEndTime }),
+    // 按周预订字段
+    ...(booking.longTermType && { long_term_type: booking.longTermType }),
+    ...(booking.selectedWeekDays && { selected_week_days: booking.selectedWeekDays }),
+    ...(booking.weekCount && { week_count: booking.weekCount }),
+    // 主从记录字段
+    ...(booking.isMaster !== undefined && { is_master: booking.isMaster }),
+    ...(booking.masterId && { master_id: booking.masterId }),
   };
 }
 

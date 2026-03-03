@@ -527,6 +527,242 @@ class RealtimeService {
   }
 }
 
+// ==================== 单会议室订阅服务 ====================
+
+interface RoomDisplayConfig {
+  roomId: string;
+  onBookingsChange?: (bookings: Booking[]) => void;
+  onConnectionChange?: (status: ConnectionStatus) => void;
+  onError?: (error: Error) => void;
+}
+
+class RoomDisplayService {
+  private config: RoomDisplayConfig;
+  private channel: any = null;
+  private connectionStatus: ConnectionStatus = 'disconnected';
+  private reconnectAttempts = 0;
+  private maxReconnectAttempts = 5;
+  private reconnectDelay = 1000;
+  private pollingInterval: any = null;
+  private lastBookings: Map<string, Booking> = new Map();
+
+  constructor(config: RoomDisplayConfig) {
+    this.config = config;
+    console.log(`[RoomDisplayService] 创建服务，会议室ID: ${config.roomId}`);
+  }
+
+  // 建立连接
+  public async connect(): Promise<void> {
+    console.log(`[RoomDisplayService] 连接会议室: ${this.config.roomId}`);
+    
+    if (this.connectionStatus === 'connected' || this.connectionStatus === 'connecting') {
+      return;
+    }
+
+    this.setConnectionStatus('connecting');
+
+    try {
+      // 先加载初始数据
+      await this.fetchAndNotifyBookings();
+      
+      // 建立实时订阅
+      await this.subscribeToRoomBookings();
+      
+      this.setConnectionStatus('connected');
+      this.reconnectAttempts = 0;
+      
+      console.log(`[RoomDisplayService] 会议室 ${this.config.roomId} 连接成功`);
+      
+      // 启动轮询作为备选
+      this.startPolling();
+    } catch (error) {
+      console.error(`[RoomDisplayService] 连接失败:`, error);
+      this.handleError(error as Error);
+      this.scheduleReconnect();
+      this.startPolling();
+    }
+  }
+
+  // 订阅单个会议室的预订变更
+  private async subscribeToRoomBookings(): Promise<void> {
+    const channelName = `room_${this.config.roomId}_${Date.now()}`;
+    console.log(`[RoomDisplayService] 订阅频道: ${channelName}`);
+    
+    this.channel = supabase
+      .channel(channelName)
+      .on('postgres_changes', 
+        { 
+          event: '*', 
+          schema: 'public', 
+          table: 'smartoffice_bookings',
+          filter: `resource_id=eq.${this.config.roomId}`
+        }, 
+        (payload: any) => {
+          console.log(`[RoomDisplayService] 收到会议室 ${this.config.roomId} 数据变更:`, payload);
+          this.handleBookingChange(payload);
+        }
+      )
+      .subscribe((status: string, err?: any) => {
+        console.log(`[RoomDisplayService] 订阅状态: ${status}`, err);
+        if (status === 'SUBSCRIBED') {
+          console.log(`[RoomDisplayService] 会议室 ${this.config.roomId} 订阅成功`);
+        } else if (status === 'CLOSED' || status === 'CHANNEL_ERROR') {
+          console.error(`[RoomDisplayService] 订阅断开:`, status, err);
+          this.scheduleReconnect();
+        }
+      });
+  }
+
+  // 处理预订数据变更
+  private async handleBookingChange(payload: any): Promise<void> {
+    console.log(`[RoomDisplayService] 处理变更:`, payload);
+    // 重新获取该会议室的所有预订
+    await this.fetchAndNotifyBookings();
+  }
+
+  // 获取并通知预订数据
+  private async fetchAndNotifyBookings(): Promise<void> {
+    try {
+      const { data: bookings, error } = await supabase
+        .from('smartoffice_bookings')
+        .select(`
+          *,
+          user:smartoffice_users(name, department)
+        `)
+        .eq('resource_id', this.config.roomId)
+        .in('status', ['APPROVED', 'PENDING'])
+        .order('start_time', { ascending: true });
+
+      if (error) throw error;
+
+      const currentBookings = bookings || [];
+      const validBookings = currentBookings.map(transformBookingFromDB);
+      
+      console.log(`[RoomDisplayService] 获取到 ${validBookings.length} 条预订`);
+
+      // 更新缓存
+      this.lastBookings.clear();
+      validBookings.forEach(b => this.lastBookings.set(b.id, b));
+
+      // 通知回调
+      if (this.config.onBookingsChange) {
+        this.config.onBookingsChange(validBookings);
+      }
+    } catch (error) {
+      console.error(`[RoomDisplayService] 获取预订失败:`, error);
+      this.handleError(error as Error);
+    }
+  }
+
+  // 启动轮询
+  private startPolling(): void {
+    if (this.pollingInterval) return;
+    
+    console.log(`[RoomDisplayService] 启动轮询，每30秒刷新`);
+    this.pollingInterval = setInterval(async () => {
+      try {
+        await this.fetchAndNotifyBookings();
+      } catch (error) {
+        console.error(`[RoomDisplayService] 轮询失败:`, error);
+      }
+    }, 30000);
+  }
+
+  // 停止轮询
+  private stopPolling(): void {
+    if (this.pollingInterval) {
+      clearInterval(this.pollingInterval);
+      this.pollingInterval = null;
+    }
+  }
+
+  // 断线重连
+  private scheduleReconnect(): void {
+    if (this.connectionStatus === 'reconnecting') return;
+
+    this.setConnectionStatus('reconnecting');
+
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) {
+      console.error(`[RoomDisplayService] 达到最大重连次数`);
+      this.setConnectionStatus('disconnected');
+      return;
+    }
+
+    const delay = Math.min(
+      this.reconnectDelay * Math.pow(2, this.reconnectAttempts),
+      30000
+    );
+
+    console.log(`[RoomDisplayService] ${delay}ms后重连`);
+
+    setTimeout(() => {
+      this.reconnectAttempts++;
+      this.connect();
+    }, delay);
+  }
+
+  // 断开连接
+  public disconnect(): void {
+    this.stopPolling();
+    if (this.channel) {
+      this.channel.unsubscribe();
+      this.channel = null;
+    }
+    this.setConnectionStatus('disconnected');
+    this.reconnectAttempts = 0;
+  }
+
+  // 手动刷新
+  public async refresh(): Promise<void> {
+    await this.fetchAndNotifyBookings();
+  }
+
+  // 获取连接状态
+  public getConnectionStatus(): ConnectionStatus {
+    return this.connectionStatus;
+  }
+
+  private setConnectionStatus(status: ConnectionStatus): void {
+    this.connectionStatus = status;
+    if (this.config.onConnectionChange) {
+      this.config.onConnectionChange(status);
+    }
+  }
+
+  private handleError(error: Error): void {
+    if (this.config.onError) {
+      this.config.onError(error);
+    }
+  }
+}
+
+// 创建单会议室服务实例
+export function createRoomDisplayService(config: RoomDisplayConfig): RoomDisplayService {
+  return new RoomDisplayService(config);
+}
+
+// 存储所有会议室服务实例
+const roomDisplayServices: Map<string, RoomDisplayService> = new Map();
+
+export function getOrCreateRoomDisplayService(config: RoomDisplayConfig): RoomDisplayService {
+  const existing = roomDisplayServices.get(config.roomId);
+  if (existing) {
+    return existing;
+  }
+  
+  const service = new RoomDisplayService(config);
+  roomDisplayServices.set(config.roomId, service);
+  return service;
+}
+
+export function removeRoomDisplayService(roomId: string): void {
+  const service = roomDisplayServices.get(roomId);
+  if (service) {
+    service.disconnect();
+    roomDisplayServices.delete(roomId);
+  }
+}
+
 // 创建单例实例
 let realtimeServiceInstance: RealtimeService | null = null;
 
@@ -543,4 +779,5 @@ export function getRealtimeService(): RealtimeService | null {
   return realtimeServiceInstance;
 }
 
-export type { RealtimeConfig, ConnectionStatus, BookingDelta, ResourceDelta };
+export type { RealtimeConfig, ConnectionStatus, BookingDelta, ResourceDelta, RoomDisplayConfig };
+export { RoomDisplayService };

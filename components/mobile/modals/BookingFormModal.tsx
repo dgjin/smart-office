@@ -1,11 +1,12 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { ChevronLeft, AlertTriangle, Clock, Users, Calendar, CheckCircle, X } from 'lucide-react';
+import { ChevronLeft, AlertTriangle, Clock, Users, Calendar, CheckCircle, X, Repeat } from 'lucide-react';
 import { Resource, Booking } from '../../../types';
 
 interface BookingFormModalProps {
   resource: Resource;
   bookings: Booking[];
   theme: string;
+  maxBookingDays?: number;
   onClose: () => void;
   onConfirm: (data: any) => void;
 }
@@ -20,12 +21,26 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
   resource,
   bookings,
   theme,
+  maxBookingDays = 20,
   onClose,
   onConfirm
 }) => {
   const today = new Date().toISOString().split('T')[0];
+
+  // 预订模式：单次或长期
+  const [bookingMode, setBookingMode] = useState<'single' | 'longTerm'>('single');
+
+  // 单次预订状态
   const [selectedDate, setSelectedDate] = useState(today);
   const [selectedTimeRange, setSelectedTimeRange] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
+
+  // 长期预订状态
+  const [startDate, setStartDate] = useState(today);
+  const [endDate, setEndDate] = useState(today);
+  const [dailyTimeRange, setDailyTimeRange] = useState<{ start: string | null; end: string | null }>({ start: null, end: null });
+  const [excludedDates, setExcludedDates] = useState<string[]>([]);
+
+  // 共同字段
   const [purpose, setPurpose] = useState('');
   const [participants, setParticipants] = useState(resource.capacity || 1);
   const [hasLeader, setHasLeader] = useState(false);
@@ -34,10 +49,10 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
   const [needsTeaService, setNeedsTeaService] = useState(false);
   const [needsNameCard, setNeedsNameCard] = useState(false);
   const [nameCardDetails, setNameCardDetails] = useState('');
-  
+
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'warning' } | null>(null);
   const [highlightField, setHighlightField] = useState<string | null>(null);
-  
+
   const purposeInputRef = useRef<HTMLInputElement>(null);
   const timeSlotRef = useRef<HTMLDivElement>(null);
 
@@ -115,57 +130,69 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
 
   const handleTimeClick = (time: string) => {
     setHighlightField(null);
-    
-    if (isSlotBooked(time)) {
-      return;
-    }
-    
-    if (isSlotPast(time)) {
-      return;
-    }
-    
-    const { start, end } = selectedTimeRange;
-    
-    if (!start || (start && end)) {
-      setSelectedTimeRange({ start: time, end: null });
-    } else {
-      if (time === start) {
-        setSelectedTimeRange({ start: null, end: null });
+
+    // 长期预订模式下，不检查单个日期的占用情况，因为会跨多天
+    if (bookingMode === 'single') {
+      if (isSlotBooked(time)) {
         return;
       }
-      
+
+      if (isSlotPast(time)) {
+        return;
+      }
+    }
+
+    // 根据预订模式使用不同的时间范围状态
+    const timeRange = bookingMode === 'longTerm' ? dailyTimeRange : selectedTimeRange;
+    const setTimeRange = bookingMode === 'longTerm' ? setDailyTimeRange : setSelectedTimeRange;
+
+    const { start, end } = timeRange;
+
+    if (!start || (start && end)) {
+      setTimeRange({ start: time, end: null });
+    } else {
+      if (time === start) {
+        setTimeRange({ start: null, end: null });
+        return;
+      }
+
       const timeVal = parseInt(time.replace(':', ''));
       const startVal = parseInt(start.replace(':', ''));
-      
+
       if (timeVal <= startVal) {
         showToast('结束时间必须晚于开始时间', 'warning');
         return;
       }
-      
-      const startIndex = timeSlots.indexOf(start);
-      const endIndex = timeSlots.indexOf(time);
-      
-      for (let i = startIndex; i < endIndex; i++) {
-        if (isSlotBooked(timeSlots[i])) {
-          showToast('选择的时间段内包含已被占用的时段', 'error');
-          setSelectedTimeRange({ start: time, end: null });
-          return;
+
+      // 单次预订模式下检查时段冲突
+      if (bookingMode === 'single') {
+        const startIndex = timeSlots.indexOf(start);
+        const endIndex = timeSlots.indexOf(time);
+
+        for (let i = startIndex; i < endIndex; i++) {
+          if (isSlotBooked(timeSlots[i])) {
+            showToast('选择的时间段内包含已被占用的时段', 'error');
+            setTimeRange({ start: time, end: null });
+            return;
+          }
         }
       }
-      
-      setSelectedTimeRange({ start, end: time });
+
+      setTimeRange({ start, end: time });
     }
   };
 
   const isSlotSelected = (time: string): boolean => {
-    return selectedTimeRange.start === time || selectedTimeRange.end === time;
+    const timeRange = bookingMode === 'longTerm' ? dailyTimeRange : selectedTimeRange;
+    return timeRange.start === time || timeRange.end === time;
   };
 
   const isSlotInRange = (time: string): boolean => {
-    if (!selectedTimeRange.start || !selectedTimeRange.end) return false;
+    const timeRange = bookingMode === 'longTerm' ? dailyTimeRange : selectedTimeRange;
+    if (!timeRange.start || !timeRange.end) return false;
     const t = parseInt(time.replace(':', ''));
-    const s = parseInt(selectedTimeRange.start.replace(':', ''));
-    const e = parseInt(selectedTimeRange.end.replace(':', ''));
+    const s = parseInt(timeRange.start.replace(':', ''));
+    const e = parseInt(timeRange.end.replace(':', ''));
     return t > s && t < e;
   };
 
@@ -176,67 +203,151 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
       purposeInputRef.current?.focus();
       return;
     }
-    
-    if (!selectedTimeRange.start || !selectedTimeRange.end) {
-      showToast('请选择开始和结束时间', 'error');
+
+    // 根据预订模式验证时间选择
+    const timeRange = bookingMode === 'longTerm' ? dailyTimeRange : selectedTimeRange;
+    if (!timeRange.start || !timeRange.end) {
+      showToast(bookingMode === 'longTerm' ? '请选择每天的时段' : '请选择开始和结束时间', 'error');
       setHighlightField('time');
       timeSlotRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
-    
+
     if (participants > (resource.capacity || 1)) {
       showToast(`参与人数超过资源容量（最大 ${resource.capacity} 人）`, 'warning');
       return;
     }
-    
-    const [startH, startM] = selectedTimeRange.start.split(':').map(Number);
-    const [endH, endM] = selectedTimeRange.end.split(':').map(Number);
-    
-    const startTime = new Date(selectedDate);
-    startTime.setHours(startH, startM, 0, 0);
-    const endTime = new Date(selectedDate);
-    endTime.setHours(endH, endM, 0, 0);
-    const now = new Date();
-    
-    if (startTime < now) {
-      showToast('不能预约过去的时间', 'error');
-      return;
-    }
-    
-    if (endTime <= startTime) {
-      showToast('结束时间必须晚于开始时间', 'error');
-      return;
-    }
-    
-    const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
-    if (duration > 4) {
-      showToast('单次预约时长不能超过4小时', 'warning');
-      return;
-    }
-    
-    for (const b of getBookingsForResource) {
-      const bStart = new Date(b.startTime);
-      const bEnd = new Date(b.endTime);
-      if (startTime < bEnd && endTime > bStart) {
-        showToast('选择的时间段与已有预约冲突，请重新选择', 'error');
+
+    const [startH, startM] = timeRange.start.split(':').map(Number);
+    const [endH, endM] = timeRange.end.split(':').map(Number);
+
+    // 验证单次预订
+    if (bookingMode === 'single') {
+      const startTime = new Date(selectedDate);
+      startTime.setHours(startH, startM, 0, 0);
+      const endTime = new Date(selectedDate);
+      endTime.setHours(endH, endM, 0, 0);
+      const now = new Date();
+
+      if (startTime < now) {
+        showToast('不能预约过去的时间', 'error');
         return;
       }
+
+      if (endTime <= startTime) {
+        showToast('结束时间必须晚于开始时间', 'error');
+        return;
+      }
+
+      const duration = (endTime.getTime() - startTime.getTime()) / (1000 * 60 * 60);
+      if (duration > 4) {
+        showToast('单次预约时长不能超过4小时', 'warning');
+        return;
+      }
+
+      for (const b of getBookingsForResource) {
+        const bStart = new Date(b.startTime);
+        const bEnd = new Date(b.endTime);
+        if (startTime < bEnd && endTime > bStart) {
+          showToast('选择的时间段与已有预约冲突，请重新选择', 'error');
+          return;
+        }
+      }
+
+      onConfirm({
+        resourceId: resource.id,
+        purpose,
+        startTime: startTime.toISOString(),
+        endTime: endTime.toISOString(),
+        participants,
+        type: resource.type,
+        hasLeader,
+        leaderDetails: hasLeader ? leaderDetails : undefined,
+        isVideoConference,
+        needsTeaService,
+        needsNameCard,
+        nameCardDetails: needsNameCard ? nameCardDetails : undefined,
+        isLongTerm: false
+      });
     }
-    
-    onConfirm({
-      resourceId: resource.id,
-      purpose,
-      startTime: startTime.toISOString(),
-      endTime: endTime.toISOString(),
-      participants,
-      type: resource.type,
-      hasLeader,
-      leaderDetails: hasLeader ? leaderDetails : undefined,
-      isVideoConference,
-      needsTeaService,
-      needsNameCard,
-      nameCardDetails: needsNameCard ? nameCardDetails : undefined
-    });
+    // 验证长期预订
+    else {
+      if (!startDate || !endDate) {
+        showToast('请选择开始和结束日期', 'error');
+        return;
+      }
+
+      const days = Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+      if (days > maxBookingDays) {
+        showToast(`最长预订时间不能超过 ${maxBookingDays} 天`, 'error');
+        return;
+      }
+
+      if (days < 2) {
+        showToast('长期预订至少需要2天', 'warning');
+        return;
+      }
+
+      const duration = (endH * 60 + endM - startH * 60 - startM) / 60;
+      if (duration > 4) {
+        showToast('每天预约时长不能超过4小时', 'warning');
+        return;
+      }
+
+      // 生成长期预订数据
+      const longTermGroupId = `lt_${Date.now()}`;
+      const bookingData = {
+        resourceId: resource.id,
+        purpose,
+        participants,
+        type: resource.type,
+        hasLeader,
+        leaderDetails: hasLeader ? leaderDetails : undefined,
+        isVideoConference,
+        needsTeaService,
+        needsNameCard,
+        nameCardDetails: needsNameCard ? nameCardDetails : undefined,
+        isLongTerm: true,
+        longTermGroupId,
+        longTermStartDate: startDate,
+        longTermEndDate: endDate,
+        dailyStartTime: timeRange.start,
+        dailyEndTime: timeRange.end,
+        bookings: [] as any[]
+      };
+
+      // 生成每天的预订
+      const currentDate = new Date(startDate);
+      const endDateTime = new Date(endDate);
+
+      while (currentDate <= endDateTime) {
+        const dateStr = currentDate.toISOString().split('T')[0];
+
+        // 跳过排除的日期
+        if (!excludedDates.includes(dateStr)) {
+          const dayStartTime = new Date(dateStr);
+          dayStartTime.setHours(startH, startM, 0, 0);
+          const dayEndTime = new Date(dateStr);
+          dayEndTime.setHours(endH, endM, 0, 0);
+
+          bookingData.bookings.push({
+            startTime: dayStartTime.toISOString(),
+            endTime: dayEndTime.toISOString(),
+            date: dateStr
+          });
+        }
+
+        currentDate.setDate(currentDate.getDate() + 1);
+      }
+
+      if (bookingData.bookings.length === 0) {
+        showToast('没有有效的预订日期', 'error');
+        return;
+      }
+
+      onConfirm(bookingData);
+    }
+
     onClose();
   };
 
@@ -294,40 +405,166 @@ export const BookingFormModal: React.FC<BookingFormModalProps> = ({
             />
           </div>
 
+          {/* 预订模式切换 */}
           <div className={`p-4 rounded-2xl border transition-all duration-300 ${themeColors.cardBg} ${themeColors.border}`}>
-            <label className={`text-[10px] font-bold uppercase mb-3 block transition-colors duration-300 ${themeColors.lightText}`}>选择日期</label>
-            <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-hide">
-              {dateOptions.map(d => {
-                const dateStr = d.toISOString().split('T')[0];
-                const isSelected = dateStr === selectedDate;
-                const dayName = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
-                const isToday = dateStr === today;
-                return (
-                  <button
-                    key={dateStr}
-                    onClick={() => { 
-                      setSelectedDate(dateStr); 
-                      setSelectedTimeRange({ start: null, end: null }); 
-                      setHighlightField(null);
-                    }}
-                    className={`flex flex-col items-center justify-center w-14 h-16 rounded-xl border-2 transition-all shrink-0 ${isSelected ? (isFinanceTheme ? 'bg-[#F59E0B] border-[#F59E0B] text-[#0F172A] shadow-md' : `bg-${theme}-600 border-${theme}-600 text-white shadow-md`) : isToday ? (isFinanceTheme ? 'bg-[#334155] border-[#475569] text-white' : 'bg-white border-gray-300 text-gray-600') : (isFinanceTheme ? 'bg-[#1E293B] border-[#334155] text-gray-400' : 'bg-white border-gray-100 text-gray-400')}`}
-                  >
-                    <span className="text-[10px] opacity-80">周{dayName}</span>
-                    <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
-                    {isToday && !isSelected && <span className={`text-[8px] transition-colors duration-300 ${themeColors.lightText}`}>今天</span>}
-                  </button>
-                );
-              })}
+            <label className={`text-[10px] font-bold uppercase mb-3 block transition-colors duration-300 ${themeColors.lightText}`}>预订模式</label>
+            <div className="flex space-x-3">
+              <button
+                onClick={() => setBookingMode('single')}
+                className={`flex-1 py-3 rounded-xl border-2 transition-all duration-300 flex items-center justify-center space-x-2 ${
+                  bookingMode === 'single'
+                    ? (isFinanceTheme ? 'bg-[#F59E0B] border-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 border-${theme}-600 text-white`)
+                    : (isFinanceTheme ? 'bg-[#1E293B] border-[#334155] text-gray-400' : 'bg-white border-gray-200 text-gray-600')
+                }`}
+              >
+                <Calendar size={18} />
+                <span className="font-bold">单次预订</span>
+              </button>
+              <button
+                onClick={() => setBookingMode('longTerm')}
+                className={`flex-1 py-3 rounded-xl border-2 transition-all duration-300 flex items-center justify-center space-x-2 ${
+                  bookingMode === 'longTerm'
+                    ? (isFinanceTheme ? 'bg-[#F59E0B] border-[#F59E0B] text-[#0F172A]' : `bg-${theme}-600 border-${theme}-600 text-white`)
+                    : (isFinanceTheme ? 'bg-[#1E293B] border-[#334155] text-gray-400' : 'bg-white border-gray-200 text-gray-600')
+                }`}
+              >
+                <Repeat size={18} />
+                <span className="font-bold">长期预订</span>
+              </button>
             </div>
+            {bookingMode === 'longTerm' && (
+              <p className={`text-[10px] mt-2 transition-colors duration-300 ${isFinanceTheme ? 'text-amber-400' : 'text-amber-600'}`}>
+                最长可预订 {maxBookingDays} 天，系统将为您每天创建相同时间段的预订
+              </p>
+            )}
           </div>
+
+          {/* 单次预订 - 日期选择 */}
+          {bookingMode === 'single' && (
+            <div className={`p-4 rounded-2xl border transition-all duration-300 ${themeColors.cardBg} ${themeColors.border}`}>
+              <label className={`text-[10px] font-bold uppercase mb-3 block transition-colors duration-300 ${themeColors.lightText}`}>选择日期</label>
+              <div className="flex space-x-2 overflow-x-auto pb-2 scrollbar-hide">
+                {dateOptions.map(d => {
+                  const dateStr = d.toISOString().split('T')[0];
+                  const isSelected = dateStr === selectedDate;
+                  const dayName = ['日', '一', '二', '三', '四', '五', '六'][d.getDay()];
+                  const isToday = dateStr === today;
+                  return (
+                    <button
+                      key={dateStr}
+                      onClick={() => {
+                        setSelectedDate(dateStr);
+                        setSelectedTimeRange({ start: null, end: null });
+                        setHighlightField(null);
+                      }}
+                      className={`flex flex-col items-center justify-center w-14 h-16 rounded-xl border-2 transition-all shrink-0 ${isSelected ? (isFinanceTheme ? 'bg-[#F59E0B] border-[#F59E0B] text-[#0F172A] shadow-md' : `bg-${theme}-600 border-${theme}-600 text-white shadow-md`) : isToday ? (isFinanceTheme ? 'bg-[#334155] border-[#475569] text-white' : 'bg-white border-gray-300 text-gray-600') : (isFinanceTheme ? 'bg-[#1E293B] border-[#334155] text-gray-400' : 'bg-white border-gray-100 text-gray-400')}`}
+                    >
+                      <span className="text-[10px] opacity-80">周{dayName}</span>
+                      <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
+                      {isToday && !isSelected && <span className={`text-[8px] transition-colors duration-300 ${themeColors.lightText}`}>今天</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 长期预订 - 日期范围选择 */}
+          {bookingMode === 'longTerm' && (
+            <div className={`p-4 rounded-2xl border transition-all duration-300 ${themeColors.cardBg} ${themeColors.border}`}>
+              <label className={`text-[10px] font-bold uppercase mb-3 block transition-colors duration-300 ${themeColors.lightText}`}>选择日期范围</label>
+              <div className="space-y-3">
+                <div className="flex items-center space-x-3">
+                  <div className="flex-1">
+                    <label className={`text-[10px] block mb-1 transition-colors duration-300 ${themeColors.lightText}`}>开始日期</label>
+                    <input
+                      type="date"
+                      value={startDate}
+                      min={today}
+                      onChange={e => {
+                        const newStart = e.target.value;
+                        setStartDate(newStart);
+                        // 如果结束日期早于开始日期，自动调整
+                        if (endDate < newStart) {
+                          setEndDate(newStart);
+                        }
+                        // 检查是否超过最大天数限制
+                        const days = Math.ceil((new Date(endDate).getTime() - new Date(newStart).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                        if (days > maxBookingDays) {
+                          const maxEnd = new Date(newStart);
+                          maxEnd.setDate(maxEnd.getDate() + maxBookingDays - 1);
+                          setEndDate(maxEnd.toISOString().split('T')[0]);
+                          showToast(`最长预订时间为 ${maxBookingDays} 天，已自动调整结束日期`, 'warning');
+                        }
+                        setDailyTimeRange({ start: null, end: null });
+                      }}
+                      className={`w-full p-3 rounded-xl border-none outline-none text-sm transition-all duration-300 ${themeColors.inputBg}`}
+                    />
+                  </div>
+                  <div className="pt-5">
+                    <span className={`text-sm ${themeColors.lightText}`}>至</span>
+                  </div>
+                  <div className="flex-1">
+                    <label className={`text-[10px] block mb-1 transition-colors duration-300 ${themeColors.lightText}`}>结束日期</label>
+                    <input
+                      type="date"
+                      value={endDate}
+                      min={startDate}
+                      max={(() => {
+                        const maxDate = new Date(startDate);
+                        maxDate.setDate(maxDate.getDate() + maxBookingDays - 1);
+                        return maxDate.toISOString().split('T')[0];
+                      })()}
+                      onChange={e => {
+                        const newEnd = e.target.value;
+                        const days = Math.ceil((new Date(newEnd).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1;
+                        if (days > maxBookingDays) {
+                          showToast(`最长预订时间不能超过 ${maxBookingDays} 天`, 'error');
+                          return;
+                        }
+                        setEndDate(newEnd);
+                        setDailyTimeRange({ start: null, end: null });
+                      }}
+                      className={`w-full p-3 rounded-xl border-none outline-none text-sm transition-all duration-300 ${themeColors.inputBg}`}
+                    />
+                  </div>
+                </div>
+
+                {/* 日期范围统计 */}
+                {startDate && endDate && (
+                  <div className={`p-3 rounded-xl ${isFinanceTheme ? 'bg-[#334155]' : 'bg-gray-50'}`}>
+                    <div className="flex items-center justify-between text-sm">
+                      <span className={themeColors.lightText}>预订天数</span>
+                      <span className={`font-bold ${themeColors.text}`}>
+                        {Math.ceil((new Date(endDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)) + 1} 天
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm mt-1">
+                      <span className={themeColors.lightText}>最长限制</span>
+                      <span className={`font-bold ${isFinanceTheme ? 'text-amber-400' : 'text-amber-600'}`}>
+                        {maxBookingDays} 天
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Time Slots */}
           <div ref={timeSlotRef} className={`p-4 rounded-2xl border transition-all duration-300 ${themeColors.cardBg} ${highlightField === 'time' ? (isFinanceTheme ? 'border-red-600 ring-2 ring-red-900/20' : 'border-rose-400 ring-2 ring-rose-100') : themeColors.border}`}>
             <div className="flex items-center justify-between mb-3">
-              <label className={`text-[10px] font-bold uppercase transition-colors duration-300 ${themeColors.lightText}`}>选择时段 *</label>
-              {selectedTimeRange.start && selectedTimeRange.end && (
+              <label className={`text-[10px] font-bold uppercase transition-colors duration-300 ${themeColors.lightText}`}>
+                {bookingMode === 'longTerm' ? '选择每天时段 *' : '选择时段 *'}
+              </label>
+              {bookingMode === 'single' && selectedTimeRange.start && selectedTimeRange.end && (
                 <span className={`text-xs font-bold transition-colors duration-300 ${isFinanceTheme ? 'text-[#F59E0B]' : `text-${theme}-600`}`}>
                   {selectedTimeRange.start} - {selectedTimeRange.end}
+                </span>
+              )}
+              {bookingMode === 'longTerm' && dailyTimeRange.start && dailyTimeRange.end && (
+                <span className={`text-xs font-bold transition-colors duration-300 ${isFinanceTheme ? 'text-[#F59E0B]' : `text-${theme}-600`}`}>
+                  每天 {dailyTimeRange.start} - {dailyTimeRange.end}
                 </span>
               )}
             </div>

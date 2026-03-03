@@ -1,6 +1,7 @@
-import React, { useState, useMemo, useRef } from 'react';
-import { AlertTriangle, Calendar, X, Clock, User, Briefcase, ChevronLeft, ChevronRight } from 'lucide-react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { AlertTriangle, Calendar, X, Clock, User, Briefcase, ChevronLeft, ChevronRight, CalendarDays } from 'lucide-react';
 import { Resource, Booking } from '../../../types';
+import { getServerTime, getServerToday, isDateBeforeToday } from '../../../utils/dateUtils';
 
 interface DeskBookingFormModalProps {
   resource: Resource;
@@ -17,7 +18,30 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
   onClose,
   onConfirm
 }) => {
-  const today = new Date();
+  const [serverTime, setServerTime] = useState<Date>(new Date());
+  const [today, setToday] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [isLoadingTime, setIsLoadingTime] = useState(true);
+
+  // 初始化服务器时间
+  useEffect(() => {
+    const initServerTime = async () => {
+      setIsLoadingTime(true);
+      try {
+        const serverNow = await getServerTime();
+        setServerTime(serverNow);
+        setToday(serverNow.toISOString().split('T')[0]);
+      } catch (error) {
+        console.warn('获取服务器时间失败，使用本地时间:', error);
+        const localNow = new Date();
+        setServerTime(localNow);
+        setToday(localNow.toISOString().split('T')[0]);
+      } finally {
+        setIsLoadingTime(false);
+      }
+    };
+    initServerTime();
+  }, []);
+
   const minStartDate = new Date(today);
   minStartDate.setDate(minStartDate.getDate() + 3);
   const minStartDateStr = minStartDate.toISOString().split('T')[0];
@@ -28,12 +52,18 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
   const [applicantName, setApplicantName] = useState('');
   const [department, setDepartment] = useState('');
   const [purpose, setPurpose] = useState('');
-  
+
+  // 日历相关状态
+  const [currentMonth, setCurrentMonth] = useState(new Date(minStartDate));
+  const [isSelectingEndDate, setIsSelectingEndDate] = useState(false);
+  const [showCalendar, setShowCalendar] = useState(false);
+
   const [toast, setToast] = useState<{ message: string; type: 'error' | 'warning' } | null>(null);
   const [highlightField, setHighlightField] = useState<string | null>(null);
-  
+
   const purposeInputRef = useRef<HTMLInputElement>(null);
   const timeSlotRef = useRef<HTMLDivElement>(null);
+  const calendarRef = useRef<HTMLDivElement>(null);
 
   const isFinanceTheme = theme === 'finance';
   const themeColors = {
@@ -103,9 +133,14 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
   const isSlotPast = (time: string, dateStr: string): boolean => {
     const [hours, minutes] = time.split(':').map(Number);
     const slotDate = new Date(`${dateStr}T${time}:00`);
-    const now = new Date();
-    const minTime = new Date(now.getTime() + 10 * 60000);
+    // 使用服务器时间判断
+    const minTime = new Date(serverTime.getTime() + 10 * 60000);
     return slotDate < minTime;
+  };
+
+  // 检查日期是否早于最小日期（过去日期）
+  const isDateInPast = (dateStr: string): boolean => {
+    return dateStr < minStartDateStr;
   };
 
   const handleTimeClick = (time: string) => {
@@ -166,7 +201,7 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
     return Math.ceil(diffTime / (1000 * 60 * 60 * 24)) + 1;
   };
 
-  const handleSubmit = () => {
+  const handleSubmit = async () => {
     if (!applicantName.trim()) {
       showToast('请输入申请人姓名', 'error');
       setHighlightField('applicantName');
@@ -193,14 +228,28 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
       return;
     }
 
+    // 校验开始日期是否是过去日期
+    if (isDateInPast(startDate)) {
+      showToast('开始日期不能早于最早可预订日期', 'error');
+      return;
+    }
+
     const [startH, startM] = selectedTimeRange.start.split(':').map(Number);
     const [endH, endM] = selectedTimeRange.end.split(':').map(Number);
     
     const startTime = new Date(`${startDate}T${selectedTimeRange.start}:00`);
     const endTime = new Date(`${endDate}T${selectedTimeRange.end}:00`);
-    const now = new Date();
     
-    if (startTime < now) {
+    // 获取最新的服务器时间进行校验
+    let currentServerTime: Date;
+    try {
+      currentServerTime = await getServerTime();
+    } catch (error) {
+      currentServerTime = new Date();
+    }
+    
+    // 使用服务器时间校验
+    if (startTime < currentServerTime) {
       showToast('不能预约过去的时间', 'error');
       return;
     }
@@ -255,6 +304,251 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
   };
 
   const dayNames = ['日', '一', '二', '三', '四', '五', '六'];
+  const monthNames = ['一月', '二月', '三月', '四月', '五月', '六月', '七月', '八月', '九月', '十月', '十一月', '十二月'];
+
+  // 检查日期是否被占用
+  const isDateBooked = (dateStr: string): boolean => {
+    const dateStart = new Date(`${dateStr}T00:00:00`);
+    const dateEnd = new Date(`${dateStr}T23:59:59`);
+
+    return bookings.some(b => {
+      if (b.resourceId !== resource.id) return false;
+      if (['REJECTED', 'CANCELLED'].includes(b.status)) return false;
+      const bStart = new Date(b.startTime);
+      return bStart >= dateStart && bStart <= dateEnd;
+    });
+  };
+
+  // 检查日期是否可选择（不能早于最小日期）
+  const isDateDisabled = (date: Date): boolean => {
+    const dateStr = date.toISOString().split('T')[0];
+    return isDateInPast(dateStr);
+  };
+
+  // 检查日期是否在范围内
+  const isDateInRange = (date: Date): boolean => {
+    if (startDate === endDate) return false;
+    const dateStr = date.toISOString().split('T')[0];
+    return dateStr > startDate && dateStr < endDate;
+  };
+
+  // 生成日历数据
+  const generateCalendarDays = () => {
+    const year = currentMonth.getFullYear();
+    const month = currentMonth.getMonth();
+
+    const firstDay = new Date(year, month, 1);
+    const lastDay = new Date(year, month + 1, 0);
+    const daysInMonth = lastDay.getDate();
+    const startDayOfWeek = firstDay.getDay();
+
+    const days: (Date | null)[] = [];
+
+    // 填充月初空白
+    for (let i = 0; i < startDayOfWeek; i++) {
+      days.push(null);
+    }
+
+    // 填充日期
+    for (let i = 1; i <= daysInMonth; i++) {
+      days.push(new Date(year, month, i));
+    }
+
+    return days;
+  };
+
+  // 处理日期选择
+  const handleDateSelect = (date: Date) => {
+    const dateStr = date.toISOString().split('T')[0];
+
+    if (isDateDisabled(date)) {
+      showToast('该日期不可选择', 'warning');
+      return;
+    }
+
+    if (!isSelectingEndDate) {
+      // 选择开始日期
+      setStartDate(dateStr);
+      setEndDate(dateStr);
+      setSelectedTimeRange({ start: null, end: null });
+      setIsSelectingEndDate(true);
+    } else {
+      // 选择结束日期
+      if (dateStr < startDate) {
+        // 如果选择的日期早于开始日期，则交换
+        setEndDate(startDate);
+        setStartDate(dateStr);
+      } else {
+        setEndDate(dateStr);
+      }
+      setSelectedTimeRange({ start: null, end: null });
+      setIsSelectingEndDate(false);
+      setShowCalendar(false);
+    }
+  };
+
+  // 切换到上一个月
+  const prevMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() - 1, 1));
+  };
+
+  // 切换到下一个月
+  const nextMonth = () => {
+    setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1, 1));
+  };
+
+  // 日历组件
+  const CalendarComponent = () => {
+    const calendarDays = generateCalendarDays();
+
+    return (
+      <div
+        ref={calendarRef}
+        className={`absolute z-50 left-4 right-4 mt-2 p-4 rounded-2xl shadow-xl border ${
+          isFinanceTheme ? 'bg-slate-800 border-slate-600' : 'bg-white border-gray-200'
+        }`}
+      >
+        {/* 日历头部 */}
+        <div className="flex items-center justify-between mb-4">
+          <button
+            onClick={prevMonth}
+            className={`p-2 rounded-lg ${isFinanceTheme ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-gray-100 text-gray-600'}`}
+          >
+            <ChevronLeft size={20} />
+          </button>
+          <span className={`font-bold text-lg ${themeColors.text}`}>
+            {currentMonth.getFullYear()}年 {monthNames[currentMonth.getMonth()]}
+          </span>
+          <button
+            onClick={nextMonth}
+            className={`p-2 rounded-lg ${isFinanceTheme ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-gray-100 text-gray-600'}`}
+          >
+            <ChevronRight size={20} />
+          </button>
+        </div>
+
+        {/* 星期标题 */}
+        <div className="grid grid-cols-7 gap-1 mb-2">
+          {dayNames.map(day => (
+            <div key={day} className={`text-center text-xs font-medium py-2 ${themeColors.lightText}`}>
+              {day}
+            </div>
+          ))}
+        </div>
+
+        {/* 日期网格 */}
+        <div className="grid grid-cols-7 gap-1">
+          {calendarDays.map((date, idx) => {
+            if (!date) {
+              return <div key={idx} className="aspect-square" />;
+            }
+
+            const dateStr = date.toISOString().split('T')[0];
+            const isSelected = dateStr === startDate || dateStr === endDate;
+            const isInRange = isDateInRange(date);
+            const isDisabled = isDateDisabled(date);
+            const isBooked = isDateBooked(dateStr);
+            const isToday = dateStr === today;
+
+            return (
+              <button
+                key={idx}
+                onClick={() => {
+                  if (isDisabled) {
+                    showToast('该日期不可选择', 'warning');
+                    return;
+                  }
+                  handleDateSelect(date);
+                }}
+                disabled={isDisabled}
+                className={`
+                  aspect-square rounded-lg text-sm font-medium relative
+                  transition-all duration-200
+                  ${isDisabled
+                    ? isFinanceTheme
+                      ? 'bg-slate-900 text-slate-600 cursor-not-allowed opacity-50 line-through'
+                      : 'bg-gray-100 text-gray-400 cursor-not-allowed opacity-50 line-through'
+                    : isSelected
+                      ? isFinanceTheme
+                        ? 'bg-emerald-500 text-slate-900'
+                        : `bg-${theme}-600 text-white`
+                      : isInRange
+                        ? isFinanceTheme
+                          ? 'bg-emerald-500/20 text-emerald-400'
+                          : `bg-${theme}-100 text-${theme}-600`
+                        : isBooked
+                          ? isFinanceTheme
+                            ? 'bg-red-900/30 text-red-400'
+                            : 'bg-rose-100 text-rose-600'
+                          : isFinanceTheme
+                            ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+                            : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
+                  }
+                `}
+              >
+                <span className="relative z-10">{date.getDate()}</span>
+                {isBooked && !isSelected && !isDisabled && (
+                  <span className="absolute bottom-1 left-1/2 transform -translate-x-1/2 w-1 h-1 rounded-full bg-red-500" />
+                )}
+                {isToday && !isDisabled && (
+                  <span className={`absolute top-0.5 right-0.5 w-1.5 h-1.5 rounded-full ${isFinanceTheme ? 'bg-amber-400' : 'bg-amber-500'}`} />
+                )}
+              </button>
+            );
+          })}
+        </div>
+
+        {/* 图例 */}
+        <div className="flex items-center justify-center space-x-4 mt-4 pt-3 border-t border-dashed border-gray-300">
+          <div className="flex items-center space-x-1">
+            <span className={`w-3 h-3 rounded ${isFinanceTheme ? 'bg-emerald-500' : `bg-${theme}-600`}`} />
+            <span className={`text-xs ${themeColors.lightText}`}>已选</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <span className={`w-3 h-3 rounded ${isFinanceTheme ? 'bg-emerald-500/20' : `bg-${theme}-100`}`} />
+            <span className={`text-xs ${themeColors.lightText}`}>范围内</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <span className={`w-3 h-3 rounded ${isFinanceTheme ? 'bg-red-900/30' : 'bg-rose-100'}`} />
+            <span className={`text-xs ${themeColors.lightText}`}>已占用</span>
+          </div>
+          <div className="flex items-center space-x-1">
+            <span className={`w-3 h-3 rounded ${isFinanceTheme ? 'bg-slate-900' : 'bg-gray-100'}`} />
+            <span className={`text-xs ${themeColors.lightText}`}>不可选</span>
+          </div>
+        </div>
+
+        {/* 加载状态 */}
+        {isLoadingTime && (
+          <div className={`mt-3 p-3 rounded-lg ${isFinanceTheme ? 'bg-slate-700/50' : 'bg-gray-50'}`}>
+            <p className={`text-xs ${themeColors.lightText}`}>正在同步服务器时间...</p>
+          </div>
+        )}
+
+        {/* 提示信息 */}
+        <div className={`mt-3 p-3 rounded-lg ${isFinanceTheme ? 'bg-slate-700/50' : 'bg-gray-50'}`}>
+          <p className={`text-xs ${themeColors.lightText}`}>
+            {isSelectingEndDate
+              ? `已选择开始日期：${formatDateDisplay(new Date(startDate))}，请选择结束日期`
+              : '请选择开始日期'
+            }
+          </p>
+        </div>
+
+        {/* 关闭按钮 */}
+        <button
+          onClick={() => setShowCalendar(false)}
+          className={`w-full mt-3 py-2 rounded-lg text-sm font-medium ${
+            isFinanceTheme
+              ? 'bg-slate-700 text-slate-300 hover:bg-slate-600'
+              : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+          }`}
+        >
+          关闭日历
+        </button>
+      </div>
+    );
+  };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex flex-col" style={{ maxWidth: '448px', margin: '0 auto' }}>
@@ -323,77 +617,54 @@ export const DeskBookingFormModal: React.FC<DeskBookingFormModalProps> = ({
             />
           </div>
 
-          <div className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>
-            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>开始日期（3天后可选）</label>
-            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-hide">
-              {startDateOptions.slice(0, 14).map(d => {
-                const dateStr = d.toISOString().split('T')[0];
-                const isSelected = dateStr === startDate;
-                const dayName = dayNames[d.getDay()];
-                const isToday = dateStr === minStartDateStr;
-                return (
-                  <button
-                    key={dateStr}
-                    onClick={() => { 
-                      setStartDate(dateStr);
-                      if (new Date(endDate) < d) {
-                        setEndDate(dateStr);
-                      }
-                      setSelectedTimeRange({ start: null, end: null }); 
-                      setHighlightField(null);
-                    }}
-                    className={`flex flex-col items-center justify-center w-14 h-16 rounded-xl border-2 transition-all shrink-0 ${
-                      isSelected 
-                        ? (isFinanceTheme ? 'bg-emerald-500 border-emerald-500 text-slate-900' : `bg-${theme}-600 border-${theme}-600 text-white`)
-                        : isToday 
-                          ? (isFinanceTheme ? 'bg-slate-700 border-slate-500 text-white' : 'bg-white border-gray-300 text-gray-600')
-                          : (isFinanceTheme ? 'bg-slate-800 border-slate-600 text-slate-400' : 'bg-white border-gray-100 text-gray-400')
-                    }`}
-                  >
-                    <span className="text-[10px] opacity-80">周{dayName}</span>
-                    <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
+          {/* 日历日期选择 */}
+          <div className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border} relative`}>
+            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>选择日期范围</label>
 
-          <div className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>
-            <label className={`text-[10px] font-bold uppercase mb-3 block ${themeColors.lightText}`}>结束日期</label>
-            <div className="flex items-center space-x-2 overflow-x-auto pb-2 scrollbar-hide">
-              {endDateOptions.slice(0, 30).map(d => {
-                const dateStr = d.toISOString().split('T')[0];
-                const isSelected = dateStr === endDate;
-                const dayName = dayNames[d.getDay()];
-                const isBeforeStart = d < new Date(startDate);
-                return (
-                  <button
-                    key={dateStr}
-                    disabled={isBeforeStart}
-                    onClick={() => { 
-                      setEndDate(dateStr); 
-                      setSelectedTimeRange({ start: null, end: null }); 
-                      setHighlightField(null);
-                    }}
-                    className={`flex flex-col items-center justify-center w-14 h-16 rounded-xl border-2 transition-all shrink-0 ${
-                      isSelected 
-                        ? (isFinanceTheme ? 'bg-emerald-500 border-emerald-500 text-slate-900' : `bg-${theme}-600 border-${theme}-600 text-white`)
-                        : isBeforeStart
-                          ? (isFinanceTheme ? 'bg-slate-700 border-slate-600 text-slate-600 cursor-not-allowed' : 'bg-gray-50 border-gray-100 text-gray-300 cursor-not-allowed')
-                          : (isFinanceTheme ? 'bg-slate-800 border-slate-600 text-slate-400' : 'bg-white border-gray-100 text-gray-400')
-                    }`}
-                  >
-                    <span className="text-[10px] opacity-80">周{dayName}</span>
-                    <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
-                  </button>
-                );
-              })}
-            </div>
+            {/* 日期显示按钮 */}
+            <button
+              onClick={() => setShowCalendar(!showCalendar)}
+              className={`w-full p-4 rounded-xl border-2 transition-all flex items-center justify-between ${
+                showCalendar
+                  ? (isFinanceTheme ? 'border-emerald-500 bg-emerald-500/10' : `border-${theme}-500 bg-${theme}-50`)
+                  : (isFinanceTheme ? 'border-slate-600 hover:border-slate-500' : 'border-gray-200 hover:border-gray-300')
+              }`}
+            >
+              <div className="flex items-center space-x-3">
+                <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
+                  isFinanceTheme ? 'bg-emerald-500/20 text-emerald-400' : `bg-${theme}-100 text-${theme}-600`
+                }`}>
+                  <CalendarDays size={20} />
+                </div>
+                <div className="text-left">
+                  <p className={`text-xs ${themeColors.lightText}`}>
+                    {isSelectingEndDate ? '请选择结束日期' : '请选择开始日期'}
+                  </p>
+                  <p className={`font-bold ${themeColors.text}`}>
+                    {startDate === endDate
+                      ? formatDateDisplay(new Date(startDate))
+                      : `${formatDateDisplay(new Date(startDate))} - ${formatDateDisplay(new Date(endDate))}`
+                    }
+                  </p>
+                </div>
+              </div>
+              <ChevronRight size={20} className={`transition-transform ${showCalendar ? 'rotate-90' : ''} ${themeColors.lightText}`} />
+            </button>
+
+            {/* 预订天数提示 */}
             {startDate !== endDate && (
-              <p className={`text-xs mt-2 ${themeColors.lightText}`}>
-                已选择 {formatDateDisplay(new Date(startDate))} - {formatDateDisplay(new Date(endDate))}，共 {calculateBookingDays()} 天
-              </p>
+              <div className={`mt-3 p-3 rounded-lg flex items-center justify-between ${
+                isFinanceTheme ? 'bg-emerald-500/10' : 'bg-emerald-50'
+              }`}>
+                <span className={`text-sm ${themeColors.lightText}`}>预订天数</span>
+                <span className={`font-bold ${isFinanceTheme ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                  {calculateBookingDays()} 天
+                </span>
+              </div>
             )}
+
+            {/* 日历组件 */}
+            {showCalendar && <CalendarComponent />}
           </div>
 
           <div ref={timeSlotRef} className={`p-4 rounded-2xl border ${themeColors.cardBg} ${themeColors.border}`}>

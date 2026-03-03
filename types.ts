@@ -66,7 +66,7 @@ export interface Booking {
   purpose: string;
   participants?: number;
   createdAt: string;
-  currentNodeIndex: number; 
+  currentNodeIndex: number;
   approvalHistory: ApprovalRecord[];
   // New optional fields
   hasLeader?: boolean;
@@ -75,6 +75,28 @@ export interface Booking {
   needsTeaService?: boolean;
   needsNameCard?: boolean;
   nameCardDetails?: string;
+  // 长期预订相关字段
+  isLongTerm?: boolean;
+  longTermGroupId?: string;
+  longTermStartDate?: string;
+  longTermEndDate?: string;
+  dailyStartTime?: string;
+  dailyEndTime?: string;
+  // 按周预订相关字段
+  longTermType?: 'daily' | 'weekly';  // 长期预订类型：每天/每周
+  selectedWeekDays?: number[];  // 选择的星期几 (0=周日, 1=周一, ..., 6=周六)
+  weekCount?: number;  // 预订周数 (最长4周)
+  // 主从记录字段（用于长期预订整合审批）
+  isMaster?: boolean;  // 是否为主记录
+  masterId?: string;   // 主记录ID（从记录使用）
+}
+
+// 系统配置接口
+export interface SystemConfig {
+  id: string;
+  maxBookingDays: number;
+  updatedAt: string;
+  updatedBy: string;
 }
 
 export interface Notification {

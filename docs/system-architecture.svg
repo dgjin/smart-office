@@ -1,0 +1,369 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 2000" width="1400" height="2000">
+  <defs>
+    <!-- 渐变定义 -->
+    <linearGradient id="grad1" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#4F46E5;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#7C3AED;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad2" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#10B981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad3" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#F59E0B;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#D97706;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad4" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#EF4444;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#DC2626;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="grad5" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" style="stop-color:#3B82F6;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#2563EB;stop-opacity:1" />
+    </linearGradient>
+    <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#6B7280"/>
+    </marker>
+    <marker id="arrowhead-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#10B981"/>
+    </marker>
+    <marker id="arrowhead-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#3B82F6"/>
+    </marker>
+  </defs>
+
+  <!-- 背景 -->
+  <rect width="1400" height="2000" fill="#F9FAFB"/>
+
+  <!-- 标题 -->
+  <text x="700" y="40" text-anchor="middle" font-family="Arial, sans-serif" font-size="28" font-weight="bold" fill="#1F2937">SmartOffice 智慧办公系统架构图</text>
+  <text x="700" y="65" text-anchor="middle" font-family="Arial, sans-serif" font-size="14" fill="#6B7280">系统功能与函数调用关系</text>
+
+  <!-- ==================== 第一层：用户界面层 ==================== -->
+  <rect x="50" y="90" width="1300" height="380" rx="12" fill="#EEF2FF" stroke="#4F46E5" stroke-width="2"/>
+  <text x="80" y="120" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#4F46E5">用户界面层 (UI Layer)</text>
+
+  <!-- AppMobile 主容器 -->
+  <rect x="70" y="135" width="1260" height="320" rx="8" fill="white" stroke="#C7D2FE" stroke-width="1"/>
+  <text x="90" y="155" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#4338CA">AppMobile.tsx (主应用入口)</text>
+
+  <!-- 主要视图组件 -->
+  <rect x="90" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="180" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">AuthView</text>
+  <text x="180" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">登录认证</text>
+
+  <rect x="290" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="380" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">Dashboard</text>
+  <text x="380" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">首页仪表盘</text>
+
+  <rect x="490" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="580" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">MEETING_ROOMS</text>
+  <text x="580" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">会议室列表</text>
+
+  <rect x="690" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="780" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">WORKSTATIONS</text>
+  <text x="780" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">工位列表</text>
+
+  <rect x="890" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="980" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">BOOKINGS</text>
+  <text x="980" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">我的申请</text>
+
+  <rect x="1090" y="170" width="180" height="60" rx="6" fill="url(#grad1)"/>
+  <text x="1180" y="195" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">APPROVAL_CENTER</text>
+  <text x="1180" y="212" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" fill="#E0E7FF">审批中心</text>
+
+  <!-- 弹窗组件 -->
+  <rect x="90" y="250" width="200" height="50" rx="6" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1"/>
+  <text x="190" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#374151">RoomBookingFormModal</text>
+  <text x="190" y="285" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#6B7280">会议室预订表单</text>
+
+  <rect x="310" y="250" width="200" height="50" rx="6" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1"/>
+  <text x="410" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#374151">DeskBookingFormModal</text>
+  <text x="410" y="285" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#6B7280">工位预订表单</text>
+
+  <rect x="530" y="250" width="200" height="50" rx="6" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1"/>
+  <text x="630" y="270" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#374151">BookingDetailModal</text>
+  <text x="630" y="285" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#6B7280">预订详情弹窗</text>
+
+  <!-- 卡片组件 -->
+  <rect x="90" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="180" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">MobileBookingCard</text>
+
+  <rect x="290" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="380" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">MobileApprovalCard</text>
+
+  <rect x="490" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="580" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">MobileResourceCard</text>
+
+  <rect x="690" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="780" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">StatusBadge</text>
+
+  <rect x="890" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="980" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">BottomNav</text>
+
+  <rect x="1090" y="320" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="1180" y="345" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">NotificationToast</text>
+
+  <rect x="90" y="380" width="180" height="40" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="180" y="405" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#92400E">MeetingRoomMonitor</text>
+
+  <!-- ==================== 第二层：业务逻辑层 ==================== -->
+  <rect x="50" y="500" width="1300" height="380" rx="12" fill="#ECFDF5" stroke="#10B981" stroke-width="2"/>
+  <text x="80" y="530" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#059669">业务逻辑层 (Business Logic Layer)</text>
+
+  <!-- 核心处理函数 -->
+  <rect x="70" y="545" width="400" height="320" rx="8" fill="white" stroke="#A7F3D0" stroke-width="1"/>
+  <text x="90" y="565" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#047857">AppMobile.tsx 核心函数</text>
+
+  <!-- 预订相关函数 -->
+  <rect x="90" y="580" width="360" height="50" rx="6" fill="url(#grad2)"/>
+  <text x="270" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">handleBooking()</text>
+  <text x="270" y="615" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#D1FAE5">处理预订申请（单次/长期）</text>
+
+  <rect x="90" y="640" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="175" y="655" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">handleCancelBooking()</text>
+  <text x="175" y="670" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">撤销预订</text>
+
+  <rect x="280" y="640" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="365" y="655" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">findNextAvailableSlot()</text>
+  <text x="365" y="670" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">查找可用时段</text>
+
+  <!-- 审批相关函数 -->
+  <rect x="90" y="695" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="175" y="710" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">handleApprove()</text>
+  <text x="175" y="725" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">审批通过</text>
+
+  <rect x="280" y="695" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="365" y="710" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">handleReject()</text>
+  <text x="365" y="725" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">审批驳回</text>
+
+  <rect x="90" y="745" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="175" y="760" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">canApprove()</text>
+  <text x="175" y="775" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">权限检查</text>
+
+  <rect x="280" y="745" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="365" y="760" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">toggleBookingExpand()</text>
+  <text x="365" y="775" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">展开/收起卡片</text>
+
+  <rect x="90" y="795" width="360" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="270" y="810" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">addNotification() / useNotification()</text>
+  <text x="270" y="825" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">通知系统</text>
+
+  <!-- 服务层函数 -->
+  <rect x="500" y="545" width="400" height="320" rx="8" fill="white" stroke="#A7F3D0" stroke-width="1"/>
+  <text x="520" y="565" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#047857">supabaseService.ts 服务函数</text>
+
+  <rect x="520" y="580" width="360" height="50" rx="6" fill="url(#grad2)"/>
+  <text x="700" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">approveBooking()</text>
+  <text x="700" y="615" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#D1FAE5">原子性审批操作（乐观锁）</text>
+
+  <rect x="520" y="640" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="605" y="655" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">createBooking()</text>
+  <text x="605" y="670" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">创建预订</text>
+
+  <rect x="710" y="640" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="795" y="655" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">updateBooking()</text>
+  <text x="795" y="670" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">更新预订</text>
+
+  <rect x="520" y="695" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="605" y="710" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">getBookings()</text>
+  <text x="605" y="725" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">获取预订列表</text>
+
+  <rect x="710" y="695" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="795" y="710" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">getResources()</text>
+  <text x="795" y="725" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">获取资源列表</text>
+
+  <rect x="520" y="745" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="605" y="760" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">getUsers()</text>
+  <text x="605" y="775" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">获取用户列表</text>
+
+  <rect x="710" y="745" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="795" y="760" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">getWorkflow()</text>
+  <text x="795" y="775" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">获取审批流程</text>
+
+  <rect x="520" y="795" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="605" y="810" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">subscribeToBookings()</text>
+  <text x="605" y="825" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">实时订阅预订</text>
+
+  <rect x="710" y="795" width="170" height="40" rx="6" fill="#D1FAE5" stroke="#10B981" stroke-width="1"/>
+  <text x="795" y="810" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#065F46">loginWithEmailAndPassword()</text>
+  <text x="795" y="825" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#047857">用户登录</text>
+
+  <!-- Hooks -->
+  <rect x="930" y="545" width="400" height="320" rx="8" fill="white" stroke="#A7F3D0" stroke-width="1"/>
+  <text x="950" y="565" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#047857">自定义 Hooks</text>
+
+  <rect x="950" y="580" width="360" height="50" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="1130" y="600" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#92400E">usePermissions()</text>
+  <text x="1130" y="615" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#B45309">权限检查 Hook</text>
+
+  <rect x="950" y="645" width="170" height="50" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="1035" y="665" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#92400E">useRoomRecommendation()</text>
+  <text x="1035" y="680" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#B45309">AI推荐</text>
+
+  <rect x="1140" y="645" width="170" height="50" rx="6" fill="#FEF3C7" stroke="#F59E0B" stroke-width="1"/>
+  <text x="1225" y="665" text-anchor="middle" font-family="Arial, sans-serif" font-size="10" font-weight="bold" fill="#92400E">useNotification()</text>
+  <text x="1225" y="680" text-anchor="middle" font-family="Arial, sans-serif" font-size="8" fill="#B45309">通知管理</text>
+
+  <!-- ==================== 第三层：数据访问层 ==================== -->
+  <rect x="50" y="910" width="1300" height="280" rx="12" fill="#EFF6FF" stroke="#3B82F6" stroke-width="2"/>
+  <text x="80" y="940" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#1D4ED8">数据访问层 (Data Access Layer)</text>
+
+  <!-- Supabase 客户端 -->
+  <rect x="70" y="955" width="600" height="220" rx="8" fill="white" stroke="#BFDBFE" stroke-width="1"/>
+  <text x="90" y="975" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1E40AF">Supabase Client</text>
+
+  <rect x="90" y="990" width="260" height="50" rx="6" fill="url(#grad5)"/>
+  <text x="220" y="1010" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">supabase.from()</text>
+  <text x="220" y="1025" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#DBEAFE">数据库查询构建器</text>
+
+  <rect x="90" y="1055" width="260" height="50" rx="6" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1"/>
+  <text x="220" y="1075" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#1E40AF">supabase.auth.signInWithPassword()</text>
+  <text x="220" y="1090" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#3B82F6">用户认证</text>
+
+  <rect x="370" y="990" width="260" height="50" rx="6" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1"/>
+  <text x="500" y="1010" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#1E40AF">supabase.channel().on().subscribe()</text>
+  <text x="500" y="1025" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#3B82F6">实时订阅</text>
+
+  <rect x="370" y="1055" width="260" height="50" rx="6" fill="#DBEAFE" stroke="#3B82F6" stroke-width="1"/>
+  <text x="500" y="1075" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#1E40AF">supabase.rpc()</text>
+  <text x="500" y="1090" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#3B82F6">存储过程调用</text>
+
+  <!-- 数据转换 -->
+  <rect x="700" y="955" width="620" height="220" rx="8" fill="white" stroke="#BFDBFE" stroke-width="1"/>
+  <text x="720" y="975" font-family="Arial, sans-serif" font-size="14" font-weight="bold" fill="#1E40AF">数据转换层</text>
+
+  <rect x="720" y="990" width="280" height="50" rx="6" fill="#F3E8FF" stroke="#A855F7" stroke-width="1"/>
+  <text x="860" y="1010" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#6B21A8">transformBookingFromDB()</text>
+  <text x="860" y="1025" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7C3AED">snake_case → camelCase</text>
+
+  <rect x="1020" y="990" width="280" height="50" rx="6" fill="#F3E8FF" stroke="#A855F7" stroke-width="1"/>
+  <text x="1160" y="1010" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#6B21A8">transformBookingToDB()</text>
+  <text x="1160" y="1025" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7C3AED">camelCase → snake_case</text>
+
+  <rect x="720" y="1055" width="580" height="100" rx="6" fill="#F3E8FF" stroke="#A855F7" stroke-width="1"/>
+  <text x="1010" y="1080" text-anchor="middle" font-family="Arial, sans-serif" font-size="11" font-weight="bold" fill="#6B21A8">字段映射示例</text>
+  <text x="1010" y="1100" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7C3AED">user_id ↔ userId | start_time ↔ startTime | is_long_term ↔ isLongTerm</text>
+  <text x="1010" y="1120" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7C3AED">current_node_index ↔ currentNodeIndex | approval_history ↔ approvalHistory</text>
+  <text x="1010" y="1140" text-anchor="middle" font-family="Arial, sans-serif" font-size="9" fill="#7C3AED">long_term_group_id ↔ longTermGroupId | is_master ↔ isMaster</text>
+
+  <!-- ==================== 第四层：数据存储层 ==================== -->
+  <rect x="50" y="1220" width="1300" height="420" rx="12" fill="#FEF2F2" stroke="#EF4444" stroke-width="2"/>
+  <text x="80" y="1250" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#DC2626">数据存储层 (Data Storage Layer)</text>
+  <text x="80" y="1270" font-family="Arial, sans-serif" font-size="12" fill="#991B1B">Supabase PostgreSQL Database</text>
+
+  <!-- 数据库表 -->
+  <rect x="70" y="1285" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="70" y="1285" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="210" y="1305" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_users</text>
+  <text x="90" y="1330" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, name, email, password, role[],</text>
+  <text x="90" y="1345" font-family="Arial, sans-serif" font-size="9" fill="#374151">department, mobile, avatar</text>
+  <text x="90" y="1365" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">用户表：存储系统用户信息</text>
+
+  <rect x="370" y="1285" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="370" y="1285" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="510" y="1305" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_bookings</text>
+  <text x="390" y="1330" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, user_id, resource_id, type,</text>
+  <text x="390" y="1345" font-family="Arial, sans-serif" font-size="9" fill="#374151">start_time, end_time, status, purpose</text>
+  <text x="390" y="1365" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">预订表：存储会议室/工位预订</text>
+
+  <rect x="670" y="1285" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="670" y="1285" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="810" y="1305" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_resources</text>
+  <text x="690" y="1330" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, name, type(ROOM/DESK),</text>
+  <text x="690" y="1345" font-family="Arial, sans-serif" font-size="9" fill="#374151">capacity, location, features[], status</text>
+  <text x="690" y="1365" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">资源表：会议室和工位信息</text>
+
+  <rect x="970" y="1285" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="970" y="1285" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="1110" y="1305" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_workflow</text>
+  <text x="990" y="1330" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, name, approver_role, sort_order</text>
+  <text x="990" y="1365" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">工作流表：审批流程配置</text>
+
+  <rect x="70" y="1405" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="70" y="1405" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="210" y="1425" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_roles</text>
+  <text x="90" y="1450" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, name, description, color</text>
+  <text x="90" y="1485" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">角色表：系统角色定义</text>
+
+  <rect x="370" y="1405" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="370" y="1405" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="510" y="1425" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_departments</text>
+  <text x="390" y="1450" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, name, parent_id</text>
+  <text x="390" y="1485" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">部门表：组织架构</text>
+
+  <rect x="670" y="1405" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="670" y="1405" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="810" y="1425" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_approval_audit</text>
+  <text x="690" y="1450" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, booking_id, approver_id, status</text>
+  <text x="690" y="1465" font-family="Arial, sans-serif" font-size="9" fill="#374151">comment, timestamp</text>
+  <text x="690" y="1485" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">审批审计表：不可变审批记录</text>
+
+  <rect x="970" y="1405" width="280" height="100" rx="8" fill="white" stroke="#FECACA" stroke-width="1"/>
+  <rect x="970" y="1405" width="280" height="30" rx="8" fill="url(#grad4)"/>
+  <text x="1110" y="1425" text-anchor="middle" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="white">smartoffice_system_config</text>
+  <text x="990" y="1450" font-family="Arial, sans-serif" font-size="9" fill="#374151">id, max_booking_days, updated_at</text>
+  <text x="990" y="1485" font-family="Arial, sans-serif" font-size="8" fill="#6B7280">系统配置表：全局配置参数</text>
+
+  <!-- 长期预订字段说明 -->
+  <rect x="70" y="1525" width="1260" height="100" rx="8" fill="#FFFBEB" stroke="#F59E0B" stroke-width="1"/>
+  <text x="90" y="1545" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#92400E">长期预订字段扩展 (smartoffice_bookings)</text>
+  <text x="90" y="1570" font-family="Arial, sans-serif" font-size="10" fill="#78350F">is_long_term, long_term_group_id, long_term_start_date, long_term_end_date,</text>
+  <text x="90" y="1588" font-family="Arial, sans-serif" font-size="10" fill="#78350F">daily_start_time, daily_end_time, long_term_type, selected_week_days, week_count,</text>
+  <text x="90" y="1606" font-family="Arial, sans-serif" font-size="10" fill="#78350F">is_master, master_id</text>
+
+  <!-- ==================== 数据流向箭头 ==================== -->
+  <!-- UI 到 业务逻辑 -->
+  <line x1="700" y1="470" x2="700" y2="500" stroke="#10B981" stroke-width="2" marker-end="url(#arrowhead-green)"/>
+  <text x="710" y="485" font-family="Arial, sans-serif" font-size="10" fill="#059669">用户操作</text>
+
+  <!-- 业务逻辑 到 数据访问 -->
+  <line x1="700" y1="880" x2="700" y2="910" stroke="#3B82F6" stroke-width="2" marker-end="url(#arrowhead-blue)"/>
+  <text x="710" y="895" font-family="Arial, sans-serif" font-size="10" fill="#1D4ED8">CRUD 操作</text>
+
+  <!-- 数据访问 到 数据存储 -->
+  <line x1="700" y1="1190" x2="700" y2="1220" stroke="#EF4444" stroke-width="2" marker-end="url(#arrowhead)"/>
+  <text x="710" y="1205" font-family="Arial, sans-serif" font-size="10" fill="#DC2626">SQL 执行</text>
+
+  <!-- 实时订阅回流 -->
+  <path d="M 1250 1050 Q 1350 1050 1350 900 Q 1350 750 1250 750" fill="none" stroke="#8B5CF6" stroke-width="2" stroke-dasharray="5,5" marker-end="url(#arrowhead)"/>
+  <text x="1280" y="900" font-family="Arial, sans-serif" font-size="10" fill="#7C3AED" transform="rotate(90 1280 900)">Realtime 订阅</text>
+
+  <!-- ==================== 核心流程说明 ==================== -->
+  <rect x="50" y="1660" width="1300" height="320" rx="12" fill="#F3F4F6" stroke="#9CA3AF" stroke-width="1"/>
+  <text x="80" y="1690" font-family="Arial, sans-serif" font-size="18" font-weight="bold" fill="#374151">核心业务流程</text>
+
+  <!-- 预订流程 -->
+  <rect x="70" y="1710" width="600" height="120" rx="8" fill="white" stroke="#D1D5DB" stroke-width="1"/>
+  <text x="90" y="1730" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#059669">预订流程</text>
+  <text x="90" y="1750" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">1. 用户填写预订信息 → RoomBookingFormModal</text>
+  <text x="90" y="1768" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">2. 冲突检测 → findNextAvailableSlot()</text>
+  <text x="90" y="1786" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">3. 创建预订 → handleBooking() → createBooking()</text>
+  <text x="90" y="1804" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">4. 长期预订：创建主记录 + 从记录</text>
+  <text x="90" y="1822" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">5. 实时推送 → subscribeToBookings() → UI 更新</text>
+
+  <!-- 审批流程 -->
+  <rect x="700" y="1710" width="630" height="120" rx="8" fill="white" stroke="#D1D5DB" stroke-width="1"/>
+  <text x="720" y="1730" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#DC2626">审批流程</text>
+  <text x="720" y="1750" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">1. 审批人查看待办 → ApprovalCenter</text>
+  <text x="720" y="1768" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">2. 点击通过 → handleApprove() → approveBooking()</text>
+  <text x="720" y="1786" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">3. 原子性更新：乐观锁防止并发冲突</text>
+  <text x="720" y="1804" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">4. 批量更新：长期预订主从记录状态同步</text>
+  <text x="720" y="1822" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">5. 审计记录 → approval_audit 表</text>
+
+  <!-- 权限检查流程 -->
+  <rect x="70" y="1850" width="600" height="110" rx="8" fill="white" stroke="#D1D5DB" stroke-width="1"/>
+  <text x="90" y="1870" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#7C3AED">权限检查流程</text>
+  <text x="90" y="1890" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">1. 用户角色数组 → currentUser.role[]</text>
+  <text x="90" y="1908" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">2. 权限计算 → usePermissions() Hook</text>
+  <text x="90" y="1926" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">3. 权限检查 → hasPermission(PERMISSIONS.xxx)</text>
+  <text x="90" y="1944" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">4. UI 控制 → 显示/隐藏功能按钮</text>
+
+  <!-- 技术栈 -->
+  <rect x="700" y="1850" width="630" height="110" rx="8" fill="white" stroke="#D1D5DB" stroke-width="1"/>
+  <text x="720" y="1870" font-family="Arial, sans-serif" font-size="12" font-weight="bold" fill="#2563EB">技术栈</text>
+  <text x="720" y="1890" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">前端：React 18 + TypeScript + Tailwind CSS + Vite</text>
+  <text x="720" y="1908" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">后端：Supabase (PostgreSQL + Realtime + Auth)</text>
+  <text x="720" y="1926" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">AI：Google Gemini API (智能推荐)</text>
+  <text x="720" y="1944" font-family="Arial, sans-serif" font-size="10" fill="#4B5563">图标：Lucide React</text>
+</svg>
