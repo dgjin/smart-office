@@ -1,0 +1,6 @@
+{
+  "dev": {
+    "command": ["npm", "run", "dev", "--", "--port", "3001", "--strictPort"],
+    "port": 3001
+  }
+}
