@@ -30,6 +30,31 @@ export const queryTestDb = async <T = any>(sql: string, values: any[] = []): Pro
   }
 };
 
+export const mutateTestCollection = async <T>(stateKey: string, mutator: (items: T[]) => T[]): Promise<T[]> => {
+  if (!integrationEnabled) throw new Error('集成测试数据库未显式启用');
+  const db = await connection();
+  let locked = false;
+  try {
+    const [lockRows] = await db.query<any[]>("SELECT GET_LOCK('smart_office_write', 10) AS acquired");
+    if (!lockRows[0]?.acquired) throw new Error('获取集成测试写锁超时');
+    locked = true;
+    await db.beginTransaction();
+    const [rows] = await db.query<any[]>('SELECT payload FROM office_state WHERE state_key = ? FOR UPDATE', [stateKey]);
+    if (rows.length !== 1) throw new Error(`测试集合不存在：${stateKey}`);
+    const current = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+    const updated = mutator(current);
+    await db.query('UPDATE office_state SET payload = ? WHERE state_key = ?', [JSON.stringify(updated), stateKey]);
+    await db.commit();
+    return updated;
+  } catch (error) {
+    await db.rollback();
+    throw error;
+  } finally {
+    if (locked) await db.query("SELECT RELEASE_LOCK('smart_office_write')").catch(() => {});
+    await db.end();
+  }
+};
+
 export const resetTestDb = async () => {
   if (!integrationEnabled) throw new Error('只允许清理由 smart_office_test_ 前缀标识的测试数据库');
   const db = await connection();

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { ApprovalRuleSetVersion, Booking, ConfidentialityAuthorization, ConfidentialWhitelistEntry, User } from '../../types.ts';
-import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
+import { integrationEnabled, mutateTestCollection, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
 
 const server = new TestServer();
 const jsonBody = (value: unknown) => ({ body: JSON.stringify(value) });
@@ -304,10 +304,9 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
 
     const access = await createBooking(ids.requester, '最终核准资源准入重检', { resourceId: accessResourceId });
     assert.equal((await approve(ids.approver, access.id)).status, 200);
-    const resources = await readCollection<any>('resources');
-    await queryTestDb('UPDATE office_state SET payload = ? WHERE state_key = ?', [
-      JSON.stringify(resources.map(resource => resource.id === accessResourceId ? { ...resource, status: 'MAINTENANCE' } : resource)), 'resources'
-    ]);
+    await mutateTestCollection<any>('resources', resources => resources.map(resource =>
+      resource.id === accessResourceId ? { ...resource, status: 'MAINTENANCE' } : resource
+    ));
     const accessResponse = await approve(ids.admin, access.id);
     assert.equal(accessResponse.status, 409);
     assert.equal((await readJson(accessResponse)).error, 'RESOURCE_MAINTENANCE');

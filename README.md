@@ -101,7 +101,7 @@ SMART_OFFICE_TEST_MYSQL=true MYSQL_DATABASE=smart_office_test_i1 npm run test:in
 SMART_OFFICE_TEST_MYSQL=true MYSQL_DATABASE=smart_office_test_i1 npm run test:e2e
 ```
 
-浏览器测试使用系统 Google Chrome（Playwright `channel: 'chrome'`），运行前需安装 Chrome。集成测试使用真实 Node、隔离 MySQL 和本地 Fake OIDC Provider；浏览器测试使用独立 BrowserContext，不读取或写入真实业务库。`production.spec.ts` 另外以 `NODE_ENV=production` 验证 CSP、安全响应头、会话鉴权、权限化读模型和偏好写入。
+浏览器测试使用系统 Google Chrome（Playwright `channel: 'chrome'`），运行前需安装 Chrome。Playwright 将 Node 与 Chrome 时区固定为 `Asia/Shanghai`，与预约规则的中国自然日口径一致，避免 UTC 运行器误判开放时间。集成测试使用真实 Node、隔离 MySQL 和本地 Fake OIDC Provider；浏览器测试使用独立 BrowserContext，不读取或写入真实业务库。`production.spec.ts` 另外以 `NODE_ENV=production` 验证 CSP、安全响应头、会话鉴权、权限化读模型和偏好写入。
 
 ### 容量测试工具
 
@@ -165,7 +165,7 @@ MRP9 及后续阶段仍有以下明确门禁：
 - 同一台账的办公类人员合计为 364 人（高管 13、中层 66、开放办公区 285），另有 1411、1412 两间会议室各关联 1 条人员记录，使全表人数公式显示 366；真实员工口径须由责任方确认。需求初稿明确 16 层现有 5 块门口小屏，但未给出其他门禁设备数量；全员工同时在线的具体并发模型、提交和跨 7 天查询秒数也仍为待确认值。未形成这些正式输入前，不执行冒充验收结论的峰值测试；后续仍须保存 P95/P99、吞吐、错误率及资源曲线原始报告。
 - P9-04 已完成提交 `1e13583` 旧代码在 001—013 隔离库上的生产构建、基础冒烟和业务对账：当前候选创建的同一预约完成两级审批、工单、QR 签到、使用确认、提前结束、日历/门禁 Outbox 和授权回收；旧应用可读取 COMPLETED 预约与 DONE 工单，且旧应用另一笔写入前后，目标预约及其工单、签到、使用事实、Outbox、集成投递、门禁授权和审计摘要一致。原始结果见 `.wb/reports/mrp9-rollback-smoke-20261121.md` 和 `.wb/reports/mrp9-business-rollback-20261121.md`。但旧应用新写入的 `rule_version`、`workflow_version`、`approval_rule_set_version`、`approval_rule_id`、`approval_submitted_at`、`schedule_version` 关系列均为 NULL，payload 也缺 `meetingType`、`ruleVersion`、`scheduleVersion`，因此完整业务兼容回滚未通过，不得允许旧应用直接承接新预约写入。企业安全测试、实际发布候选切换及生产签字仍未完成。
 - P9-04 的跨版本备份恢复路径已在另一隔离库通过：001—006 旧应用完成预约、两级审批和工单后生成原生备份；升级 007—013 并写入候选数据，再恢复备份后，迁移记录回到 001—006、候选新增预约被移除、备份前预约与工单摘要一致，旧应用可再次完成预约、两级审批和工单生成。原始结果见 `.wb/reports/mrp9-cross-version-restore-20261121.md`。本地可证明的完整读写回滚方案是停止写入并恢复兼容备份，而不是旧代码直接承接新库写入；真实生产备份恢复和责任方签字仍未完成。
-- P9-05 远程 CI 尚未对当前发布候选代码实际运行成功；旧 run `44860079503` 的 SHA `6b228511…` 不属于当前候选，不能复用为本次验收证据。只有新不可变提交对应的远程运行全绿后才关闭此门槛。
+- P9-05 按不可变提交 SHA 验收，旧 run `44860079503` 的 SHA `6b228511…` 不能复用。候选 `62b973ec…` 的 run `44917792796` 第 2 次尝试虽通过 71 项集成测试，但 22 项 Chrome 测试中 1 项因 UTC 运行器与中国开放时间口径不一致而失败，不是通过结论；后续修复候选必须重新执行完整远程流程，只有对应 run 全绿后才关闭此门槛。
 - P9-06 发布候选评审尚未完成。`.wb/reports/mrp9-release-candidate-review-20261121.json` 仅是 HEAD `1e13583` 加未提交改动时的历史评审输入，其中文件计数、数据库迁移状态等快照已过时；当前候选须基于新不可变提交重新评审。所有问题仍需接受人、获批规避方案、期限及业务/测试/运维/安全/数据库签字，不虚构评审结论。
 - 本地业务库已在备份后应用 001—013，并正式导入 28 间需求会议室：18 间按源座位数开放，10 间使用分类下限技术占位且保持 PENDING；原 5 个资源和 16 条预约导入前后保持一致。该结果不等于生产迁移、10 间容量核定或现场签字完成。历史问题数据仍待授权清理，外部平台联调、现场施工与设备验收、业务 UAT、培训、灰度和正式投产均须后续真实证据。
 

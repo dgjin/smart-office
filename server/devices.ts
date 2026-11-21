@@ -6,6 +6,7 @@ import { mutateDb, readSnapshot } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
 import { DOOR_SNAPSHOT_MAX_AGE_MS } from '../utils/doorDisplay.ts';
+import { bookingDateKey } from '../utils/bookingRules.ts';
 
 const text = (value: unknown, field: string, max = 100) => {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new DbError(`INVALID_DEVICE_${field}`, 400);
@@ -107,11 +108,11 @@ const scheduleItem = (booking: Booking) => ({
 const deviceSnapshot = (db: OfficeDb, revision: number, device: DoorDevice) => {
   const resource = (db.resources || []).find(item => item.id === device.resourceId);
   if (!resource) throw new DbError('DEVICE_RESOURCE_NOT_FOUND', 410);
-  const start = new Date(); start.setHours(0, 0, 0, 0);
-  const end = new Date(start); end.setDate(end.getDate() + 1);
+  const start = Date.parse(`${bookingDateKey(Date.now())}T00:00:00+08:00`);
+  const end = start + 86400000;
   const bookings = (db.bookings || []).filter(booking => booking.resourceId === resource.id
     && ['APPROVED', 'COMPLETED'].includes(booking.status)
-    && Date.parse(booking.startTime) < end.getTime() && Date.parse(booking.actualEndTime || booking.endTime) > start.getTime())
+    && Date.parse(booking.startTime) < end && Date.parse(booking.actualEndTime || booking.endTime) > start)
     .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
     .map(scheduleItem);
   const generatedAt = Date.now();

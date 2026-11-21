@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
 import type { ApprovalDelegate, ApprovalNode, Booking, WorkflowVersion } from '../../types.ts';
-import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
+import { integrationEnabled, mutateTestCollection, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
 
 const server = new TestServer();
 const jsonBody = (value: unknown) => ({ body: JSON.stringify(value) });
@@ -186,13 +186,13 @@ describe('第五迭代审批模型 API 集成验证', { skip: !integrationEnable
     assert.equal(record.delegatorId, approverId);
     assert.equal(record.delegatorName, approverName);
 
-    const delegations = await readCollection<ApprovalDelegate>('approvalDelegates');
-    const updated = delegations.map(item => item.id === 'delegation-integration' ? {
-      ...item,
-      startsAt: new Date(Date.now() - 2 * 3600000).toISOString(),
-      endsAt: new Date(Date.now() - 3600000).toISOString()
-    } : item);
-    await queryTestDb('UPDATE office_state SET payload = ? WHERE state_key = ?', [JSON.stringify(updated), 'approvalDelegates']);
+    await mutateTestCollection<ApprovalDelegate>('approvalDelegates', delegations => delegations.map(item =>
+      item.id === 'delegation-integration' ? {
+        ...item,
+        startsAt: new Date(Date.now() - 2 * 3600000).toISOString(),
+        endsAt: new Date(Date.now() - 3600000).toISOString()
+      } : item
+    ));
 
     const expired = await approve(delegate, expiredBooking.id);
     assert.equal(expired.ok, false);

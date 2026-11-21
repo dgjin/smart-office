@@ -52,9 +52,10 @@ before(async () => {
     id: 'mrp6-other', userId: otherId, resourceId: 'r2', purpose: '他人会议',
     startTime: new Date(now + 3600000).toISOString(), endTime: new Date(now + 7200000).toISOString()
   }));
+  const chinaToday = new Date(now + 8 * 3600000).toISOString().slice(0, 10);
   await insertBooking(booking({
     id: 'mrp6-confidential', userId: otherId, resourceId: 'r1', purpose: '机密项目真实名称', meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL',
-    startTime: new Date(now + 7200000).toISOString(), endTime: new Date(now + 10800000).toISOString()
+    startTime: `${chinaToday}T08:00:00+08:00`, endTime: `${chinaToday}T09:00:00+08:00`
   }));
   await insertBooking(booking({
     id: 'mrp6-no-show', userId: '3', resourceId: 'r1', purpose: '未签到复核', status: 'CANCELLED', noShow: true, releaseType: 'NO_SHOW', releasedAt: new Date(now - 60000).toISOString(),

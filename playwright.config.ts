@@ -1,5 +1,7 @@
 import { defineConfig } from '@playwright/test';
 
+process.env.TZ = 'Asia/Shanghai';
+
 export default defineConfig({
   testDir: './tests/e2e',
   fullyParallel: false,
@@ -11,6 +13,7 @@ export default defineConfig({
     browserName: 'chromium',
     channel: 'chrome',
     headless: true,
+    timezoneId: 'Asia/Shanghai',
     viewport: { width: 1440, height: 1000 },
     trace: 'retain-on-failure'
   }
