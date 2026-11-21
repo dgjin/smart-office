@@ -1,4 +1,4 @@
-import type { ApprovalDelegate, Booking, Resource, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion } from '../types.ts';
+import type { ApprovalDelegate, ApprovalRuleSetVersion, AuditoriumSetup, Booking, BookingServiceRequirement, BookingUsageFact, CheckInEvent, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, DoorDevice, ExceptionActionRecord, OrganizationSyncBatch, Resource, ServiceArea, ServiceCatalogItem, ServiceInspection, ServiceShift, UsageAppeal, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion, RuleVersion, ResourceImportBatch, ExternalCallback, ExternalCompensation, AccessAuthorizationFact, IntegrationDelivery } from '../types.ts';
 import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, validateBookingResource } from '../utils/bookingRules.ts';
 import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
 
@@ -13,6 +13,26 @@ export interface OfficeDb {
   approvalDelegates?: ApprovalDelegate[];
   workOrders?: WorkOrder[];
   notifications?: Notification[];
+  ruleVersions?: RuleVersion[];
+  resourceImportBatches?: ResourceImportBatch[];
+  approvalRuleSetVersions?: ApprovalRuleSetVersion[];
+  confidentialWhitelist?: ConfidentialWhitelistEntry[];
+  confidentialityAuthorizations?: ConfidentialityAuthorization[];
+  confidentialAccessGrants?: ConfidentialAccessGrant[];
+  serviceCatalog?: ServiceCatalogItem[];
+  serviceAreas?: ServiceArea[];
+  serviceShifts?: ServiceShift[];
+  serviceInspections?: ServiceInspection[];
+  checkInEvents?: CheckInEvent[];
+  usageFacts?: BookingUsageFact[];
+  usageAppeals?: UsageAppeal[];
+  devices?: DoorDevice[];
+  exceptionActions?: ExceptionActionRecord[];
+  organizationSyncBatches?: OrganizationSyncBatch[];
+  externalCallbacks?: ExternalCallback[];
+  externalCompensations?: ExternalCompensation[];
+  accessAuthorizationFacts?: AccessAuthorizationFact[];
+  integrationDeliveries?: IntegrationDelivery[];
 }
 
 export interface AgentContext {
@@ -23,7 +43,7 @@ export interface AgentContext {
 export type AgentAction =
   | { type: 'NAVIGATE'; view: string }
   | { type: 'PROPOSE_BOOKING'; draft: Partial<Booking> ; summary: string }
-  | { type: 'PROPOSE_CANCEL'; bookingId: string; summary: string }
+  | { type: 'PROPOSE_CANCEL'; bookingId: string; reason?: string; summary: string }
   | { type: 'PROPOSE_APPROVAL'; bookingId: string; bookingIds?: string[]; decision: 'APPROVE' | 'REJECT'; comment?: string; summary: string }
   | { type: 'PROPOSE_CHECK_IN'; bookingId: string; summary: string }
   | { type: 'PROPOSE_WORK_ORDER'; workOrderId: string; summary: string }
@@ -351,8 +371,33 @@ export const TOOLS = [
           endTime: { type: 'string', description: 'ISO 8601 本地时间' },
           purpose: { type: 'string', description: '会议用途' },
           participants: { type: 'number' },
-          needsTea: { type: 'boolean', description: '是否需要茶水服务' },
-          needsVideo: { type: 'boolean', description: '是否需要视频会议支持' },
+          meetingType: { type: 'string', enum: ['NORMAL', 'IMPORTANT'], description: '仅普通或重要会议草案；涉密属性必须由用户在正式表单中选择' },
+          needsTea: { type: 'boolean', description: '用户明确要求时需要茶水服务' },
+          needsVideo: { type: 'boolean', description: '用户明确要求时需要视频会议支持' },
+          serviceRequirements: {
+            type: 'array',
+            description: '仅记录用户明确提出的服务需求，不自行推断',
+            items: {
+              type: 'object',
+              properties: {
+                type: { type: 'string', enum: ['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'] },
+                details: { type: 'string', description: '服务补充说明；OTHER 必填' }
+              },
+              required: ['type']
+            }
+          },
+          exclusiveRequestReason: { type: 'string', description: '专属资源临时申请理由，仅用户明确说明时填写' },
+          auditoriumSetup: {
+            type: 'object',
+            description: '礼堂布置，仅礼堂资源且用户明确说明时填写',
+            properties: {
+              seatingLayout: { type: 'string', enum: ['THEATER', 'CLASSROOM', 'ROUNDTABLE'] },
+              stageRequired: { type: 'boolean' },
+              rehearsalMinutes: { type: 'number', description: '彩排分钟数，0–1440 的整数' },
+              notes: { type: 'string' }
+            },
+            required: ['seatingLayout', 'stageRequired']
+          },
           attendeeNames: { type: 'array', items: { type: 'string' }, description: '参会人姓名' },
           hasLeader: { type: 'boolean', description: '是否有领导参会' },
           leaderDetails: { type: 'string', description: '参会领导姓名或职位' },
@@ -654,7 +699,47 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         };
       }
       const participants = Number(args?.participants) || 1;
-      const requiredFeatures = args?.needsVideo ? ['VIDEO' as const] : [];
+      if (args?.meetingType !== undefined && !['NORMAL', 'IMPORTANT'].includes(args.meetingType)) {
+        return { ok: false, error: '助手只能生成普通或重要会议草案；涉密属性请在正式表单中明确选择。' };
+      }
+      const rawServices = args?.serviceRequirements === undefined ? [] : args.serviceRequirements;
+      if (!Array.isArray(rawServices) || rawServices.length > 20) return { ok: false, error: '服务需求格式无效，请修订后重试。' };
+      const serviceRequirements: BookingServiceRequirement[] = [];
+      for (const item of rawServices) {
+        if (!item || !['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(item.type)
+          || serviceRequirements.some(service => service.type === item.type)
+          || (item.details !== undefined && (typeof item.details !== 'string' || item.details.length > 500))) {
+          return { ok: false, error: '服务需求格式无效或存在重复项，请修订后重试。' };
+        }
+        const details = item.details?.trim() || undefined;
+        if (item.type === 'OTHER' && !details) return { ok: false, error: '其他服务需要填写具体说明。' };
+        serviceRequirements.push({ type: item.type, details });
+      }
+      if (args?.needsTea && !serviceRequirements.some(item => item.type === 'TEA')) serviceRequirements.push({ type: 'TEA' });
+      if (args?.needsVideo && !serviceRequirements.some(item => item.type === 'VIDEO')) serviceRequirements.push({ type: 'VIDEO' });
+      const needsTea = serviceRequirements.some(item => item.type === 'TEA');
+      const needsVideo = serviceRequirements.some(item => item.type === 'VIDEO');
+      let auditoriumSetup: AuditoriumSetup | undefined;
+      if (args?.auditoriumSetup !== undefined) {
+        const setup = args.auditoriumSetup;
+        if (resource.roomCategory !== 'AUDITORIUM' || !setup || !['THEATER', 'CLASSROOM', 'ROUNDTABLE'].includes(setup.seatingLayout)
+          || typeof setup.stageRequired !== 'boolean'
+          || (setup.rehearsalMinutes !== undefined && (!Number.isInteger(setup.rehearsalMinutes) || setup.rehearsalMinutes < 0 || setup.rehearsalMinutes > 1440))
+          || (setup.notes !== undefined && (typeof setup.notes !== 'string' || setup.notes.length > 500))) {
+          return { ok: false, error: '礼堂布置参数无效，请确认座位布局、舞台和彩排时长。' };
+        }
+        auditoriumSetup = {
+          seatingLayout: setup.seatingLayout,
+          stageRequired: setup.stageRequired,
+          rehearsalMinutes: setup.rehearsalMinutes,
+          notes: setup.notes?.trim() || undefined
+        };
+      }
+      if (args?.exclusiveRequestReason !== undefined
+        && (typeof args.exclusiveRequestReason !== 'string' || args.exclusiveRequestReason.trim().length < 2 || args.exclusiveRequestReason.trim().length > 500)) {
+        return { ok: false, error: '专属资源申请理由需为 2–500 个字符。' };
+      }
+      const requiredFeatures = needsVideo ? ['VIDEO' as const] : [];
       const resourceError = validateBookingResource(resource, {
         startTime: start.toISOString(),
         endTime: end.toISOString(),
@@ -702,8 +787,12 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         status: 'PENDING',
         currentNodeIndex: 0,
         approvalHistory: [],
-        needsTeaService: Boolean(args?.needsTea),
-        isVideoConference: Boolean(args?.needsVideo),
+        meetingType: args?.meetingType,
+        needsTeaService: needsTea,
+        isVideoConference: needsVideo,
+        serviceRequirements,
+        exclusiveRequestReason: resource.isExclusive ? args?.exclusiveRequestReason?.trim() : undefined,
+        auditoriumSetup,
         requiredFeatures,
         attendeeIds: attendeeIds.length ? attendeeIds : undefined,
         hasLeader: Boolean(args?.hasLeader),
@@ -717,8 +806,10 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         resource.name,
         fmtRange(start, end),
         `${participants} 人`,
-        args?.needsVideo ? '需视频' : '',
-        args?.needsTea ? '需茶水' : '',
+        needsVideo ? '需视频' : '',
+        needsTea ? '需茶水' : '',
+        serviceRequirements.some(item => item.type === 'SIGNAGE') ? '需指引标识' : '',
+        serviceRequirements.some(item => item.type === 'SECURITY') ? '需安保' : '',
         `用途：${draft.purpose}`
       ].filter(Boolean).join(' · ');
 

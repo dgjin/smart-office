@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowUpRight, Building2, CalendarDays, MapPin, Users } from 'lucide-react';
 import type { Booking, Resource, ResourceStatus } from '../types';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
+import { BUILDING_FLOORS, getResourceBuilding, getResourceFloor, parseResourceBuilding, parseResourceFloor } from '../utils/resourceDomain';
+import type { ResourceBuilding } from '../types';
 
-export type BuildingId = 'MAIN' | 'ANNEX';
+export type BuildingId = ResourceBuilding;
 type BuildingConfig = {
   id: BuildingId;
   code: string;
@@ -14,8 +16,8 @@ type BuildingConfig = {
 };
 
 export const BUILDINGS: Record<BuildingId, BuildingConfig> = {
-  MAIN: { id: 'MAIN', code: '01', name: '1号楼', kind: '主楼', totalFloors: 20, shape: 'RECTANGULAR' },
-  ANNEX: { id: 'ANNEX', code: '02', name: '2号楼', kind: '配楼', totalFloors: 4, shape: 'L' }
+  MAIN: { id: 'MAIN', code: '01', name: '1号楼', kind: '主楼', totalFloors: BUILDING_FLOORS.MAIN, shape: 'RECTANGULAR' },
+  ANNEX: { id: 'ANNEX', code: '02', name: '2号楼', kind: '配楼', totalFloors: BUILDING_FLOORS.ANNEX, shape: 'L' }
 };
 
 export const getFloorNumbers = (totalFloors: number) => Array.from({ length: totalFloors }, (_, index) => totalFloors - index);
@@ -30,7 +32,7 @@ type RoomWithStatus = {
 type BuildingExplorerProps = {
   resources: Resource[];
   bookings: Booking[];
-  focusLocation?: { location: string; token: number | string } | null;
+  focusLocation?: { location: string; building?: BuildingId; floor?: number; token: number | string } | null;
   onDetails: (resource: Resource) => void;
   onCalendar: (resource: Resource) => void;
   onBook: (resource: Resource) => void;
@@ -43,17 +45,8 @@ const STATUS_LABELS: Record<DisplayStatus, string> = {
   MAINTENANCE: '暂停预约'
 };
 
-export const parseBuilding = (location: string): BuildingId => {
-  if (/(?:2|二)\s*号楼|配楼/i.test(location)) return 'ANNEX';
-  return 'MAIN';
-};
-
-export const parseFloor = (location: string, totalFloors: number) => {
-  const match = location.match(/(\d{1,2})\s*(?:层|F\b)/i);
-  if (!match) return null;
-  const floor = Number(match[1]);
-  return floor >= 1 && floor <= totalFloors ? floor : null;
-};
+export const parseBuilding = parseResourceBuilding;
+export const parseFloor = parseResourceFloor;
 
 const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, resultContext }: BuildingExplorerProps) => {
   const explorerRef = useRef<HTMLElement>(null);
@@ -68,8 +61,8 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
 
   useLayoutEffect(() => {
     if (!focusLocation) return;
-    const buildingId = parseBuilding(focusLocation.location);
-    const floor = parseFloor(focusLocation.location, BUILDINGS[buildingId].totalFloors);
+    const buildingId = focusLocation.building || parseBuilding(focusLocation.location);
+    const floor = focusLocation.floor || parseFloor(focusLocation.location, BUILDINGS[buildingId].totalFloors);
     if (!floor) return;
     setSelectedBuildingId(buildingId);
     setSelectedFloorState(current => ({ ...current, [buildingId]: floor }));
@@ -98,16 +91,16 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
 
   const building = BUILDINGS[selectedBuildingId];
   const floorNumbers = getFloorNumbers(building.totalFloors);
-  const buildingRooms = useMemo(() => rooms.filter(room => parseBuilding(room.resource.location) === selectedBuildingId), [rooms, selectedBuildingId]);
+  const buildingRooms = useMemo(() => rooms.filter(room => getResourceBuilding(room.resource) === selectedBuildingId), [rooms, selectedBuildingId]);
   const floors = useMemo(() => new Map(floorNumbers.map(floor => [
     floor,
-    buildingRooms.filter(room => parseFloor(room.resource.location, building.totalFloors) === floor)
+    buildingRooms.filter(room => getResourceFloor(room.resource) === floor)
   ])), [buildingRooms, building.totalFloors]);
 
   const firstOccupiedFloor = floorNumbers.find(floor => (floors.get(floor)?.length || 0) > 0);
   const selectedFloor = selectedFloorState[selectedBuildingId] ?? firstOccupiedFloor ?? building.totalFloors;
   const selectedRooms = floors.get(selectedFloor) || [];
-  const unmappedRooms = buildingRooms.filter(room => parseFloor(room.resource.location, building.totalFloors) === null);
+  const unmappedRooms = buildingRooms.filter(room => getResourceFloor(room.resource) === null);
   const availableCount = buildingRooms.filter(room => room.status === 'AVAILABLE').length;
   const selectedAvailable = selectedRooms.filter(room => room.status === 'AVAILABLE').length;
 

@@ -94,6 +94,8 @@ test.describe('MySQL-only 浏览器验收', () => {
     const dialog = page.getByRole('dialog', { name: '预约Alpha 战略会议室' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await dialog.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
+    await dialog.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
     const date = new Date(Date.now() + 7 * 86400000);
     const dateValue = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
     await dialog.getByLabel('自定义预约日期').fill(dateValue);
@@ -293,7 +295,10 @@ test.describe('MySQL-only 浏览器验收', () => {
     await page.getByLabel('筛选审计记录', { exact: true }).fill('WORKFLOW_PUBLISH');
     const auditTable = page.locator('section').filter({ has: page.getByRole('heading', { name: '操作审计', exact: true }) });
     await expect(auditTable).toContainText('WORKFLOW_PUBLISH');
-    await expect(auditTable).toContainText('WORKFLOW / 2');
+    const workflowVersionRows = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'workflowVersions'");
+    const workflowVersions = typeof workflowVersionRows[0].payload === 'string' ? JSON.parse(workflowVersionRows[0].payload) : workflowVersionRows[0].payload;
+    const latestWorkflowVersion = Math.max(...workflowVersions.map((item: any) => item.version));
+    await expect(auditTable).toContainText(`WORKFLOW / ${latestWorkflowVersion}`);
     await page.getByLabel('筛选审计记录', { exact: true }).fill('DELEGATION_CREATE');
     await expect(auditTable).toContainText('DELEGATION_CREATE');
     await expect(auditTable).toContainText('超级管理员');
@@ -301,7 +306,7 @@ test.describe('MySQL-only 浏览器验收', () => {
     await page.getByRole('button', { name: '运营报表', exact: true }).click();
     await expect(page.getByRole('heading', { name: '利用率与审批效率', exact: true })).toBeVisible();
     await page.getByLabel('报表时间范围', { exact: true }).selectOption('ALL');
-    await expect(page.locator('tbody')).toContainText('Alpha 战略会议室');
+    await expect(page.getByRole('region', { name: '多维统计', exact: true }).locator('tbody')).toContainText('Alpha 战略会议室');
     const csvDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出 CSV', exact: true }).click();
     const csvFile = await csvDownload;

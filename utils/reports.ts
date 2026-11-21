@@ -10,7 +10,7 @@ export interface DailyOpeningHours {
   end: string;
 }
 
-export type ReportDimension = 'OVERALL' | 'RESOURCE' | 'DEPARTMENT';
+export type ReportDimension = 'OVERALL' | 'RESOURCE' | 'BUILDING_FLOOR' | 'RESOURCE_TYPE' | 'ROOM_CATEGORY' | 'TIME_SLOT' | 'DEPARTMENT' | 'SERVICE' | 'USAGE';
 
 export interface ReportRow {
   dimension: ReportDimension;
@@ -53,7 +53,7 @@ const parseClock = (value: string): number | null => {
   return hours * 60 + minutes + seconds / 60;
 };
 
-const openingMinutesWithin = (
+export const openingMinutesWithin = (
   start: number,
   end: number,
   opening: DailyOpeningHours
@@ -91,7 +91,7 @@ const finalApprovalHours = (booking: Booking): number | null => {
   return null;
 };
 
-const buildRow = (
+export const buildReportRow = (
   dimension: ReportDimension,
   id: string,
   name: string,
@@ -103,9 +103,10 @@ const buildRow = (
   opening: DailyOpeningHours
 ): ReportRow => {
   const usageMinutes = items.reduce((total, booking) => {
-    if (booking.status !== 'APPROVED' && booking.status !== 'COMPLETED') return total;
-    const start = Math.max(rangeStart, new Date(booking.startTime).getTime());
-    const end = Math.min(rangeEnd, new Date(booking.endedEarlyAt || booking.endTime).getTime());
+    const hasActualUsage = Boolean(booking.actualStartTime && booking.actualEndTime);
+    if (!['APPROVED', 'COMPLETED'].includes(booking.status) && !(booking.status === 'CANCELLED' && hasActualUsage)) return total;
+    const start = Math.max(rangeStart, new Date(hasActualUsage ? booking.actualStartTime! : booking.startTime).getTime());
+    const end = Math.min(rangeEnd, new Date(booking.actualEndTime || booking.endedEarlyAt || booking.endTime).getTime());
     return total + openingMinutesWithin(start, end, opening);
   }, 0);
   const approvalDurations = items
@@ -148,7 +149,7 @@ export const generateReport = (
 
   const relevant = bookings.filter(booking => {
     const bookingStart = new Date(booking.startTime).getTime();
-    const bookingEnd = new Date(booking.endedEarlyAt || booking.endTime).getTime();
+    const bookingEnd = new Date(booking.actualEndTime || booking.endedEarlyAt || booking.endTime).getTime();
     return Number.isFinite(bookingStart)
       && Number.isFinite(bookingEnd)
       && bookingStart < rangeEnd
@@ -161,7 +162,7 @@ export const generateReport = (
     name: string,
     items: Booking[],
     resourceCount: number
-  ) => buildRow(dimension, id, name, items, resourceCount, rangeStart, rangeEnd, capacityMinutes, dailyOpening);
+  ) => buildReportRow(dimension, id, name, items, resourceCount, rangeStart, rangeEnd, capacityMinutes, dailyOpening);
 
   const resourceRows = resources.map(resource => row(
     'RESOURCE',

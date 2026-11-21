@@ -3,9 +3,19 @@ import type { PoolConnection } from 'mysql2/promise';
 
 export type JobInstruction = {
   key: string;
-  type: 'BOOKING_REMINDER' | 'BOOKING_NO_SHOW';
+  type: 'BOOKING_REMINDER' | 'BOOKING_CHECK_IN_REMINDER' | 'BOOKING_NO_SHOW'
+    | 'APPROVAL_REMINDER' | 'APPROVAL_ESCALATION' | 'APPROVAL_CLOSE'
+    | 'SERVICE_SLA_ESCALATION' | 'SERVICE_INSPECTION';
   runAt: Date;
-  payload: { bookingId: string };
+  payload: {
+    bookingId?: string;
+    workOrderId?: string;
+    areaId?: string;
+    inspectionId?: string;
+    scheduleVersion?: number;
+    nodeIndex?: number;
+    submittedAt?: string;
+  };
 };
 
 export const scheduleJob = async (conn: PoolConnection, job: JobInstruction) => {

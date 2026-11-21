@@ -87,6 +87,24 @@ test('使用时长按跨日预约、提前结束和每日默认开放区间裁�
   assert.equal(result.rows[0].usageHours, 15);
 });
 
+test('实际签到与提前结束决定使用时长，签到后人工释放仍保留实际使用且 no-show 不计使用', () => {
+  const bookings = [
+    makeBooking({
+      id: 'actual', status: 'COMPLETED', startTime: localIso(10, 9), endTime: localIso(10, 10),
+      actualStartTime: localIso(10, 9, 20), actualEndTime: localIso(10, 9, 40), endedEarlyAt: localIso(10, 9, 40)
+    }),
+    makeBooking({
+      id: 'released-after-check-in', status: 'CANCELLED', startTime: localIso(11, 9), endTime: localIso(11, 10),
+      actualStartTime: localIso(11, 9, 10), actualEndTime: localIso(11, 9, 30), releaseType: 'MANUAL_EXCEPTION'
+    }),
+    makeBooking({ id: 'no-show', status: 'CANCELLED', noShow: true, startTime: localIso(11, 13), endTime: localIso(11, 14) })
+  ];
+  const result = generateReport(bookings, [makeResource()], [makeUser()], range);
+  assert.equal(result.overall.bookingCount, 3);
+  assert.equal(result.overall.usageHours, 0.7);
+  assert.equal(result.overall.noShowRate, 33.3);
+});
+
 test('自定义开放区间与部分日期共同决定实际容量', () => {
   const result = generateReport(
     [

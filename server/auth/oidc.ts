@@ -253,7 +253,7 @@ export const completeOidcLogin = async (callbackUrl: URL): Promise<OidcLoginResu
   const userId = identities[0]?.user_id;
   if (typeof userId !== 'string' || !userId) throw new Error('AUTH_FAILED');
   const db = await readDb();
-  if (!(db.users || []).some(user => user.id === userId)) throw new Error('AUTH_FAILED');
+  if (!(db.users || []).some(user => user.id === userId && user.status !== 'DISABLED')) throw new Error('AUTH_FAILED');
 
   await getDbPool().query(
     'UPDATE user_identities SET last_login_at = NOW(3) WHERE issuer = ? AND subject = ? AND user_id = ?',

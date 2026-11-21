@@ -144,6 +144,35 @@ test('propose_booking 成功时返回可直接提交的草稿', () => {
   assert.match(result.data.summary, /Beta 灵感会议室/);
 });
 
+test('propose_booking 仅生成普通或重要会议草案并保留明确服务与礼堂参数', () => {
+  const confidential = exec('3').propose_booking({
+    resourceName: 'Beta', startTime: '2026-11-20T10:00', endTime: '2026-11-20T11:00',
+    purpose: '涉密讨论', meetingType: 'CONFIDENTIAL'
+  });
+  assert.equal(confidential.ok, false);
+  assert.equal(confidential.action, undefined);
+  assert.match(confidential.error || '', /正式表单/);
+
+  const db = makeDb();
+  Object.assign(db.resources![1], { roomCategory: 'AUDITORIUM', isExclusive: true });
+  const result = createExecutor(db, { userId: '3', now: NOW }).propose_booking({
+    resourceName: 'Beta', startTime: '2026-11-20T10:00', endTime: '2026-11-20T11:00',
+    purpose: '重要接待', meetingType: 'IMPORTANT', participants: 2,
+    serviceRequirements: [{ type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' }],
+    exclusiveRequestReason: '临时重要接待',
+    auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' }
+  });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.data.draft.meetingType, 'IMPORTANT');
+  assert.equal(result.data.draft.confidentialityChoice, undefined);
+  assert.deepEqual(result.data.draft.serviceRequirements, [{ type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' }]);
+  assert.equal(result.data.draft.exclusiveRequestReason, '临时重要接待');
+  assert.equal(result.data.draft.auditoriumSetup.seatingLayout, 'CLASSROOM');
+
+  const schema = toolsForRoles(['EMPLOYEE']).find(tool => tool.function.name === 'propose_booking');
+  assert.equal(Object.prototype.hasOwnProperty.call(schema?.function.parameters.properties, 'confidentialityChoice'), false);
+});
+
 test('propose_booking 与正式预约使用相同的维护和设备约束', () => {
   const db = makeDb();
   db.resources![1].features = ['白板'];

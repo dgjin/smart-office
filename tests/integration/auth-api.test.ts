@@ -66,7 +66,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal((await server.request('/api/db', { method: 'POST', headers: { Cookie: admin.cookie }, ...jsonBody(snapshot) })).status, 404);
     assert.equal((await server.request('/api/resources', { method: 'POST', headers: { Cookie: user.cookie }, ...jsonBody({ resource: snapshot.resources[0] }) })).status, 403);
 
-    const role = { id: 'AUDITOR', name: '审计员', description: '只读审计角色', color: 'indigo' };
+    const role = { id: 'AUDITOR_API_TEST', name: '集成审计员', description: '只读审计角色', color: 'indigo' };
     assert.equal((await server.request('/api/roles', { method: 'POST', headers: { Cookie: admin.cookie }, ...jsonBody({ role }) })).status, 201);
     const department = { id: 'dpt-audit', name: '审计部' };
     assert.equal((await server.request('/api/departments', { method: 'POST', headers: { Cookie: admin.cookie }, ...jsonBody({ department }) })).status, 201);
@@ -82,9 +82,15 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal(backupResponse.status, 200);
     assert.equal((await server.request('/api/backup', { headers: { Cookie: user.cookie } })).status, 403);
     const backup = await readJson(backupResponse);
-    assert.equal(backup.schemaVersion, 2);
+    assert.equal(backup.schemaVersion, 7);
+    assert.ok(Array.isArray(backup.collections.ruleVersions));
+    assert.ok(Array.isArray(backup.collections.resourceImportBatches));
     assert.ok(Array.isArray(backup.collections.workflowVersions));
     assert.ok(Array.isArray(backup.collections.approvalDelegates));
+    assert.ok(Array.isArray(backup.collections.approvalRuleSetVersions));
+    assert.ok(Array.isArray(backup.collections.confidentialWhitelist));
+    assert.ok(Array.isArray(backup.collections.confidentialityAuthorizations));
+    assert.ok(Array.isArray(backup.collections.confidentialAccessGrants));
     assert.ok(Array.isArray(backup.collections.workOrders));
     assert.ok(backup.collections.users.some((item: any) => item.id === otherUserId));
 
@@ -111,7 +117,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     const booking = {
       id: crypto.randomUUID(), userId: adminId, resourceId: resource.id, type: 'ROOM',
       startTime: start.toISOString(), endTime: end.toISOString(), status: 'APPROVED',
-      purpose: 'actor 隔离集成测试', participants: 1, createdAt: new Date().toISOString(),
+      purpose: 'actor 隔离集成测试', participants: 1, meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', overlapParticipantIds: [otherUserId], createdAt: new Date().toISOString(),
       currentNodeIndex: 99, approvalHistory: [{ nodeName: '伪造', approverName: '伪造', status: 'APPROVED', timestamp: new Date().toISOString() }]
     };
     const createdResponse = await server.request('/api/bookings', { method: 'POST', headers: { Cookie: user.cookie }, ...jsonBody({ booking }) });
@@ -120,6 +126,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal(created.booking.userId, userId);
     assert.equal(created.booking.currentNodeIndex, 0);
     assert.deepEqual(created.booking.approvalHistory, []);
+    assert.equal(created.booking.overlapParticipantIds, undefined);
     assert.ok(created.workspace.revision > snapshot.revision);
     const other = await server.login(otherUserId);
     const otherWorkspace = await readJson(await server.request('/api/workspace', { headers: { Cookie: other.cookie } }));
@@ -127,6 +134,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal(redacted.purpose, '已预约');
     assert.equal(redacted.userId, '');
     assert.deepEqual(redacted.attendeeIds, []);
+    assert.deepEqual(redacted.overlapParticipantIds, [userId]);
 
     const notificationsResponse = await server.request('/api/notifications', { headers: { Cookie: user.cookie } });
     const notifications = (await readJson(notificationsResponse)).notifications;

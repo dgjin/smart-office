@@ -18,7 +18,12 @@ export const filterResources = (resources: Resource[], query: string, filters: R
     if ((resource.capacity || 0) < filters.minCapacity) return false;
     const searchable = normalize([
       resource.name,
+      resource.code,
       resource.location,
+      resource.building,
+      resource.floor,
+      resource.roomNumber,
+      resource.roomCategory,
       resource.features.join(' '),
       TYPE_LABELS[resource.type],
       STATUS_LABELS[resource.status],

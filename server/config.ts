@@ -4,7 +4,7 @@ if (!/^[A-Za-z0-9_]+$/.test(databaseName)) throw new Error('MYSQL_DATABASE Âè™ËÉ
 export const NODE_ENV = process.env.NODE_ENV || 'development';
 export const IS_PRODUCTION = NODE_ENV === 'production';
 export const DATABASE_NAME = databaseName;
-export const REQUIRED_MIGRATION = '006_approval_audit.sql';
+export const REQUIRED_MIGRATION = '013_integration_deliveries.sql';
 export const SERVER_HOST = process.env.SMART_OFFICE_HOST || '127.0.0.1';
 export const SERVER_PORT = Number(process.env.SMART_OFFICE_PORT || 3001);
 export const DEV_AUTH_ENABLED = NODE_ENV === 'development' && process.env.SMART_OFFICE_DEV_AUTH === 'true';

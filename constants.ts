@@ -1,10 +1,14 @@
 
-import type { User, Resource, ApprovalNode, Department, RoleDefinition } from './types.ts';
+import type { User, Resource, ApprovalNode, Department, RoleDefinition, BookingRuleSettings, ServiceCatalogItem } from './types.ts';
 
 export const INITIAL_ROLES: RoleDefinition[] = [
-  { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '拥有全系统最高管理权限', color: 'indigo' },
+  { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '负责系统配置、运维和最终核准', color: 'indigo' },
   { id: 'APPROVAL_ADMIN', name: '审批负责人', description: '负责各类资源申请的业务审核', color: 'amber' },
   { id: 'EMPLOYEE', name: '正式员工', description: '可申请并使用公司公共资源', color: 'emerald' },
+  { id: 'SECURITY_ADMIN', name: '保密管理员', description: '负责涉密白名单、授权和保密审批', color: 'red' },
+  { id: 'SERVICE_COORDINATOR', name: '会务协调员', description: '负责会务服务执行与异常处理', color: 'blue' },
+  { id: 'FRONT_DESK', name: '前台人员', description: '负责现场签到、巡查和人工释放', color: 'cyan' },
+  { id: 'AUDITOR', name: '审计员', description: '按授权范围查询审计和运行证据', color: 'slate' },
 ];
 
 export const INITIAL_DEPARTMENTS: Department[] = [
@@ -24,9 +28,66 @@ export const INITIAL_USERS: User[] = [
 ];
 
 export const INITIAL_RESOURCES: Resource[] = [
-  { id: 'r1', name: 'Alpha 战略会议室', type: 'ROOM', capacity: 10, location: '1号楼 10层', features: ['投屏显示器', '视频会议系统'], status: 'AVAILABLE' },
-  { id: 'r2', name: 'Beta 灵感会议室', type: 'ROOM', capacity: 4, location: '1号楼 10层', features: ['白板', '多孔插座'], status: 'AVAILABLE' },
-  { id: 'd1', name: '工位 A-101', type: 'DESK', location: 'A办公区', features: ['双显示器'], status: 'AVAILABLE' },
+  { id: 'r1', code: 'R1', name: 'Alpha 战略会议室', type: 'ROOM', capacity: 10, location: '1号楼 10层', building: 'MAIN', floor: 10, roomCategory: 'SMALL', features: ['投屏显示器', '视频会议系统'], status: 'AVAILABLE', isPublic: true, isExclusive: false },
+  { id: 'r2', code: 'R2', name: 'Beta 灵感会议室', type: 'ROOM', capacity: 4, location: '1号楼 10层', building: 'MAIN', floor: 10, roomCategory: 'SMALL', features: ['白板', '多孔插座'], status: 'AVAILABLE', isPublic: true, isExclusive: false },
+  { id: 'd1', code: 'D1', name: '工位 A-101', type: 'DESK', location: 'A办公区', features: ['双显示器'], status: 'AVAILABLE', isPublic: true, isExclusive: false },
+];
+
+export const DEFAULT_RULE_SETTINGS: BookingRuleSettings = {
+  smallRoomMaxCapacity: 10,
+  mediumRoomMaxCapacity: 30,
+  departmentDailyNetMinutes: 240,
+  exclusiveRequestOpenHours: 24,
+  standardCancellationCutoffMinutes: 30,
+  servicedCancellationCutoffMinutes: 120,
+  approvalReminderAfterMinutes: 60,
+  approvalEscalationAfterMinutes: 120,
+  unapprovedCloseBeforeStartMinutes: 30,
+  checkInReminderAfterStartMinutes: 10,
+  noShowReleaseAfterStartMinutes: 20,
+  longTermMaxCalendarMonths: 1,
+  approvalWorkStartMinutes: 9 * 60,
+  approvalWorkEndMinutes: 18 * 60,
+  approvalHolidays: []
+};
+
+export const DEFAULT_SERVICE_CATALOG: ServiceCatalogItem[] = [
+  {
+    id: 'service-tea', type: 'TEA', name: '茶水服务', version: 1,
+    fields: [
+      { key: 'servings', label: '茶水份数', type: 'NUMBER', required: false },
+      { key: 'notes', label: '茶水与送达要求', type: 'TEXTAREA', required: false }
+    ],
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: false,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-video', type: 'VIDEO', name: '视频会议保障', version: 1,
+    fields: [
+      { key: 'platform', label: '会议平台', type: 'TEXT', required: false },
+      { key: 'notes', label: '联调与保障要求', type: 'TEXTAREA', required: false }
+    ],
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-signage', type: 'SIGNAGE', name: '引导与标识', version: 1,
+    fields: [{ key: 'notes', label: '标识文案与摆放要求', type: 'TEXTAREA', required: true }],
+    responsibleRole: 'FRONT_DESK', slaResponseMinutes: 10, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-security', type: 'SECURITY', name: '现场安保', version: 1,
+    fields: [{ key: 'notes', label: '安保范围与到场要求', type: 'TEXTAREA', required: true }],
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: true,
+    cancellable: false, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-other', type: 'OTHER', name: '其他会务服务', version: 1,
+    fields: [{ key: 'notes', label: '服务内容、责任边界与成本说明', type: 'TEXTAREA', required: true }],
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  }
 ];
 
 export const DEFAULT_WORKFLOW: ApprovalNode[] = [

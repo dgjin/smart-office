@@ -8,7 +8,7 @@ try {
   const [[meta]] = await connection.query<any[]>('SELECT revision FROM office_snapshot_meta WHERE id = 1');
   if (!meta || Number(meta.revision) < 1) throw new Error('快照 revision 未初始化');
   const counts: Record<string, number> = {};
-  for (const table of ['office_state', 'bookings', 'notifications', 'user_identities', 'sessions', 'user_preferences']) {
+  for (const table of ['office_state', 'bookings', 'notifications', 'user_identities', 'sessions', 'user_preferences', 'audit_events']) {
     const [rows] = await connection.query<any[]>(`SELECT COUNT(*) AS count FROM ${table}`);
     counts[table] = Number(rows[0].count);
   }

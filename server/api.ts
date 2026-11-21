@@ -1,25 +1,41 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { databaseHealth, DbError, readDb, saveBookings, saveResource } from './db.ts';
-import { HttpError, readJson, send, setSecurityHeaders, validateWriteRequest } from './http.ts';
+import { HttpError, readBody, readJson, send, setSecurityHeaders, validateWriteRequest } from './http.ts';
 import { handleAgentChat, handleAgentStatus } from './agent.ts';
 import { listNotifications, markNotificationsRead } from './notifications.ts';
 import { buildTodos } from './tools.ts';
-import { completeBookingEarly, executeAgentAction } from './actions.ts';
+import { executeAgentAction } from './actions.ts';
 import { actorFromRequest } from './auth/sessions.ts';
 import { handleAuthRequest } from './auth/routes.ts';
 import { getPreferences, updatePreferences } from './preferences.ts';
 import { getChatConversation, saveChatConversation } from './chatConversations.ts';
 import { getWorkspace } from './workspace.ts';
 import {
-  createBackup, deleteApprovalDelegate, deleteDepartment, deleteUser, importRecords, restoreBackup,
-  saveApprovalDelegate, saveDepartment, saveRole, saveUser, saveWorkflow
+  createBackup, createConfidentialityAuthorization, deleteApprovalDelegate, deleteConfidentialWhitelistEntry, deleteDepartment, deleteUser,
+  getRuleConfiguration, importRecords, restoreBackup, saveApprovalDelegate, saveConfidentialWhitelistEntry, saveDepartment, saveRole,
+  saveRuleSettings, saveUser, saveWorkflow
 } from './admin.ts';
+import { importResourceLedger, preflightResourceImport } from './resourceLedger.ts';
 import { listAuditEvents, recordAudit } from './audit.ts';
+import { exportBookingIcs } from './calendarExport.ts';
+import { getActorDbView } from './confidentiality.ts';
 import type { User } from '../types.ts';
 import { logEvent, observeRequest, requestIdFor } from './observability.ts';
+import { saveServiceArea, saveServiceCatalogItem, saveServiceShift, transitionWorkOrder, updateServiceInspection } from './serviceOperations.ts';
+import { checkInBooking, completeBookingEarly, confirmBookingUsage, createUsageAppeal, releaseBookingByActor, resolveUsageAppeal } from './usageOperations.ts';
+import { actOnException, getDashboard, getExceptionCenter } from './operations.ts';
+import { createDevice, getDeviceSnapshot, heartbeatDevice, listDevices, revokeDevice, rotateDevice } from './devices.ts';
+import { getOperationsReport, operationsReportCsv, writeOperationsReportXlsx } from './reports.ts';
+import { applyOrganizationSync, listOrganizationSyncBatches, previewOrganizationSync } from './organizationSync.ts';
+import { handleOaCallback } from './oaCallbacks.ts';
+import { getIntegrationOperations, reconcileIntegrations, recordIntegrationCompensation, replayIntegrationEvent } from './integrationOperations.ts';
 
 const requireAdmin = (actor: User) => {
   if (!actor.role.includes('SYSTEM_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
+};
+
+const requireConfidentialityManager = (actor: User) => {
+  if (!actor.role.includes('SYSTEM_ADMIN') && !actor.role.includes('SECURITY_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
 };
 
 export async function handleApiRequest(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
@@ -27,6 +43,21 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
   setSecurityHeaders(res);
   observeRequest(req, res, url.pathname);
   try {
+    if (url.pathname === '/api/integrations/oa/callback' && req.method === 'POST') {
+      if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) throw new HttpError(415, 'JSON_REQUIRED');
+      const raw = await readBody(req, 64 * 1024);
+      send(res, 200, await handleOaCallback(raw, req.headers['x-smart-office-signature']));
+      return true;
+    }
+    if (url.pathname === '/api/device/snapshot' && req.method === 'GET') {
+      send(res, 200, await getDeviceSnapshot(req));
+      return true;
+    }
+    if (url.pathname === '/api/device/heartbeat' && req.method === 'POST') {
+      if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('application/json')) throw new HttpError(415, 'JSON_REQUIRED');
+      send(res, 200, await heartbeatDevice(req, await readJson(req, 16 * 1024)));
+      return true;
+    }
     validateWriteRequest(req);
     if (await handleAuthRequest(req, res, url)) return true;
 
@@ -42,6 +73,79 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
     if (url.pathname === '/api/workspace' && req.method === 'GET') {
       send(res, 200, await getWorkspace(actor));
+      return true;
+    }
+    if (url.pathname === '/api/dashboard' && req.method === 'GET') {
+      send(res, 200, await getDashboard(actor));
+      return true;
+    }
+    if (url.pathname === '/api/exceptions' && req.method === 'GET') {
+      send(res, 200, await getExceptionCenter(actor));
+      return true;
+    }
+    const exceptionMatch = url.pathname.match(/^\/api\/exceptions\/([^/]+)$/);
+    if (exceptionMatch && req.method === 'POST') {
+      send(res, 200, { exception: await actOnException(actor, decodeURIComponent(exceptionMatch[1]), await readJson(req)) });
+      return true;
+    }
+    if (url.pathname === '/api/integrations' && req.method === 'GET') {
+      send(res, 200, await getIntegrationOperations(actor));
+      return true;
+    }
+    if (url.pathname === '/api/integrations/reconcile' && req.method === 'POST') {
+      await readJson(req);
+      send(res, 200, await reconcileIntegrations(actor));
+      return true;
+    }
+    if (url.pathname === '/api/integrations/replay' && req.method === 'POST') {
+      const { eventKey } = await readJson(req);
+      send(res, 200, await replayIntegrationEvent(actor, String(eventKey || '')));
+      return true;
+    }
+    if (url.pathname === '/api/integrations/compensations' && req.method === 'POST') {
+      send(res, 201, { compensation: await recordIntegrationCompensation(actor, await readJson(req)) });
+      return true;
+    }
+    if (url.pathname === '/api/reports' && req.method === 'GET') {
+      requireAdmin(actor);
+      send(res, 200, await getOperationsReport(actor, url.searchParams.get('start') || '', url.searchParams.get('end') || ''));
+      return true;
+    }
+    if (url.pathname === '/api/reports/export' && req.method === 'GET') {
+      requireAdmin(actor);
+      const format = url.searchParams.get('format') || 'csv';
+      if (!['csv', 'xlsx'].includes(format)) throw new HttpError(400, 'INVALID_REPORT_FORMAT');
+      const report = await getOperationsReport(actor, url.searchParams.get('start') || '', url.searchParams.get('end') || '');
+      const filename = `smart-office-report-${report.start.slice(0, 10)}.${format}`;
+      res.statusCode = 200;
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      if (format === 'xlsx') {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        await writeOperationsReportXlsx(report, res);
+      } else {
+        res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+        res.end(operationsReportCsv(report));
+      }
+      return true;
+    }
+    if (url.pathname === '/api/devices' && req.method === 'GET') {
+      requireAdmin(actor);
+      send(res, 200, { devices: await listDevices() });
+      return true;
+    }
+    if (url.pathname === '/api/devices' && req.method === 'POST') {
+      requireAdmin(actor);
+      send(res, 201, await createDevice(actor, await readJson(req)));
+      return true;
+    }
+    const deviceMatch = url.pathname.match(/^\/api\/devices\/([^/]+)\/(rotate|revoke)$/);
+    if (deviceMatch && req.method === 'POST') {
+      requireAdmin(actor);
+      const id = decodeURIComponent(deviceMatch[1]);
+      await readJson(req);
+      const device = deviceMatch[2] === 'rotate' ? await rotateDevice(actor, id) : { device: await revokeDevice(actor, id) };
+      send(res, 200, device);
       return true;
     }
     if (url.pathname === '/api/users' && req.method === 'POST') {
@@ -89,6 +193,23 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 200, { ...result, workspace: await getWorkspace(actor) });
       return true;
     }
+    if (url.pathname === '/api/organization-sync' && req.method === 'GET') {
+      requireAdmin(actor);
+      send(res, 200, { batches: await listOrganizationSyncBatches() });
+      return true;
+    }
+    if (url.pathname === '/api/organization-sync/preview' && req.method === 'POST') {
+      requireAdmin(actor);
+      send(res, 201, { batch: await previewOrganizationSync(await readJson(req, 5 * 1024 * 1024), actor.id) });
+      return true;
+    }
+    if (url.pathname === '/api/organization-sync/apply' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { batchId } = await readJson(req);
+      if (typeof batchId !== 'string' || !batchId) throw new HttpError(400, 'INVALID_ORGANIZATION_SYNC_BATCH');
+      send(res, 200, await applyOrganizationSync(batchId, actor.id));
+      return true;
+    }
     if (url.pathname === '/api/workflow' && req.method === 'PUT') {
       requireAdmin(actor);
       const { workflow } = await readJson(req);
@@ -111,6 +232,30 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (url.pathname === '/api/audit' && req.method === 'GET') {
       requireAdmin(actor);
       send(res, 200, { events: await listAuditEvents(Number(url.searchParams.get('limit')) || 200) });
+      return true;
+    }
+    if (url.pathname === '/api/rules' && req.method === 'GET') {
+      requireAdmin(actor);
+      send(res, 200, await getRuleConfiguration());
+      return true;
+    }
+    if (url.pathname === '/api/rules' && req.method === 'PUT') {
+      requireAdmin(actor);
+      const { settings } = await readJson(req);
+      send(res, 200, { ruleVersion: await saveRuleSettings(settings, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/resources/ledger/preflight' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { items } = await readJson(req, 2 * 1024 * 1024);
+      send(res, 200, { report: await preflightResourceImport(items) });
+      return true;
+    }
+    if (url.pathname === '/api/resources/ledger/import' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { items } = await readJson(req, 2 * 1024 * 1024);
+      const result = await importResourceLedger(items, actor.id);
+      send(res, 201, { ...result, workspace: await getWorkspace(actor) });
       return true;
     }
     const importMatch = url.pathname.match(/^\/api\/imports\/(USERS|RESOURCES|DEPARTMENTS)$/);
@@ -159,6 +304,19 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 200, { resource: saved, workspace: await getWorkspace(actor) });
       return true;
     }
+    if (url.pathname === '/api/confidential-whitelist' && req.method === 'POST') {
+      requireConfidentialityManager(actor);
+      const { entry } = await readJson(req);
+      send(res, 201, { entry: await saveConfidentialWhitelistEntry(entry, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const whitelistMatch = url.pathname.match(/^\/api\/confidential-whitelist\/([^/]+)$/);
+    if (whitelistMatch && req.method === 'DELETE') {
+      requireConfidentialityManager(actor);
+      await deleteConfidentialWhitelistEntry(decodeURIComponent(whitelistMatch[1]), actor.id);
+      send(res, 200, { ok: true, workspace: await getWorkspace(actor) });
+      return true;
+    }
     if (url.pathname === '/api/bookings' && req.method === 'POST') {
       const { booking } = await readJson(req);
       if (!booking?.resourceId || !booking?.startTime || !booking?.endTime) throw new HttpError(400, 'INVALID_BOOKING');
@@ -175,10 +333,98 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 201, { bookings: saved, workspace: await getWorkspace(actor) });
       return true;
     }
+    const icsMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/ics$/);
+    if (icsMatch && req.method === 'GET') {
+      const result = await exportBookingIcs(actor, decodeURIComponent(icsMatch[1]));
+      res.statusCode = 200;
+      res.setHeader('Content-Type', 'text/calendar; charset=utf-8');
+      res.setHeader('Content-Disposition', `attachment; filename="${result.filename}"`);
+      res.setHeader('Cache-Control', 'no-store');
+      res.end(result.ics);
+      return true;
+    }
+    const confidentialityMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/confidential-authorizations$/);
+    if (confidentialityMatch && req.method === 'POST') {
+      requireConfidentialityManager(actor);
+      const authorization = await createConfidentialityAuthorization(decodeURIComponent(confidentialityMatch[1]), await readJson(req), actor.id);
+      send(res, 201, { authorization, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/service-catalog' && req.method === 'POST') {
+      requireAdmin(actor);
+      const item = await saveServiceCatalogItem(await readJson(req), actor);
+      send(res, 201, { item, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const catalogMatch = url.pathname.match(/^\/api\/service-catalog\/([^/]+)$/);
+    if (catalogMatch && req.method === 'PUT') {
+      requireAdmin(actor);
+      const item = await saveServiceCatalogItem(await readJson(req), actor, decodeURIComponent(catalogMatch[1]));
+      send(res, 200, { item, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const workOrderMatch = url.pathname.match(/^\/api\/work-orders\/([^/]+)\/transitions$/);
+    if (workOrderMatch && req.method === 'POST') {
+      const order = await transitionWorkOrder(actor, decodeURIComponent(workOrderMatch[1]), await readJson(req));
+      send(res, 200, { order, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/service-areas' && req.method === 'POST') {
+      const area = await saveServiceArea(actor, await readJson(req));
+      send(res, 201, { area, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const areaMatch = url.pathname.match(/^\/api\/service-areas\/([^/]+)$/);
+    if (areaMatch && req.method === 'PUT') {
+      const area = await saveServiceArea(actor, await readJson(req), decodeURIComponent(areaMatch[1]));
+      send(res, 200, { area, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/service-shifts' && req.method === 'POST') {
+      const shift = await saveServiceShift(actor, await readJson(req));
+      send(res, 201, { shift, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const inspectionMatch = url.pathname.match(/^\/api\/service-inspections\/([^/]+)$/);
+    if (inspectionMatch && req.method === 'POST') {
+      const inspection = await updateServiceInspection(actor, decodeURIComponent(inspectionMatch[1]), await readJson(req));
+      send(res, 200, { inspection, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const checkInMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/check-in$/);
+    if (checkInMatch && req.method === 'POST') {
+      const result = await checkInBooking(actor, decodeURIComponent(checkInMatch[1]), await readJson(req));
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const releaseMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/release$/);
+    if (releaseMatch && req.method === 'POST') {
+      const booking = await releaseBookingByActor(actor, decodeURIComponent(releaseMatch[1]), await readJson(req));
+      send(res, 200, { booking, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const usageConfirmationMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/usage-confirmation$/);
+    if (usageConfirmationMatch && req.method === 'POST') {
+      const booking = await confirmBookingUsage(actor, decodeURIComponent(usageConfirmationMatch[1]), await readJson(req));
+      send(res, 200, { booking, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const appealMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/usage-appeals$/);
+    if (appealMatch && req.method === 'POST') {
+      const appeal = await createUsageAppeal(actor, decodeURIComponent(appealMatch[1]), await readJson(req));
+      send(res, 201, { appeal, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const appealResolutionMatch = url.pathname.match(/^\/api\/usage-appeals\/([^/]+)$/);
+    if (appealResolutionMatch && req.method === 'POST') {
+      const result = await resolveUsageAppeal(actor, decodeURIComponent(appealResolutionMatch[1]), await readJson(req));
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
     const completeMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/complete$/);
     if (completeMatch && req.method === 'POST') {
       await readJson(req);
-      const result = await completeBookingEarly(actor.id, decodeURIComponent(completeMatch[1]));
+      const result = await completeBookingEarly(actor, decodeURIComponent(completeMatch[1]));
       send(res, 200, { ...result, workspace: await getWorkspace(actor) });
       return true;
     }
@@ -218,7 +464,7 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       return true;
     }
     if (url.pathname === '/api/todos' && req.method === 'GET') {
-      const db = await readDb();
+      const db = getActorDbView(await readDb(), actor);
       const todos = buildTodos(db, actor.id);
       send(res, 200, { total: todos.length, todos });
       return true;

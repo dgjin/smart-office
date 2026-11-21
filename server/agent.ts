@@ -3,6 +3,7 @@ import { readDb } from './db.ts';
 import { streamChatCompletion, LlmNotConfiguredError, type ChatMessage } from './llm.ts';
 import { buildContextSummary, createExecutor, toolsForRoles, type AgentAction, type OfficeDb, type ToolResult } from './tools.ts';
 import { readJson, send } from './http.ts';
+import { getActorDbView } from './confidentiality.ts';
 import type { User } from '../types.ts';
 
 const MAX_TURNS = 6;
@@ -167,7 +168,7 @@ export async function handleAgentChat(req: IncomingMessage, res: ServerResponse,
   if (history.length === 0 || history[history.length - 1].role !== 'user') {
     return send(res, 400, { error: 'NO_USER_MESSAGE' });
   }
-  const db = await readDb();
+  const db = getActorDbView(await readDb(), user);
   const userId = user.id;
   const wantsStream = body.stream === true || String(req.headers.accept || '').includes('text/event-stream');
 

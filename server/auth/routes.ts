@@ -43,7 +43,7 @@ export const handleAuthRequest = async (req: IncomingMessage, res: ServerRespons
       }
       const oidc = oidcConfig();
       const development = devAuthAllowed(req);
-      const users = development ? (await readDb()).users || [] : [];
+      const users = development ? ((await readDb()).users || []).filter(user => user.status !== 'DISABLED') : [];
       send(res, 200, {
         oidc: Boolean(oidc.issuer && oidc.clientId && oidc.redirectUri),
         development,
@@ -108,7 +108,7 @@ export const handleAuthRequest = async (req: IncomingMessage, res: ServerRespons
     }
     const userId = url.searchParams.get('userId') || '';
     const db = await readDb();
-    const actor = (db.users || []).find(user => user.id === userId);
+    const actor = (db.users || []).find(user => user.id === userId && user.status !== 'DISABLED');
     if (!actor) throw new Error('DEV_AUTH_FAILED');
     safeReturnTo(url.searchParams.get('returnTo'));
     const token = await createSession(actor.id);

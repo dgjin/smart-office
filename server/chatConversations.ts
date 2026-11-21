@@ -23,11 +23,34 @@ const sanitizeDraft = (value: any) => {
   if (!draft.resourceId || !draft.startTime || !draft.endTime || !Number.isFinite(Date.parse(draft.startTime)) || !Number.isFinite(Date.parse(draft.endTime))) invalid();
   if (draft.type !== undefined && !['ROOM', 'DESK'].includes(draft.type)) invalid();
   if (draft.participants !== undefined && (!Number.isInteger(draft.participants) || draft.participants < 1 || draft.participants > 10000)) invalid();
+  if (draft.meetingType !== undefined && !['NORMAL', 'IMPORTANT'].includes(draft.meetingType)) invalid();
   let recurrence;
   if (draft.recurrence !== undefined) {
     const value = record(draft.recurrence);
     if (!['WEEKLY', 'BIWEEKLY'].includes(value.frequency) || !Number.isInteger(value.count) || value.count < 2 || value.count > 52) invalid();
     recurrence = { frequency: value.frequency, count: value.count };
+  }
+  let serviceRequirements;
+  if (draft.serviceRequirements !== undefined) {
+    if (!Array.isArray(draft.serviceRequirements) || draft.serviceRequirements.length > 20) invalid();
+    serviceRequirements = draft.serviceRequirements.map((value: any) => {
+      const requirement = record(value);
+      if (!['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(requirement.type)) invalid();
+      return { type: requirement.type, details: text(requirement.details, 500, true) };
+    });
+  }
+  let auditoriumSetup;
+  if (draft.auditoriumSetup !== undefined) {
+    const setup = record(draft.auditoriumSetup);
+    if (!['THEATER', 'CLASSROOM', 'ROUNDTABLE'].includes(setup.seatingLayout)
+      || typeof setup.stageRequired !== 'boolean'
+      || (setup.rehearsalMinutes !== undefined && (!Number.isInteger(setup.rehearsalMinutes) || setup.rehearsalMinutes < 0 || setup.rehearsalMinutes > 1440))) invalid();
+    auditoriumSetup = {
+      seatingLayout: setup.seatingLayout,
+      stageRequired: setup.stageRequired,
+      rehearsalMinutes: setup.rehearsalMinutes,
+      notes: text(setup.notes, 500, true)
+    };
   }
   return {
     resourceId: text(draft.resourceId, 128),
@@ -42,6 +65,10 @@ const sanitizeDraft = (value: any) => {
     attendeeIds: stringList(draft.attendeeIds, 200, 128),
     hasLeader: boolean(draft.hasLeader),
     leaderDetails: text(draft.leaderDetails, 1000, true),
+    meetingType: draft.meetingType,
+    serviceRequirements,
+    exclusiveRequestReason: text(draft.exclusiveRequestReason, 500, true),
+    auditoriumSetup,
     recurrence
   };
 };

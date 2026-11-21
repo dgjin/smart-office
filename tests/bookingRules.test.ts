@@ -78,6 +78,16 @@ test('长期系列恰好一个月可通过，超过一个月被拒绝', () => {
   assert.equal(isLongTermSeriesWithinLimit([first, overLimit]), false);
 });
 
+test('长期系列上限按规则版本月数计算且不截断输入', () => {
+  const first = { startTime: new Date(2026, 0, 15, 9).toISOString(), endTime: new Date(2026, 0, 15, 10).toISOString() };
+  const sixWeeks = { startTime: new Date(2026, 1, 26, 9).toISOString(), endTime: new Date(2026, 1, 26, 10).toISOString() };
+  const series = [first, sixWeeks];
+  assert.equal(isLongTermSeriesWithinLimit(series, 1), false);
+  assert.equal(isLongTermSeriesWithinLimit(series, 2), true);
+  assert.equal(series.length, 2);
+  assert.equal(series[1], sixWeeks);
+});
+
 const makeResource = (overrides: Partial<Resource> = {}): Resource => ({
   id: 'r1',
   name: 'Alpha 会议室',

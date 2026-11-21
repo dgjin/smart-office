@@ -39,7 +39,7 @@ export const actorFromRequest = async (req: IncomingMessage): Promise<User | nul
   if (!rows[0]) return null;
   const db = await readDb();
   const user = (db.users || []).find(item => item.id === rows[0].user_id);
-  if (!user) return null;
+  if (!user || user.status === 'DISABLED') return null;
   await getDbPool().query(`UPDATE sessions SET last_seen_at = NOW(3),
     idle_expires_at = LEAST(absolute_expires_at, DATE_ADD(NOW(3), INTERVAL 8 HOUR)) WHERE id = ?`, [rows[0].id]);
   return user;

@@ -39,7 +39,7 @@ const createBooking = async (
   const booking = {
     id: crypto.randomUUID(), userId: adminId, resourceId, type: 'ROOM',
     startTime: start.toISOString(), endTime: end.toISOString(), status: 'PENDING',
-    purpose, participants: 2, createdAt: new Date().toISOString(), currentNodeIndex: 0,
+    purpose, participants: 2, meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', createdAt: new Date().toISOString(), currentNodeIndex: 0,
     approvalHistory: [], ...overrides
   };
   const response = await server.request('/api/bookings', {

@@ -1,0 +1,19 @@
+{
+  "mode": "EXPLORATORY",
+  "query": {
+    "concurrency": 2,
+    "durationSeconds": 2,
+    "p95Ms": 5000,
+    "p99Ms": 10000,
+    "maxErrorRate": 0
+  },
+  "submission": {
+    "concurrency": 1,
+    "durationSeconds": 1,
+    "p95Ms": 5000,
+    "p99Ms": 10000,
+    "maxErrorRate": 0
+  },
+  "requestTimeoutMs": 30000,
+  "resourceSampleIntervalMs": 100
+}

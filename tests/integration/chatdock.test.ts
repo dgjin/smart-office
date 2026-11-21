@@ -44,6 +44,11 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
               endTime: end.toISOString(),
               purpose,
               participants: 6,
+              meetingType: 'IMPORTANT',
+              confidentialityChoice: 'CONFIDENTIAL',
+              serviceRequirements: [{ type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' }],
+              exclusiveRequestReason: '临时重要接待',
+              auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' },
               requiredFeatures: ['VIDEO'],
               isVideoConference: true
             }
@@ -68,6 +73,11 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
     const saved = await readJson(savedResponse);
     assert.equal(saved.revision, 1);
     assert.equal(saved.state.turns[1].actions[0].draft.userId, undefined);
+    assert.equal(saved.state.turns[1].actions[0].draft.meetingType, 'IMPORTANT');
+    assert.equal(saved.state.turns[1].actions[0].draft.confidentialityChoice, undefined);
+    assert.deepEqual(saved.state.turns[1].actions[0].draft.serviceRequirements, [{ type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' }]);
+    assert.equal(saved.state.turns[1].actions[0].draft.exclusiveRequestReason, '临时重要接待');
+    assert.equal(saved.state.turns[1].actions[0].draft.auditoriumSetup.seatingLayout, 'CLASSROOM');
     assert.equal(saved.state.handled['1-0'], 'dismissed');
     assert.equal(saved.state.input, initial.input);
     const ownerRows = await queryTestDb<any[]>('SELECT user_id, revision FROM chatdock_conversations WHERE revision > 0');

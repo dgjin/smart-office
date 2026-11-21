@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles, X, Send, Check, TriangleAlert, Wrench, ChevronDown, Loader2, Trash2, Pencil, RotateCcw } from 'lucide-react';
-import type { Booking, Resource, RoomFeature, User } from '../types';
+import type { AuditoriumSetup, Booking, BookingServiceRequirement, Resource, RoomFeature, User } from '../types';
 import { formatDate, formatTime } from '../utils/dateTime';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { validateBookingDraft } from '../utils/bookingDraft';
@@ -19,6 +19,10 @@ export interface BookingDraft {
   attendeeIds?: string[];
   hasLeader?: boolean;
   leaderDetails?: string;
+  meetingType?: 'NORMAL' | 'IMPORTANT';
+  serviceRequirements?: BookingServiceRequirement[];
+  exclusiveRequestReason?: string;
+  auditoriumSetup?: AuditoriumSetup;
   recurrence?: { frequency: 'WEEKLY' | 'BIWEEKLY'; count: number };
 }
 
@@ -152,7 +156,14 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
   const [validationError, setValidationError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const resource = resources.find(item => item.id === draft.resourceId);
+  const editResource = resources.find(item => item.id === editDraft.resourceId);
   const attendees = (draft.attendeeIds || []).map(id => users.find(user => user.id === id)?.name).filter(Boolean) as string[];
+  const services = [...(draft.serviceRequirements || [])];
+  if (draft.needsTeaService && !services.some(item => item.type === 'TEA')) services.push({ type: 'TEA' });
+  if (draft.isVideoConference && !services.some(item => item.type === 'VIDEO')) services.push({ type: 'VIDEO' });
+  const serviceLabels: Record<BookingServiceRequirement['type'], string> = { TEA: '茶水服务', VIDEO: '视频会议', SIGNAGE: '指引标识', SECURITY: '安保', OTHER: '其他服务' };
+  const serviceSummary = services.map(item => `${serviceLabels[item.type]}${item.details ? `：${item.details}` : ''}`);
+  if (draft.hasLeader) serviceSummary.push(`领导参会${draft.leaderDetails ? `：${draft.leaderDetails}` : ''}`);
   const start = new Date(draft.startTime);
   const end = new Date(draft.endTime);
   const range = formatDate(start) === formatDate(end)
@@ -179,10 +190,22 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
       ...(editDraft.requiredFeatures || []),
       ...(editDraft.isVideoConference ? ['VIDEO' as const] : [])
     ])];
+    const additionalServices = (editDraft.serviceRequirements || []).filter(item => !['TEA', 'VIDEO'].includes(item.type));
+    if (additionalServices.some(item => item.type === 'OTHER' && !item.details?.trim())) {
+      return setValidationError('其他服务需要填写具体说明');
+    }
+    const serviceRequirements = [
+      ...additionalServices.map(item => ({ ...item, details: item.details?.trim() || undefined })),
+      ...(editDraft.needsTeaService ? [{ type: 'TEA' as const }] : []),
+      ...(editDraft.isVideoConference ? [{ type: 'VIDEO' as const }] : [])
+    ];
     const revised = {
       ...editDraft,
       participants: editDraft.participants ?? 1,
       requiredFeatures,
+      serviceRequirements,
+      exclusiveRequestReason: editResource?.isExclusive ? editDraft.exclusiveRequestReason?.trim() : undefined,
+      auditoriumSetup: editResource?.roomCategory === 'AUDITORIUM' ? editDraft.auditoriumSetup : undefined,
       purpose: editDraft.purpose.trim()
     };
     const draftError = validateBookingDraft(revised, resources, bookings);
@@ -238,6 +261,11 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
           <label>申请用途
             <input value={editDraft.purpose} onChange={event => setEditDraft(prev => ({ ...prev, purpose: event.target.value }))} />
           </label>
+          <label>会议类型
+            <select value={editDraft.meetingType || ''} onChange={event => setEditDraft(prev => ({ ...prev, meetingType: (event.target.value || undefined) as 'NORMAL' | 'IMPORTANT' | undefined }))}>
+              <option value="">待正式表单选择</option><option value="NORMAL">普通会议</option><option value="IMPORTANT">重要会议</option>
+            </select>
+          </label>
           <label>日期
             <input type="date" value={formatDate(new Date(editDraft.startTime))} onChange={event => updateSchedule('date', event.target.value)} />
           </label>
@@ -263,9 +291,19 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
           <div className="chat-draft-checks">
             <label><input type="checkbox" checked={Boolean(editDraft.isVideoConference)} onChange={event => setEditDraft(prev => ({ ...prev, isVideoConference: event.target.checked }))} />视频会议</label>
             <label><input type="checkbox" checked={Boolean(editDraft.needsTeaService)} onChange={event => setEditDraft(prev => ({ ...prev, needsTeaService: event.target.checked }))} />茶水服务</label>
+            {(['SIGNAGE', 'SECURITY', 'OTHER'] as const).map(type => <label key={type}><input type="checkbox" checked={(editDraft.serviceRequirements || []).some(item => item.type === type)} onChange={() => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).some(item => item.type === type) ? (prev.serviceRequirements || []).filter(item => item.type !== type) : [...(prev.serviceRequirements || []), { type }] }))} />{serviceLabels[type]}</label>)}
             <label><input type="checkbox" checked={Boolean(editDraft.hasLeader)} onChange={event => setEditDraft(prev => ({ ...prev, hasLeader: event.target.checked }))} />领导参会</label>
           </div>
+          {(editDraft.serviceRequirements || []).filter(item => ['SIGNAGE', 'SECURITY', 'OTHER'].includes(item.type)).map(item => <label key={item.type}>{serviceLabels[item.type]}说明{item.type === 'OTHER' ? '（必填）' : '（可选）'}<input value={item.details || ''} onChange={event => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).map(service => service.type === item.type ? { ...service, details: event.target.value } : service) }))} /></label>)}
           {editDraft.hasLeader && <label>领导姓名或职位<input value={editDraft.leaderDetails || ''} onChange={event => setEditDraft(prev => ({ ...prev, leaderDetails: event.target.value }))} /></label>}
+          {editResource?.isExclusive && <label>专属资源临时申请理由<textarea rows={2} maxLength={500} value={editDraft.exclusiveRequestReason || ''} onChange={event => setEditDraft(prev => ({ ...prev, exclusiveRequestReason: event.target.value }))} /></label>}
+          {editResource?.roomCategory === 'AUDITORIUM' && <fieldset>
+            <legend>礼堂布置</legend>
+            <label>座位布局<select value={editDraft.auditoriumSetup?.seatingLayout || 'THEATER'} onChange={event => setEditDraft(prev => ({ ...prev, auditoriumSetup: { seatingLayout: event.target.value as AuditoriumSetup['seatingLayout'], stageRequired: prev.auditoriumSetup?.stageRequired || false, rehearsalMinutes: prev.auditoriumSetup?.rehearsalMinutes, notes: prev.auditoriumSetup?.notes } }))}><option value="THEATER">剧院式</option><option value="CLASSROOM">课桌式</option><option value="ROUNDTABLE">圆桌式</option></select></label>
+            <label><input type="checkbox" checked={Boolean(editDraft.auditoriumSetup?.stageRequired)} onChange={event => setEditDraft(prev => ({ ...prev, auditoriumSetup: { seatingLayout: prev.auditoriumSetup?.seatingLayout || 'THEATER', stageRequired: event.target.checked, rehearsalMinutes: prev.auditoriumSetup?.rehearsalMinutes, notes: prev.auditoriumSetup?.notes } }))} />需要舞台</label>
+            <label>彩排时长（分钟）<input type="number" min="0" max="1440" value={editDraft.auditoriumSetup?.rehearsalMinutes || 0} onChange={event => setEditDraft(prev => ({ ...prev, auditoriumSetup: { seatingLayout: prev.auditoriumSetup?.seatingLayout || 'THEATER', stageRequired: prev.auditoriumSetup?.stageRequired || false, rehearsalMinutes: Number(event.target.value), notes: prev.auditoriumSetup?.notes } }))} /></label>
+            <label>布置备注<input maxLength={500} value={editDraft.auditoriumSetup?.notes || ''} onChange={event => setEditDraft(prev => ({ ...prev, auditoriumSetup: { seatingLayout: prev.auditoriumSetup?.seatingLayout || 'THEATER', stageRequired: prev.auditoriumSetup?.stageRequired || false, rehearsalMinutes: prev.auditoriumSetup?.rehearsalMinutes, notes: event.target.value } }))} /></label>
+          </fieldset>}
           <div className="chat-draft-form-grid">
             <label>重复频率
               <select value={editDraft.recurrence?.frequency || 'NONE'} onChange={event => setEditDraft(prev => ({ ...prev, recurrence: event.target.value === 'NONE' ? undefined : { frequency: event.target.value as 'WEEKLY' | 'BIWEEKLY', count: prev.recurrence?.count || 4 } }))}>
@@ -284,9 +322,12 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
           <div><dt>资源</dt><dd>{resource?.name || draft.resourceId}</dd></div>
           <div><dt>时间</dt><dd>{range}</dd></div>
           <div><dt>用途</dt><dd>{draft.purpose}</dd></div>
+          <div><dt>会议类型</dt><dd>{draft.meetingType === 'IMPORTANT' ? '重要会议' : draft.meetingType === 'NORMAL' ? '普通会议' : '待正式表单选择'}</dd></div>
           <div><dt>人数</dt><dd>{draft.participants || 1} 人</dd></div>
           <div><dt>参会人</dt><dd>{attendees.length ? attendees.join('、') : '暂未添加'}</dd></div>
-          <div><dt>服务</dt><dd>{[draft.isVideoConference ? '视频会议' : '', draft.needsTeaService ? '茶水服务' : '', draft.hasLeader ? `领导参会${draft.leaderDetails ? `：${draft.leaderDetails}` : ''}` : ''].filter(Boolean).join(' · ') || '无特殊需求'}</dd></div>
+          <div><dt>服务</dt><dd>{serviceSummary.join(' · ') || '无特殊需求'}</dd></div>
+          {draft.exclusiveRequestReason && <div><dt>专属理由</dt><dd>{draft.exclusiveRequestReason}</dd></div>}
+          {draft.auditoriumSetup && <div><dt>礼堂布置</dt><dd>{draft.auditoriumSetup.seatingLayout === 'THEATER' ? '剧院式' : draft.auditoriumSetup.seatingLayout === 'CLASSROOM' ? '课桌式' : '圆桌式'} · {draft.auditoriumSetup.stageRequired ? '需要舞台' : '无需舞台'}{draft.auditoriumSetup.rehearsalMinutes ? ` · 彩排 ${draft.auditoriumSetup.rehearsalMinutes} 分钟` : ''}</dd></div>}
           <div><dt>周期</dt><dd>{draft.recurrence ? `${draft.recurrence.frequency === 'WEEKLY' ? '每周' : '隔周'}重复 · 共 ${draft.recurrence.count} 次` : '单次申请'}</dd></div>
         </dl>
       )}
@@ -299,7 +340,7 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
         </div>
       ) : (
         <>
-          <p className="chat-draft-hint">已校验资源、容量、设备与首个时段；打开完整申请表后可继续核对周期安排，最终提交前会再次校验。</p>
+          <p className="chat-draft-hint">已校验资源、容量、设备与首个时段；打开完整申请表后须明确选择涉密属性，并可继续核对周期安排，最终提交前会再次校验。</p>
           <div className="chat-draft-actions">
             <button type="button" className="chat-draft-secondary" onClick={() => { setEditDraft(draft); setValidationError(null); setEditing(true); }}><Pencil size={13} />修订申请</button>
             <button type="button" className="chat-action" disabled={busy} onClick={() => void confirm()}>{busy ? '正在打开…' : state === 'opened' ? '再次打开申请表' : '确认信息，打开申请表'}</button>

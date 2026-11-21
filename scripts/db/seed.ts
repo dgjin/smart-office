@@ -1,5 +1,7 @@
 import { closeDbPool, mutateDb, readSnapshot } from '../../server/db.ts';
-import { DEFAULT_WORKFLOW, INITIAL_BOOKINGS, INITIAL_DEPARTMENTS, INITIAL_RESOURCES, INITIAL_ROLES, INITIAL_USERS } from '../../constants.ts';
+import { DEFAULT_RULE_SETTINGS, DEFAULT_WORKFLOW, INITIAL_BOOKINGS, INITIAL_DEPARTMENTS, INITIAL_RESOURCES, INITIAL_ROLES, INITIAL_USERS } from '../../constants.ts';
+import { ensureApprovalPolicy } from '../../utils/approvalPolicy.ts';
+import { ensureServiceDomain } from '../../server/serviceDomain.ts';
 
 try {
   const { db, revision } = await readSnapshot();
@@ -16,6 +18,18 @@ try {
     db.workflowVersions = [{ version: 1, nodes: DEFAULT_WORKFLOW, createdAt: new Date().toISOString(), createdBy: 'system' }];
     db.approvalDelegates = [];
     db.workOrders = [];
+    db.ruleVersions = [{ version: 1, settings: DEFAULT_RULE_SETTINGS, createdAt: new Date().toISOString(), createdBy: 'system' }];
+    db.resourceImportBatches = [];
+    db.confidentialWhitelist = [];
+    db.confidentialityAuthorizations = [];
+    db.confidentialAccessGrants = [];
+    db.checkInEvents = [];
+    db.usageFacts = [];
+    db.usageAppeals = [];
+    db.devices = [];
+    db.exceptionActions = [];
+    ensureApprovalPolicy(db);
+    ensureServiceDomain(db);
   }, { expectedRevision: revision, replaceBookings: true });
   console.log('受控初始数据已写入 MySQL');
 } finally {

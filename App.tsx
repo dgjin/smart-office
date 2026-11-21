@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { 
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
   Cpu, Monitor, Coffee, Edit2, Trash2, UserPlus, RefreshCw,
@@ -12,18 +12,23 @@ import {
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
   PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
-import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature } from './types';
+import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
-import { findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, resourceSupportsFeature, validateBookingResource } from './utils/bookingRules';
+import { findAttendeeOverlaps, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, resourceSupportsFeature, splitBookingByNaturalDay, validateBookingResource } from './utils/bookingRules';
 import { validateBookingDraft } from './utils/bookingDraft';
 import { filterResources } from './utils/resourceSearch';
 import { getApprovalGroups, getBookingWorkflow } from './utils/approval';
-import { generateReport } from './utils/reports';
-import { generateBookingIcs } from './utils/calendar';
+import { getResourceBuilding, getResourceFloor, getRoomCategory } from './utils/resourceDomain';
+import { parseCheckInQr } from './utils/checkInQr';
 import ChatDock, { type AgentAction } from './components/ChatDock';
-import BuildingExplorer, { BUILDINGS, getFloorNumbers, parseBuilding, parseFloor, type BuildingId } from './components/BuildingExplorer';
+import ServiceOperations, { BookingUsageActions } from './components/ServiceOperations';
+import ExceptionCenter from './components/ExceptionCenter';
+import DeviceManagement from './components/DeviceManagement';
+import OperationsReports from './components/OperationsReports';
+import BuildingExplorer, { BUILDINGS, getFloorNumbers, type BuildingId } from './components/BuildingExplorer';
+import { DEFAULT_RULE_SETTINGS } from './constants';
 
-type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'DATA_CENTER';
+type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'EXCEPTIONS' | 'DEVICES' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'CONFIDENTIALITY' | 'DATA_CENTER';
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
@@ -49,17 +54,92 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   INVALID_PARTICIPANTS: '参与人数无效，请重新填写。',
   CAPACITY_EXCEEDED: '参与人数超过会议室当前容量，请减少人数或更换会议室。',
   REQUIRED_FEATURE_UNAVAILABLE: '会议室当前设备不满足预约要求，请调整设备需求或更换会议室。',
-  ACTIVE_BOOKINGS_REQUIRE_REVIEW: '仍有未结束的有效预约，请先取消或改期后再切换维护状态。'
+  ACTIVE_BOOKINGS_REQUIRE_REVIEW: '仍有未结束的有效预约，请先取消或改期后再切换维护状态。',
+  INVALID_BOOKING_PURPOSE: '请填写 200 字以内的会议主题或申请用途。',
+  MEETING_TYPE_REQUIRED: '请选择普通、重要或涉密会议类型。',
+  CONFIDENTIALITY_CHOICE_REQUIRED: '请明确选择本会议是否涉密。',
+  CONFIDENTIALITY_TYPE_MISMATCH: '会议类型与涉密选择不一致，涉密会议必须选择“涉密”。',
+  CONTACT_SNAPSHOT_INCOMPLETE: '当前用户档案中的姓名、座机或手机不完整，请先联系管理员补齐。',
+  INVALID_SERVICE_REQUIREMENTS: '服务需求格式不正确，请检查后重试。',
+  SERVICE_DETAILS_REQUIRED: '选择其他服务后，请填写具体服务说明。',
+  AUDITORIUM_SETUP_REQUIRED: '请完整填写礼堂座位布局和舞台需求。',
+  INVALID_AUDITORIUM_REHEARSAL: '彩排时长应为 0 至 1440 分钟的整数。',
+  INVALID_AUDITORIUM_NOTES: '礼堂备注不能超过 500 字。',
+  BOOKING_START_IN_PAST: '预约开始时间已过，请重新选择。',
+  RESOURCE_OUTSIDE_OPEN_HOURS: '预约时间超出资源开放时段，请调整后重试。',
+  EXCLUSIVE_REQUEST_WINDOW_CLOSED: '专属会议室仅在会前配置时限内接受临时申请。',
+  EXCLUSIVE_REQUEST_REASON_REQUIRED: '请填写 2 至 500 字的专属会议室临时申请理由。',
+  REQUESTER_TIME_CONFLICT: '您在相同时段已有其他预约，请调整时间。',
+  DEPARTMENT_DAILY_QUOTA_EXCEEDED: '部门当日净预约额度不足，请缩短时长或更换日期。',
+  REQUESTER_DEPARTMENT_NOT_FOUND: '申请人部门档案不完整，请联系管理员维护。',
+  MULTI_RESOURCE_BOOKING_NOT_SUPPORTED: '普通联合预约暂未开放，请按单个资源分别申请。',
+  LONG_TERM_LIMIT_EXCEEDED: '单期长期预订超过当前规则上限，请缩短截止日期。',
+  RENEWAL_EXISTS: '本期已有审批中或已核准的续期，请勿重复提交。',
+  INVALID_RENEWAL_START: '续期必须晚于当前周期，请重新发起。',
+  INVALID_RENEWAL: '续期信息已变化，请重新打开续期表单。',
+  INVALID_LONG_TERM_SERIES: '长期预订数据不完整，请重新提交。',
+  CONFIDENTIAL_WHITELIST_REQUIRED: '申请人及全部参会人都必须在涉密白名单内，请联系保密管理员处理。',
+  CONFIDENTIAL_DECLASSIFY_DUAL_AUTHORIZATION_REQUIRED: '涉密降级需要两名不同授权人的有效授权。',
+  CONFIDENTIAL_ATTENDEE_AUTHORIZATION_REQUIRED: '涉密参会范围变化需要一名授权人的有效授权。',
+  INVALID_CONFIDENTIALITY_AUTHORIZATION: '授权记录无效、已使用或授权人不符合要求，请重新申请授权。',
+  CONFIDENTIAL_EXPORT_FORBIDDEN: '当前账号无权导出该涉密会议日历。',
+  CONFIDENTIAL_SELF_AUTHORIZATION: '申请人不能为自己的涉密变更授权。',
+  CONFIDENTIAL_BOOKING_NOT_EDITABLE: '仅待审批的涉密申请可以创建变更授权。',
+  DUPLICATE_CONFIDENTIAL_WHITELIST_USER: '该成员已在涉密白名单内。',
+  CONFIDENTIAL_WHITELIST_NOT_FOUND: '白名单记录已变化，请刷新后重试。',
+  INVALID_CONFIDENTIALITY_ACTION: '请选择有效的涉密变更类型。',
+  CONFIDENTIAL_WHITELIST_REASON: '请填写白名单设置理由。',
+  CONFIDENTIALITY_AUTHORIZATION_REASON: '请填写授权理由。',
+  SERVICE_CATALOG_ITEM_NOT_FOUND: '服务目录项已变化，请刷新后重试。',
+  SERVICE_NOT_AVAILABLE_FOR_RESOURCE: '所选服务不适用于当前资源，请调整服务需求。',
+  SERVICE_FIELD_REQUIRED: '请完整填写服务必填字段。',
+  INVALID_SERVICE_FIELD_VALUE: '服务字段格式不正确，请检查数字、选项和文字长度。',
+  WORK_ORDER_FIELD_VALUES_REQUIRED: '请按冻结目录模板填写待定服务信息。',
+  INVALID_WORK_ORDER_TRANSITION: '工单状态已变化，当前操作不可执行，请刷新后重试。',
+  WORK_ORDER_REASON_REQUIRED: '请填写工单操作原因。',
+  WORK_ORDER_EXECUTION_RESULT_REQUIRED: '请填写服务执行结果。',
+  WORK_ORDER_NOT_CANCELLABLE: '该服务不可撤销，请登记异常并保留执行记录。',
+  CANCELLATION_AUTHORIZATION_REQUIRED: '已进入取消授权时限，请联系审批负责人或系统管理员处理。',
+  BOOKING_NOT_CHECKABLE: '当前预约状态不可签到，请刷新后核对。',
+  BOOKING_ALREADY_CHECKED_IN: '该预约已签到，请勿重复操作。',
+  CHECK_IN_EVENT_NOT_FOUND: '当前没有可纠错或撤销的签到事件。',
+  CHECK_IN_CORRECTION_REASON_REQUIRED: '签到纠错或撤销必须由会务人员填写原因。',
+  CHECK_IN_OUTSIDE_WINDOW: '签到时间不在允许窗口内，请核对会议时段。',
+  INVALID_CHECK_IN_TIME: '签到时间无效，请重新填写。',
+  CHECK_IN_SUBJECT_NOT_PARTICIPANT: '签到成员不在申请人或参会人范围内。',
+  QR_CHECK_IN_REQUIRES_SELF: '二维码签到仅限本人操作，其他成员请由会务人员人工登记。',
+  QR_CHECK_IN_SCHEDULE_STALE: '二维码对应已改期或恢复前的预约，请扫描最新二维码。',
+  INVALID_QR_CHECK_IN: '二维码缺少有效的预约版本，请使用最新会议二维码。',
+  INVALID_CHECK_IN_INPUT: '签到请求无效，请刷新后重试。',
+  BOOKING_NOT_RELEASABLE: '当前预约状态不可释放，请刷新后核对。',
+  RELEASE_REASON_REQUIRED: '请填写 500 字以内的释放原因。',
+  BOOKING_NOT_COMPLETABLE: '当前会议不满足提前结束条件，请确认已签到且仍在会议时段内。',
+  BOOKING_NOT_CONFIRMABLE: '仅已核准预约可以确认实际使用。',
+  INVALID_USAGE_CONFIRMATION: '请选择正常使用或确认未使用。',
+  USAGE_CONFIRMATION_NOTE_REQUIRED: '确认未使用时必须填写原因，说明不能超过 500 字。',
+  BOOKING_NOT_APPEALABLE: '仅本人已释放的预约可以发起申诉。',
+  USAGE_APPEAL_EXISTS: '该预约已有待处理申诉，请勿重复提交。',
+  USAGE_APPEAL_REASON_REQUIRED: '请填写 2 至 1000 字的申诉理由。',
+  USAGE_APPEAL_NOT_FOUND: '申诉不存在或已处理，请刷新后查看结果。',
+  INVALID_USAGE_APPEAL_DECISION: '请选择恢复预约或驳回申诉。',
+  USAGE_APPEAL_RESOLUTION_NOTE_REQUIRED: '请填写 1000 字以内的申诉处理意见。',
+  BOOKING_RESTORE_WINDOW_CLOSED: '预约已结束或状态已变化，不能恢复。'
 };
 
-const downloadBookingIcs = (booking: Booking, resource: Resource, users: User[]) => {
-  const ics = generateBookingIcs(booking, resource, users, new Date());
-  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
+const downloadBookingIcs = async (booking: Booking) => {
+  const response = await fetch(`/api/bookings/${encodeURIComponent(booking.id)}/ics`);
+  if (!response.ok) {
+    const result = await response.json().catch(() => ({}));
+    throw new Error(BOOKING_ERROR_MESSAGES[result.error] || '日历导出失败，请稍后重试。');
+  }
+  const blob = await response.blob();
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
-  link.download = `${booking.purpose.replace(/[\\/:*?"<>|]/g, '_')}.ics`;
+  link.download = `booking-${booking.id.replace(/[^A-Za-z0-9_-]/g, '_')}.ics`;
+  document.body.appendChild(link);
   link.click();
+  link.remove();
   URL.revokeObjectURL(url);
 };
 
@@ -213,19 +293,81 @@ const QRScannerModal = ({ theme, bookings, resources, onClose, onCheckIn }: any)
   const videoRef = useRef<HTMLVideoElement>(null);
   const modalRef = useModalA11y(onClose);
   const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(false);
+  const bookingsRef = useRef(bookings);
+  const onCheckInRef = useRef(onCheckIn);
+  const onCloseRef = useRef(onClose);
+  bookingsRef.current = bookings;
+  onCheckInRef.current = onCheckIn;
+  onCloseRef.current = onClose;
 
   useEffect(() => {
     let stream: MediaStream | null = null;
+    let active = true;
+    let detecting = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     const startCamera = async () => {
+      const Detector = (window as any).BarcodeDetector;
+      if (!Detector || !navigator.mediaDevices?.getUserMedia) {
+        setError('当前浏览器不支持实时二维码解码，请使用下方人工签到。');
+        return;
+      }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
-        if (videoRef.current) videoRef.current.srcObject = stream;
+        const detector = new Detector({ formats: ['qr_code'] });
+        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio: false });
+        if (!active || !videoRef.current) {
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        videoRef.current.srcObject = stream;
+        setScanning(true);
+        const detect = async () => {
+          if (!active || detecting) return;
+          detecting = true;
+          try {
+            const video = videoRef.current;
+            if (video?.readyState >= 2) {
+              const results = await detector.detect(video);
+              const value = String(results[0]?.rawValue || '').trim();
+              if (value) {
+                const parsed = parseCheckInQr(value);
+                const booking = parsed && bookingsRef.current.find((item: Booking) => item.id === parsed.bookingId);
+                if (!parsed || !booking) {
+                  setError('二维码未对应当前可签到会议，或缺少预约版本，请使用最新会议二维码。');
+                } else if (parsed.scheduleVersion !== (booking.scheduleVersion || 1)) {
+                  setError('二维码对应已改期或恢复前的预约，请扫描最新二维码。');
+                } else if (!navigator.onLine) {
+                  setError('当前离线，扫码签到不可用；未保存任何签到，请联网后重试。');
+                } else {
+                  const succeeded = await onCheckInRef.current(booking.id, 'QR', parsed.scheduleVersion);
+                  if (succeeded) {
+                    active = false;
+                    setScanning(false);
+                    onCloseRef.current();
+                    return;
+                  }
+                  setError('服务端未完成签到，请检查签到窗口或改用下方人工签到。');
+                }
+              }
+            }
+          } catch {
+            if (active) setError('二维码识别暂时失败，请调整距离或改用人工签到。');
+          } finally {
+            detecting = false;
+            if (active) timer = setTimeout(detect, 250);
+          }
+        };
+        void detect();
       } catch {
-        setError('无法访问摄像头，可直接选择当前会议签到。');
+        setError('无法访问摄像头，请检查浏览器权限或使用下方人工签到。');
       }
     };
-    startCamera();
-    return () => { stream?.getTracks().forEach(track => track.stop()); };
+    void startCamera();
+    return () => {
+      active = false;
+      if (timer) clearTimeout(timer);
+      stream?.getTracks().forEach(track => track.stop());
+    };
   }, []);
 
   return (
@@ -233,17 +375,20 @@ const QRScannerModal = ({ theme, bookings, resources, onClose, onCheckIn }: any)
       <div className="bg-white rounded-[2rem] w-full max-w-md p-6 md:p-8 shadow-2xl animate-in zoom-in overflow-y-auto max-h-[90vh] relative">
         <button onClick={onClose} aria-label="关闭签到" className="absolute top-6 right-6 p-2 bg-gray-100 rounded-xl text-gray-500 hover:text-rose-500 z-10"><X size={20}/></button>
         <div className="text-center mb-5">
-          <h3 className="text-xl font-black text-gray-800">会议签到</h3>
-          <p className="text-xs text-gray-500 font-medium mt-1">开始前 15 分钟开放，选择当前会议完成签到</p>
+          <h3 className="text-xl font-black text-gray-800">扫码或人工签到</h3>
+          <p className="text-xs text-gray-500 font-medium mt-1">开始前 15 分钟开放；扫码结果仅用于定位预约，签到事实由服务端校验并保存</p>
         </div>
         <div className="relative aspect-video bg-gray-900 rounded-3xl overflow-hidden mb-5 border-4 border-gray-100 flex items-center justify-center">
-          {error ? <p className="p-6 text-center text-white text-xs font-bold">{error}</p> : <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />}
+          <video ref={videoRef} autoPlay playsInline muted aria-label="二维码扫描画面" className={`absolute inset-0 w-full h-full object-cover ${scanning ? '' : 'hidden'}`} />
+          {scanning ? <div className="pointer-events-none absolute inset-8 rounded-2xl border-2 border-white/80"><span className="absolute bottom-3 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-black/60 px-3 py-1 text-[10px] font-bold text-white">对准会议签到二维码</span></div> : <p role="status" className="p-6 text-center text-white text-xs font-bold">{error || '正在启动摄像头…'}</p>}
         </div>
+        {error && scanning && <p role="alert" className="mb-4 rounded-xl bg-amber-50 p-3 text-xs font-bold text-amber-700">{error}</p>}
         <div className="space-y-3">
-          {bookings.map((b: Booking) => <button key={b.id} onClick={async () => { if (await onCheckIn(b.id)) onClose(); }} className={`w-full p-4 rounded-2xl bg-${theme}-50 border border-${theme}-100 text-left hover:bg-${theme}-100 transition-colors`}>
+          <p className="text-[11px] font-black uppercase tracking-widest text-gray-500">人工签到</p>
+          {bookings.map((b: Booking) => <button key={b.id} onClick={async () => { if (await onCheckIn(b.id, 'MANUAL')) onClose(); }} className={`w-full p-4 rounded-2xl bg-${theme}-50 border border-${theme}-100 text-left hover:bg-${theme}-100 transition-colors`}>
             <div className="flex items-center justify-between gap-3">
               <div><p className="text-sm font-black text-gray-800">{b.purpose}</p><p className="text-[11px] text-gray-500 mt-1">{resources.find((r: Resource) => r.id === b.resourceId)?.name} · {toLocalDateTimeString(b.startTime)} - {toLocalTimeString(b.endTime)}</p></div>
-              <span className={`shrink-0 px-3 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-black`}>确认签到</span>
+              <span className={`shrink-0 px-3 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-black`}>本人签到</span>
             </div>
           </button>)}
           {bookings.length === 0 && <div className="py-8 text-center bg-gray-50 rounded-2xl"><Clock size={28} className="mx-auto text-gray-500 mb-3"/><p className="text-sm font-bold text-gray-600">当前没有可签到的会议</p><p className="text-[11px] text-gray-500 mt-2">仅已核准且未结束的本人或受邀会议可签到</p></div>}
@@ -551,7 +696,8 @@ const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users
              {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && <span className="shrink-0 whitespace-nowrap bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-rose-100">特殊需求</span>}
            </div>
            <p className="text-xs text-gray-500 font-medium">{isLongTerm ? `${toLocalDateString(booking.startTime)} 至 ${booking.seriesEndDate} · 每天 ${toLocalTimeString(booking.startTime)} - ${toLocalTimeString(booking.endTime)} · ${seriesBookings.length} 个会议日` : `${toLocalDateTimeString(booking.startTime)} 至 ${toLocalDateTimeString(booking.endTime)}`} · {booking.purpose}</p>
-           <p className="mt-1 text-[11px] font-bold text-gray-500">当前节点：{currentNode?.name || '待审批'}{booking.workflowVersion ? ` · 流程 V${booking.workflowVersion}` : ''}</p>
+           <p className="mt-1 text-[11px] font-bold text-gray-500">当前节点：{currentNode?.name || '待审批'}{booking.workflowVersion ? ` · 流程 V${booking.workflowVersion}` : ''}{booking.approvalRuleSetVersion ? ` · 规则集 V${booking.approvalRuleSetVersion}` : ''}</p>
+           {booking.approvalRuleExplanation?.length > 0 && <p className="mt-1 text-[11px] font-medium text-indigo-600">命中依据：{booking.approvalRuleExplanation.join('；')}</p>}
 
            {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && (
              <div className="mt-2 flex flex-wrap gap-2">
@@ -655,12 +801,64 @@ const DayBookingDetailModal = ({ detail, onClose, users, resources, theme }: any
   </div>
 );
 
-const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments = [], roles = [] }: any) => {
+const RESOURCE_IMPORT_ERROR_MESSAGES: Record<string, string> = {
+  RESOURCE_CODE_REQUIRED: '缺少永久编码',
+  RESOURCE_STRUCTURED_LOCATION_REQUIRED: '会议室必须提供可识别的楼栋和楼层',
+  RESOURCE_CODE_ID_CONFLICT: '永久编码与资源 ID 分别指向不同资源',
+  RESOURCE_CODE_IMMUTABLE: '已有资源的永久编码不可修改',
+  INVALID_RESOURCE_CODE: '永久编码格式不正确',
+  INVALID_RESOURCE_NAME: '资源名称缺失或过长',
+  INVALID_RESOURCE_CAPACITY: '容量必须为正整数',
+  INVALID_RESOURCE_BUILDING: '楼栋仅支持主楼或配楼',
+  INVALID_RESOURCE_FLOOR: '楼层超出所选楼栋范围',
+  INVALID_RESOURCE_LOCATION: '位置信息不完整',
+  INVALID_RESOURCE_OPEN_HOURS: '开放时段必须成对填写且开始早于结束',
+  INVALID_RESOURCE_EXCLUSIVE: '专属标识格式不正确',
+  INVALID_RESOURCE_LEADER_LEVEL: '专属会议室必须填写适用领导层级',
+  DUPLICATE_RESOURCE_ID: '资源 ID 重复',
+  DUPLICATE_RESOURCE_CODE: '永久编码重复',
+  DUPLICATE_RESOURCE_NAME: '资源名称与已有资源或其他行重复',
+  ACTIVE_BOOKINGS_REQUIRE_REVIEW: '变更会影响未结束的有效预约',
+  CAPACITY_EXCEEDED: '新容量低于已有有效预约人数',
+  REQUIRED_FEATURE_UNAVAILABLE: '设备变更会影响已有有效预约'
+};
+
+const RESOURCE_FIELD_LABELS: Record<string, string> = {
+  name: '名称', type: '类型', capacity: '容量', location: '位置', building: '楼栋', floor: '楼层',
+  roomNumber: '房间号', roomCategory: '容量分类', campus: '园区', features: '设备', status: '状态',
+  isExclusive: '专属', exclusiveLeaderLevel: '领导层级', openStart: '开放开始', openEnd: '开放结束',
+  isPublic: '公共资源', notes: '备注'
+};
+
+const parseCsvRow = (line: string) => {
+  const delimiter = line.includes('，') && !line.includes(',') ? '，' : ',';
+  const values: string[] = [];
+  let value = '';
+  let quoted = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === '"') {
+      if (quoted && line[index + 1] === '"') { value += '"'; index += 1; }
+      else quoted = !quoted;
+    } else if (char === delimiter && !quoted) {
+      values.push(value.trim());
+      value = '';
+    } else value += char;
+  }
+  values.push(value.trim());
+  return values;
+};
+
+const BatchImportModal = ({ type, onClose, onImport, onPreflight, theme, existingDepartments = [], roles = [] }: any) => {
   const [text, setText] = useState('');
+  const [parsedItems, setParsedItems] = useState<any[]>([]);
+  const [report, setReport] = useState<ResourceImportReport | null>(null);
+  const [busy, setBusy] = useState<'PREFLIGHT' | 'IMPORT' | null>(null);
+  const [formError, setFormError] = useState('');
   
   const getTemplate = () => {
     if (type === 'USERS') return "姓名,邮箱,部门,角色(可选),办公电话(可选),移动电话(可选)\n张三,zhangsan@company.com,市场部,正式员工,010-88886666,13800000001";
-    if (type === 'RESOURCES') return "资源名称,类型(会议室/工位),容量,位置\nGamma 演示厅,会议室,20,2号楼";
+    if (type === 'RESOURCES') return "永久编码,资源名称,类型(会议室/工位),容量,楼栋(主楼/配楼),楼层,房间号,位置补充(可选),容量分类(自动/礼堂),开放开始(可选),开放结束(可选),专属(是/否),适用领导层级(可选),公共资源(是/否),园区(可选),设备(竖线分隔),状态(可选),备注(可选)\nANNEX-02F-201,Gamma 演示厅,会议室,20,配楼,2,201,,自动,08:00,20:00,否,,是,总部园区,投屏显示器|视频会议系统,空闲,演示数据，请替换为实际台账";
     if (type === 'DEPARTMENTS') return "部门名称,上级部门名称(可选)\n华北区,\n北京分公司,华北区";
     return "";
   };
@@ -677,125 +875,189 @@ const BatchImportModal = ({ type, onClose, onImport, theme, existingDepartments 
     document.body.removeChild(link);
   };
 
-  const processData = () => {
+  const parseItems = () => {
+    const trimmed = text.trim();
+    if (!trimmed) return [];
+    if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
+      const parsed = JSON.parse(trimmed);
+      return Array.isArray(parsed) ? parsed : [parsed];
+    }
+
+    const lines = trimmed.split(/\r?\n/).filter(line => line.trim());
+    const data: any[] = [];
+    const headerKeywords = ['名称', '姓名', '资源', '部门', 'name'];
+    const hasHeader = headerKeywords.some(key => lines[0]?.toLowerCase().includes(key));
+    const startIndex = hasHeader ? 1 : 0;
+
+    if (type === 'DEPARTMENTS') {
+      const deptMap = new Map();
+      existingDepartments.forEach((d: any) => deptMap.set(d.name, d.id));
+      for (let i = startIndex; i < lines.length; i++) {
+        const parts = parseCsvRow(lines[i]);
+        const name = parts[0]?.trim();
+        const parentName = parts[1]?.trim();
+        if (!name || deptMap.has(name)) continue;
+        const newId = `dpt-imp-${Date.now()}-${i}`;
+        const newDept = { id: newId, name, parentId: parentName ? deptMap.get(parentName) : undefined };
+        data.push(newDept);
+        deptMap.set(name, newId);
+      }
+    } else if (type === 'USERS') {
+      for (let i = startIndex; i < lines.length; i++) {
+        const parts = parseCsvRow(lines[i]);
+        const name = parts[0]?.trim();
+        if (!name) continue;
+        const roleName = parts[3]?.trim();
+        const foundRole = roles.find((r: any) => r.name === roleName);
+        data.push({
+          id: `u-imp-${Date.now()}-${i}`,
+          name,
+          email: parts[1]?.trim() || `${name}@company.com`,
+          department: parts[2]?.trim() || '待分配',
+          role: [foundRole?.id || 'EMPLOYEE'],
+          landline: parts[4]?.trim(),
+          mobile: parts[5]?.trim()
+        });
+      }
+    } else if (type === 'RESOURCES') {
+      for (let i = startIndex; i < lines.length; i++) {
+        const parts = parseCsvRow(lines[i]);
+        const code = parts[0]?.trim().toUpperCase();
+        const name = parts[1]?.trim();
+        if (!code && !name) continue;
+        const typeText = parts[2]?.trim().toUpperCase() || '';
+        const resourceType = typeText === 'ROOM' || typeText.includes('室') ? 'ROOM' : 'DESK';
+        const buildingText = parts[4]?.trim() || '';
+        const building = /配楼|2号楼|ANNEX/i.test(buildingText) ? 'ANNEX' : /主楼|1号楼|MAIN/i.test(buildingText) ? 'MAIN' : undefined;
+        const floor = parts[5]?.trim() ? Number(parts[5]) : undefined;
+        const roomNumber = parts[6]?.trim() || undefined;
+        const locationDetail = parts[7]?.trim() || undefined;
+        const exclusiveText = (parts[11] || '').trim().toUpperCase();
+        const publicText = (parts[13] || '').trim().toUpperCase();
+        const isExclusive = ['是', 'TRUE', '1', 'YES'].includes(exclusiveText);
+        const statusText = (parts[16] || '').trim().toUpperCase();
+        const statusLabels: Record<string, string> = { '空闲': 'AVAILABLE', '占用': 'OCCUPIED', '维护中': 'MAINTENANCE', '待开放': 'PENDING' };
+        data.push({
+          id: `r-${code.toLowerCase()}`,
+          code,
+          name,
+          type: resourceType,
+          capacity: parts[3]?.trim() ? Number(parts[3]) : 0,
+          building: resourceType === 'ROOM' ? building : undefined,
+          floor: resourceType === 'ROOM' ? floor : undefined,
+          roomNumber: resourceType === 'ROOM' ? roomNumber : undefined,
+          location: resourceType === 'ROOM'
+            ? `${building ? BUILDINGS[building as BuildingId].name : buildingText} ${floor || ''}层${roomNumber ? ` · ${roomNumber}` : ''}${locationDetail ? ` · ${locationDetail}` : ''}`
+            : locationDetail || roomNumber || '',
+          roomCategory: parts[8]?.trim() === '礼堂' ? 'AUDITORIUM' : undefined,
+          openStart: parts[9]?.trim() || undefined,
+          openEnd: parts[10]?.trim() || undefined,
+          isExclusive,
+          exclusiveLeaderLevel: parts[12]?.trim() || undefined,
+          isPublic: publicText ? ['是', 'TRUE', '1', 'YES'].includes(publicText) : !isExclusive,
+          campus: parts[14]?.trim() || undefined,
+          features: (parts[15] || '').split(/[|｜]/).map((feature: string) => feature.trim()).filter(Boolean),
+          status: statusLabels[statusText] || (['AVAILABLE', 'OCCUPIED', 'MAINTENANCE', 'PENDING'].includes(statusText) ? statusText : 'AVAILABLE'),
+          notes: parts[17]?.trim() || undefined
+        });
+      }
+    }
+    return data;
+  };
+
+  const processData = async () => {
+    setFormError('');
+    setReport(null);
     try {
-      const trimmed = text.trim();
-      if (trimmed.startsWith('[') || trimmed.startsWith('{')) {
-         onImport(JSON.parse(trimmed));
-         return;
-      }
+      const data = parseItems();
+      if (!data.length) throw new Error('未解析到有效数据，请检查格式。');
+      setParsedItems(data);
+      if (type === 'RESOURCES') {
+        setBusy('PREFLIGHT');
+        setReport(await onPreflight(data));
+      } else await onImport(data);
+    } catch (error: any) {
+      setFormError(error?.message || '数据解析或预检失败，请检查格式。');
+    } finally {
+      setBusy(null);
+    }
+  };
 
-      const lines = trimmed.split('\n');
-      const data: any[] = [];
-      const headerKeywords = ['名称', '姓名', '资源', '部门', 'name'];
-      const hasHeader = headerKeywords.some(key => lines[0].toLowerCase().includes(key));
-      const startIndex = hasHeader ? 1 : 0;
-      
-      if (type === 'DEPARTMENTS') {
-         const deptMap = new Map();
-         existingDepartments.forEach((d: any) => deptMap.set(d.name, d.id));
-         
-         for (let i = startIndex; i < lines.length; i++) {
-            const parts = lines[i].split(/,|，/);
-            const name = parts[0]?.trim();
-            const parentName = parts[1]?.trim();
-            
-            if (!name) continue;
-            
-            const newId = `dpt-imp-${Date.now()}-${i}`;
-            // If the user imports duplicates, we skip or handle? Simple skip if exists in map.
-            if (deptMap.has(name)) continue;
-
-            const parentId = parentName ? deptMap.get(parentName) : undefined;
-            const newDept = { id: newId, name, parentId };
-            
-            data.push(newDept);
-            deptMap.set(name, newId); 
-         }
-      } else if (type === 'USERS') {
-         for (let i = startIndex; i < lines.length; i++) {
-            const parts = lines[i].split(/,|，/);
-            const name = parts[0]?.trim();
-            if (!name) continue;
-            const email = parts[1]?.trim();
-            const department = parts[2]?.trim();
-            const roleName = parts[3]?.trim();
-            const landline = parts[4]?.trim();
-            const mobile = parts[5]?.trim();
-            
-            let roleIds = ['EMPLOYEE'];
-            if (roleName) {
-               const foundRole = roles.find((r: any) => r.name === roleName);
-               if (foundRole) roleIds = [foundRole.id];
-            }
-            
-            data.push({
-               id: `u-imp-${Date.now()}-${i}`,
-               name,
-               email: email || `${name}@company.com`,
-               department: department || '待分配',
-               role: roleIds,
-               landline,
-               mobile
-            });
-         }
-      } else if (type === 'RESOURCES') {
-         for (let i = startIndex; i < lines.length; i++) {
-            const parts = lines[i].split(/,|，/);
-            const name = parts[0]?.trim();
-            if (!name) continue;
-            const typeStr = parts[1]?.trim().toUpperCase();
-            const capacity = parts[2]?.trim();
-            const location = parts[3]?.trim();
-
-            data.push({
-               id: `r-imp-${Date.now()}-${i}`,
-               name,
-               type: (typeStr === '会议室' || typeStr === 'ROOM' || typeStr.includes('室')) ? 'ROOM' : 'DESK',
-               capacity: parseInt(capacity) || 1,
-               location: location || '未标注',
-               status: 'AVAILABLE',
-               features: []
-            });
-         }
-      }
-      
-      if (data.length > 0) {
-         onImport(data);
-      } else {
-         alert("未解析到有效数据，请检查格式。");
-      }
-
-    } catch (e) {
-      alert('数据解析失败，请检查格式。');
-      console.error(e);
+  const confirmImport = async () => {
+    if (!report || report.invalid || (!report.creates && !report.updates)) return;
+    setBusy('IMPORT');
+    setFormError('');
+    try {
+      await onImport(parsedItems);
+    } catch (error: any) {
+      setFormError(error?.message || '正式导入失败，请刷新后重试。');
+    } finally {
+      setBusy(null);
     }
   };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-lg w-full shadow-2xl animate-in zoom-in">
-        <div className="flex justify-between items-center mb-6">
-           <h3 className="font-black text-xl text-gray-800">批量导入 {type === 'USERS' ? '成员' : (type === 'RESOURCES' ? '资源' : '部门')}</h3>
-           <button onClick={handleDownloadTemplate} className={`text-xs font-bold text-${theme}-600 bg-${theme}-50 px-3 py-1.5 rounded-lg hover:bg-${theme}-100 transition-colors flex items-center space-x-1`}>
-             <Download size={14}/> <span>下载模板</span>
-           </button>
-        </div>
-        
-        <div className="mb-4">
-           <p className="text-xs text-gray-500 mb-2 font-bold">请粘贴 CSV 文本或 JSON 数据：</p>
-           <textarea 
-             className="w-full h-64 border border-gray-200 rounded-2xl p-4 text-xs font-mono mb-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/50" 
-             placeholder={getTemplate()} 
-             value={text} 
-             onChange={e => setText(e.target.value)}
-           ></textarea>
-           <p className="text-[11px] text-gray-500">支持中文逗号(，)与英文逗号(,)分隔。第一行如果是表头将被自动跳过。</p>
+      <div className={`bg-white rounded-[2rem] p-6 sm:p-8 ${report ? 'max-w-5xl' : 'max-w-lg'} w-full max-h-[92dvh] overflow-y-auto shadow-2xl animate-in zoom-in`}>
+        <div className="flex justify-between items-center mb-6 gap-4">
+          <div>
+            <h3 className="font-black text-xl text-gray-800">批量导入 {type === 'USERS' ? '成员' : (type === 'RESOURCES' ? '资源台账' : '部门')}</h3>
+            {type === 'RESOURCES' && <p className="text-xs text-gray-500 mt-1">永久编码用于识别已有资源；正式导入前会按最新数据再次检查。</p>}
+          </div>
+          <button onClick={handleDownloadTemplate} className={`shrink-0 text-xs font-bold text-${theme}-600 bg-${theme}-50 px-3 py-1.5 rounded-lg hover:bg-${theme}-100 transition-colors flex items-center space-x-1`}>
+            <Download size={14}/> <span>下载模板</span>
+          </button>
         </div>
 
-        <div className="flex space-x-3">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
-          <button onClick={processData} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all`}>确认导入</button>
+        <div className="mb-4">
+          <p className="text-xs text-gray-500 mb-2 font-bold">请粘贴 CSV 文本或 JSON 数据：</p>
+          <textarea
+            aria-label="批量导入数据"
+            className={`w-full ${report ? 'h-36' : 'h-64'} border border-gray-200 rounded-2xl p-4 text-xs font-mono mb-2 focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100 outline-none transition-all bg-gray-50/50`}
+            placeholder={getTemplate()}
+            value={text}
+            onChange={event => { setText(event.target.value); setReport(null); setParsedItems([]); setFormError(''); }}
+          />
+          <p className="text-[11px] text-gray-500">支持带引号的 CSV、中文逗号与 JSON。资源 ID 由永久编码确定性生成，重复导入可识别新增、更新和不变行。</p>
+        </div>
+
+        {formError && <p role="alert" className="mb-4 rounded-xl bg-rose-50 border border-rose-100 px-4 py-3 text-xs font-bold text-rose-600">{formError}</p>}
+
+        {report && <section aria-label="资源台账预检报告" className="mb-5 space-y-4">
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            {([
+              ['新增', report.creates, 'text-emerald-600 bg-emerald-50'],
+              ['更新', report.updates, 'text-indigo-600 bg-indigo-50'],
+              ['不变', report.unchanged, 'text-gray-600 bg-gray-50'],
+              ['错误', report.invalid, 'text-rose-600 bg-rose-50']
+            ] as const).map(([label, value, className]) => <div key={label} className={`rounded-xl px-4 py-3 ${className}`}><strong className="block text-2xl">{value}</strong><span className="text-xs font-bold">{label}</span></div>)}
+          </div>
+          <div className="flex flex-wrap justify-between gap-2 text-[11px] text-gray-500">
+            <span>共 {report.total} 行 · 快照版本 {report.revision ?? '事务内重检'}</span>
+            <span>{report.invalid ? '存在错误，修正后需重新预检。' : report.creates + report.updates ? `可导入 ${report.creates + report.updates} 条变更。` : '没有需要写入的变更。'}</span>
+          </div>
+          <div className="max-h-72 overflow-auto rounded-xl border border-gray-100">
+            <table className="w-full text-left text-xs">
+              <thead className="bg-gray-50 text-gray-500 sticky top-0"><tr><th className="px-3 py-2">行</th><th className="px-3 py-2">结果</th><th className="px-3 py-2">编码 / 资源</th><th className="px-3 py-2">差异或问题</th></tr></thead>
+              <tbody className="divide-y divide-gray-100">
+                {report.items.map(item => <tr key={item.row} className={item.action === 'ERROR' ? 'bg-rose-50/40' : ''}>
+                  <td className="px-3 py-3 align-top">{item.row}</td>
+                  <td className="px-3 py-3 align-top font-bold">{{ CREATE: '新增', UPDATE: '更新', UNCHANGED: '不变', ERROR: '错误' }[item.action]}</td>
+                  <td className="px-3 py-3 align-top"><span className="block font-mono font-bold text-gray-700">{item.resourceCode || '未提供编码'}</span><span className="text-gray-500">{item.resource?.name || '—'}</span></td>
+                  <td className="px-3 py-3 align-top text-gray-600">
+                    {item.issues.length ? item.issues.map(issue => <p key={`${issue.row}-${issue.code}`} className="text-rose-600">{RESOURCE_IMPORT_ERROR_MESSAGES[issue.code] || issue.code}</p>) : item.changedFields.length ? item.changedFields.map(field => RESOURCE_FIELD_LABELS[field] || field).join('、') : '无字段差异'}
+                  </td>
+                </tr>)}
+              </tbody>
+            </table>
+          </div>
+        </section>}
+
+        <div className="flex flex-col-reverse sm:flex-row gap-3">
+          <button type="button" onClick={onClose} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-500 hover:bg-gray-200 transition-colors">取消</button>
+          {type === 'RESOURCES' && report && <button type="button" disabled={!!busy} onClick={processData} className="flex-1 py-3 rounded-xl bg-gray-100 font-bold text-gray-600 disabled:opacity-50">{busy === 'PREFLIGHT' ? '预检中…' : '重新预检'}</button>}
+          {(!report || type !== 'RESOURCES') && <button type="button" disabled={!!busy} onClick={processData} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg disabled:opacity-50`}>{busy === 'PREFLIGHT' ? '预检中…' : type === 'RESOURCES' ? '生成预检报告' : '确认导入'}</button>}
+          {type === 'RESOURCES' && report && <button type="button" disabled={!!busy || report.invalid > 0 || report.creates + report.updates === 0} onClick={confirmImport} className={`flex-1 py-3 rounded-xl bg-${theme}-600 text-white font-bold shadow-lg disabled:opacity-40`}>{busy === 'IMPORT' ? '导入中…' : `确认导入 ${report.creates + report.updates} 条变更`}</button>}
         </div>
       </div>
     </div>
@@ -996,27 +1258,39 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
 };
 
 const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
-  const initialBuildingId: BuildingId = resource?.type === 'DESK' ? 'MAIN' : parseBuilding(resource?.location || '');
+  const initialBuildingId: BuildingId = resource?.type === 'DESK' ? 'MAIN' : resource ? getResourceBuilding(resource) : 'MAIN';
   const [formData, setFormData] = useState({
+    code: resource?.code || resource?.id?.toUpperCase() || '',
     name: resource?.name || '',
     type: resource?.type || 'ROOM',
     capacity: resource?.capacity ?? 4,
+    roomCategory: resource?.roomCategory === 'AUDITORIUM' ? 'AUDITORIUM' : 'AUTO',
     status: resource?.status || 'AVAILABLE',
     campus: resource?.campus || '',
-    features: resource?.features || []
+    features: resource?.features || [],
+    isExclusive: resource?.isExclusive || false,
+    exclusiveLeaderLevel: resource?.exclusiveLeaderLevel || '',
+    openStart: resource?.openStart || '',
+    openEnd: resource?.openEnd || '',
+    isPublic: resource?.isPublic ?? true,
+    notes: resource?.notes || ''
   });
   const [newFeature, setNewFeature] = useState('');
   const [saving, setSaving] = useState(false);
   const [buildingId, setBuildingId] = useState<BuildingId>(initialBuildingId);
-  const [floor, setFloor] = useState<number | null>(() => resource?.type === 'DESK' ? null : parseFloor(resource?.location || '', BUILDINGS[initialBuildingId].totalFloors));
+  const [floor, setFloor] = useState<number | null>(() => resource?.type === 'DESK' ? null : resource ? getResourceFloor(resource) : null);
   const [locationDetail, setLocationDetail] = useState(() => resource?.type === 'DESK' ? '' : (resource?.location || '')
     .replace(/(?:1|一|2|二)\s*号楼|主楼|配楼/gi, '')
     .replace(/\d{1,2}\s*(?:层|F\b)/i, '')
+    .replace(resource?.roomNumber || '', '')
     .replace(/^[\s·,，\-—/]+|[\s·,，\-—/]+$/g, ''));
+  const [roomNumber, setRoomNumber] = useState(resource?.roomNumber || '');
   const [deskLocation, setDeskLocation] = useState(resource?.type === 'DESK' ? resource.location : '');
   const [formError, setFormError] = useState('');
   const building = BUILDINGS[buildingId];
-  const locationPreview = `${building.name} ${floor ? `${floor}层` : '待选择楼层'}${locationDetail ? ` · ${locationDetail}` : ''}`;
+  const locationPreview = `${building.name} ${floor ? `${floor}层` : '待选择楼层'}${roomNumber.trim() ? ` · ${roomNumber.trim()}` : ''}${locationDetail.trim() ? ` · ${locationDetail.trim()}` : ''}`;
+  const categoryLabels = { SMALL: '小型', MEDIUM: '中型', LARGE: '大型', AUDITORIUM: '礼堂' } as const;
+  const roomCategory = getRoomCategory(Number(formData.capacity) || 0, formData.roomCategory === 'AUDITORIUM');
 
   const toggleFeature = (feature: typeof ROOM_FEATURES[number]) => {
     const enabled = resourceSupportsFeature({ features: formData.features }, feature.id);
@@ -1036,7 +1310,12 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
   };
 
   const handleSave = async () => {
+    const code = formData.code.trim().toUpperCase();
     const name = formData.name.trim();
+    if (!/^[A-Z0-9][A-Z0-9._-]{1,63}$/.test(code)) {
+      setFormError('永久编码需为 2–64 位字母、数字、点、下划线或连字符');
+      return;
+    }
     if (!name) {
       setFormError('请填写资源名称');
       return;
@@ -1049,8 +1328,16 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
       setFormError('请选择会议室所在楼层，以便在 3D 图中展示');
       return;
     }
+    if (formData.type === 'ROOM' && formData.isExclusive && !formData.exclusiveLeaderLevel.trim()) {
+      setFormError('专属会议室必须填写适用领导层级');
+      return;
+    }
+    if ((formData.openStart && !formData.openEnd) || (!formData.openStart && formData.openEnd) || (formData.openStart && formData.openStart >= formData.openEnd)) {
+      setFormError('开放开始和结束时间必须同时填写，且开始时间早于结束时间');
+      return;
+    }
     const location = formData.type === 'ROOM'
-      ? `${building.name} ${floor}层${locationDetail.trim() ? ` · ${locationDetail.trim()}` : ''}`
+      ? `${building.name} ${floor}层${roomNumber.trim() ? ` · ${roomNumber.trim()}` : ''}${locationDetail.trim() ? ` · ${locationDetail.trim()}` : ''}`
       : deskLocation.trim();
     if (!location) {
       setFormError('请填写工位位置');
@@ -1058,7 +1345,22 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
     }
     setSaving(true);
     try {
-      await onSave({ ...formData, name, location, campus: formData.campus.trim() || undefined });
+      await onSave({
+        ...formData,
+        code,
+        name,
+        location,
+        building: formData.type === 'ROOM' ? buildingId : undefined,
+        floor: formData.type === 'ROOM' ? floor : undefined,
+        roomNumber: formData.type === 'ROOM' ? roomNumber.trim() || undefined : undefined,
+        roomCategory: formData.type === 'ROOM' ? roomCategory : undefined,
+        campus: formData.campus.trim() || undefined,
+        isExclusive: formData.type === 'ROOM' && formData.isExclusive,
+        exclusiveLeaderLevel: formData.type === 'ROOM' && formData.isExclusive ? formData.exclusiveLeaderLevel.trim() : undefined,
+        openStart: formData.openStart || undefined,
+        openEnd: formData.openEnd || undefined,
+        notes: formData.notes.trim() || undefined
+      });
     } catch (error: any) {
       setFormError(error?.message || '保存失败，请稍后重试');
     } finally {
@@ -1071,15 +1373,43 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
       <div className="bg-white rounded-[2rem] p-8 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl animate-in zoom-in">
         <h3 className="font-black text-xl mb-6">{resource ? '编辑资源' : '新增资源'}</h3>
         <div className="space-y-4">
+          <label className="block">
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">永久编码{resource ? ' · 创建后不可修改' : ''}</span>
+            <input aria-label="资源永久编码" value={formData.code} disabled={!!resource} onChange={e => { setFormData({...formData, code: e.target.value.toUpperCase()}); setFormError(''); }} placeholder="如：MAIN-10F-101" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100 font-mono disabled:text-gray-500" />
+          </label>
           <input aria-label="资源名称" value={formData.name} onChange={e => { setFormData({...formData, name: e.target.value}); setFormError(''); }} placeholder="资源名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           <div className="flex space-x-2">
             <button type="button" aria-pressed={formData.type === 'ROOM'} onClick={() => { setFormData({...formData, type: 'ROOM'}); setFormError(''); }} className={`flex-1 p-3 rounded-xl border ${formData.type === 'ROOM' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>会议室</button>
             <button type="button" aria-pressed={formData.type === 'DESK'} onClick={() => { setFormData({...formData, type: 'DESK'}); setFormError(''); }} className={`flex-1 p-3 rounded-xl border ${formData.type === 'DESK' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>工位</button>
           </div>
-          <input aria-label="资源容量" type="number" min={formData.type === 'ROOM' ? 1 : 0} value={Number.isNaN(formData.capacity) ? '' : formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <div className={formData.type === 'ROOM' ? 'grid grid-cols-2 gap-3' : ''}>
+            <input aria-label="资源容量" type="number" min={formData.type === 'ROOM' ? 1 : 0} value={Number.isNaN(formData.capacity) ? '' : formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+            {formData.type === 'ROOM' && <label>
+              <span className="sr-only">容量分类</span>
+              <select aria-label="资源容量分类" value={formData.roomCategory} onChange={e => setFormData({ ...formData, roomCategory: e.target.value })} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100 text-sm">
+                <option value="AUTO">自动分类 · {categoryLabels[roomCategory]}</option>
+                <option value="AUDITORIUM">礼堂（独立分类）</option>
+              </select>
+            </label>}
+          </div>
           <label className="block">
             <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">所属园区</span>
             <input aria-label="资源所属园区" value={formData.campus} onChange={e => setFormData({ ...formData, campus: e.target.value })} placeholder="如：总部园区（用于审批范围）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          </label>
+          {formData.type === 'ROOM' && <>
+            <div className="grid grid-cols-2 gap-3">
+              <label><span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">开放开始</span><input aria-label="资源开放开始时间" type="time" value={formData.openStart} onChange={e => { setFormData({ ...formData, openStart: e.target.value }); setFormError(''); }} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+              <label><span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">开放结束</span><input aria-label="资源开放结束时间" type="time" value={formData.openEnd} onChange={e => { setFormData({ ...formData, openEnd: e.target.value }); setFormError(''); }} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs font-bold text-gray-600"><input type="checkbox" checked={formData.isExclusive} onChange={e => { const isExclusive = e.target.checked; setFormData({ ...formData, isExclusive, isPublic: isExclusive ? false : formData.isPublic }); setFormError(''); }} />专属会议室</label>
+              <label className="flex items-center gap-2 p-3 bg-gray-50 rounded-xl border border-gray-100 text-xs font-bold text-gray-600"><input type="checkbox" checked={formData.isPublic} onChange={e => setFormData({ ...formData, isPublic: e.target.checked })} />公共资源</label>
+            </div>
+            {formData.isExclusive && <input aria-label="专属会议室适用领导层级" value={formData.exclusiveLeaderLevel} onChange={e => { setFormData({ ...formData, exclusiveLeaderLevel: e.target.value }); setFormError(''); }} placeholder="适用领导层级（必填）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />}
+          </>}
+          <label className="block">
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">备注</span>
+            <textarea aria-label="资源备注" value={formData.notes} onChange={e => setFormData({ ...formData, notes: e.target.value })} placeholder="资源使用与维护说明（选填）" className="w-full h-20 p-3 bg-gray-50 rounded-xl border border-gray-100 resize-none" />
           </label>
           <label className="block">
             <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">预约服务状态</span>
@@ -1123,7 +1453,10 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
                   </select>
                 </label>
               </div>
-              <input aria-label="位置补充" value={locationDetail} onChange={e => setLocationDetail(e.target.value)} placeholder="位置补充（选填，如：东侧 / 101室）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+              <div className="grid grid-cols-2 gap-3">
+                <input aria-label="资源房间号" value={roomNumber} onChange={e => setRoomNumber(e.target.value)} placeholder="房间号，如 101" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+                <input aria-label="位置补充" value={locationDetail} onChange={e => setLocationDetail(e.target.value)} placeholder="位置补充，如东侧" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+              </div>
               <p className="px-3 py-2 bg-gray-50 text-[11px] text-gray-500 rounded-xl">3D 联动位置 · {locationPreview}</p>
             </>
           ) : (
@@ -1343,36 +1676,65 @@ const ResourceFinder = ({ matches, criteria, onCriteriaChange, theme, onBook }: 
   );
 };
 
-const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose, onConfirm, availableUsers = [], currentUserId, bookings = [] }: any) => {
+const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose, onConfirm, availableUsers = [], currentUser, bookings = [], ruleSettings = DEFAULT_RULE_SETTINGS, confidentialityAuthorizations = [], serviceCatalog = [], externalError }: any) => {
   const modalRef = useModalA11y(onClose);
+  const errorRef = useRef<HTMLParagraphElement>(null);
   const isRoom = resource.type === 'ROOM';
+  const isAuditorium = resource.roomCategory === 'AUDITORIUM';
   const videoSupported = resourceSupportsFeature(resource, 'VIDEO');
   const initialDateObj = initialValues?.start ? new Date(initialValues.start) : initialDate ? new Date(initialDate) : new Date();
-  
+  const initialServices = (initialValues?.extras?.serviceRequirements || []) as BookingServiceRequirement[];
+  const contactUser = initialValues?.userId === currentUser.id
+    ? currentUser
+    : availableUsers.find((user: User) => user.id === initialValues?.userId) || currentUser;
+
   const [selectedDate, setSelectedDate] = useState(initialDateObj);
-  const [selectedTimeRange, setSelectedTimeRange] = useState<{start: string | null, end: string | null}>({ 
-    start: initialValues?.start ? formatTime(new Date(initialValues.start)) : isRoom ? null : '09:00', 
-    end: initialValues?.end ? formatTime(new Date(initialValues.end)) : isRoom ? null : '18:00' 
+  const [selectedTimeRange, setSelectedTimeRange] = useState<{start: string | null, end: string | null}>({
+    start: initialValues?.start ? formatTime(new Date(initialValues.start)) : isRoom ? null : '09:00',
+    end: initialValues?.end ? formatTime(new Date(initialValues.end)) : isRoom ? null : '18:00'
   });
   const [deskEndDate, setDeskEndDate] = useState(initialDateObj);
-  
   const [purpose, setPurpose] = useState(initialValues?.purpose || '');
   const [participants, setParticipants] = useState(initialValues?.participants || resource.capacity || 1);
+  const [meetingType, setMeetingType] = useState<MeetingType | ''>(initialValues?.extras?.meetingType || '');
+  const [confidentialityChoice, setConfidentialityChoice] = useState<ConfidentialityChoice | ''>(initialValues?.extras?.confidentialityChoice || '');
+  const [serviceRequirements, setServiceRequirements] = useState<BookingServiceRequirement[]>(initialServices.filter(item => !['TEA', 'VIDEO'].includes(item.type)));
+  const [teaRequirement, setTeaRequirement] = useState<BookingServiceRequirement>(initialServices.find(item => item.type === 'TEA') || { type: 'TEA' });
+  const [videoRequirement, setVideoRequirement] = useState<BookingServiceRequirement>(initialServices.find(item => item.type === 'VIDEO') || { type: 'VIDEO' });
+  const [exclusiveRequestReason, setExclusiveRequestReason] = useState(initialValues?.extras?.exclusiveRequestReason || '');
+  const [auditoriumSetup, setAuditoriumSetup] = useState<AuditoriumSetup>(initialValues?.extras?.auditoriumSetup || { seatingLayout: 'THEATER', stageRequired: false, rehearsalMinutes: 0, notes: '' });
   const [formError, setFormError] = useState<string | null>(null);
-
-  // New state variables for additional requirements
+  const [submitting, setSubmitting] = useState(false);
   const [hasLeader, setHasLeader] = useState(initialValues?.extras?.hasLeader || false);
   const [leaderDetails, setLeaderDetails] = useState(initialValues?.extras?.leaderDetails || '');
-  const [isVideoConference, setIsVideoConference] = useState(initialValues?.extras?.isVideoConference || false);
+  const [isVideoConference, setIsVideoConference] = useState(initialValues?.extras?.isVideoConference || initialServices.some(item => item.type === 'VIDEO'));
   const [requiredFeatures, setRequiredFeatures] = useState<RoomFeature[]>(initialValues?.extras?.requiredFeatures || initialValues?.requiredFeatures || []);
-  const [needsTeaService, setNeedsTeaService] = useState(initialValues?.extras?.needsTeaService || false);
+  const [needsTeaService, setNeedsTeaService] = useState(initialValues?.extras?.needsTeaService || initialServices.some(item => item.type === 'TEA'));
   const [attendeeIds, setAttendeeIds] = useState<string[]>(initialValues?.extras?.attendeeIds || []);
   const [repeatFrequency, setRepeatFrequency] = useState<'NONE' | 'DAILY' | 'WEEKLY' | 'BIWEEKLY'>(initialValues?.recurrence?.frequency || 'NONE');
   const [repeatCount, setRepeatCount] = useState(initialValues?.recurrence?.count || 4);
-  const [longTermEndDate, setLongTermEndDate] = useState(() => initialValues?.seriesEndDate ? new Date(`${initialValues.seriesEndDate}T12:00:00`) : getLongTermMaxEndDate(initialDateObj));
+  const [longTermEndDate, setLongTermEndDate] = useState(() => initialValues?.seriesEndDate ? new Date(`${initialValues.seriesEndDate}T12:00:00`) : getLongTermMaxEndDate(initialDateObj, ruleSettings.longTermMaxCalendarMonths));
   const isRenewal = !!initialValues?.renewalOfSeriesId;
-  const longTermMaxEndDate = getLongTermMaxEndDate(selectedDate);
+  const longTermMaxEndDate = getLongTermMaxEndDate(selectedDate, ruleSettings.longTermMaxCalendarMonths);
   const longTermDays = getDailyOccurrenceCount(selectedDate, longTermEndDate);
+  const showFormError = (message: string, fieldId?: string) => {
+    setFormError(message);
+    requestAnimationFrame(() => (fieldId ? document.getElementById(fieldId) : errorRef.current)?.focus());
+  };
+  useEffect(() => {
+    if (!externalError) return;
+    const fields: Record<string, string> = {
+      MEETING_TYPE_REQUIRED: 'booking-meeting-type',
+      CONFIDENTIALITY_CHOICE_REQUIRED: 'booking-confidentiality',
+      CONFIDENTIALITY_TYPE_MISMATCH: 'booking-confidentiality',
+      RESOURCE_OUTSIDE_OPEN_HOURS: 'booking-start-time',
+      BOOKING_START_IN_PAST: 'booking-start-time',
+      EXCLUSIVE_REQUEST_REASON_REQUIRED: 'booking-exclusive-reason',
+      AUDITORIUM_SETUP_REQUIRED: 'booking-auditorium-layout',
+      SERVICE_DETAILS_REQUIRED: 'booking-service-OTHER'
+    };
+    showFormError(externalError.message, fields[externalError.code]);
+  }, [externalError]);
 
   const initialDateKey = formatDate(initialDateObj);
   const dateOptions = useMemo(() => {
@@ -1387,21 +1749,23 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   }, [initialDateKey]);
 
   const timeSlots = useMemo(() => {
+    const toMinutes = (value: string) => value.split(':').map(Number).reduce((hours, minutes) => hours * 60 + minutes);
+    const startMinutes = toMinutes(resource.openStart || '08:00');
+    const endMinutes = toMinutes(resource.openEnd || '20:00');
     const slots = [];
-    for(let h=8; h<20; h++) {
-        slots.push(`${String(h).padStart(2,'0')}:00`);
-        slots.push(`${String(h).padStart(2,'0')}:30`);
+    for (let minutes = startMinutes; minutes <= endMinutes; minutes += 30) {
+      slots.push(`${pad2(Math.floor(minutes / 60))}:${pad2(minutes % 60)}`);
     }
-    slots.push('20:00'); // 仅作为结束时间
     return slots;
-  }, []);
+  }, [resource.openStart, resource.openEnd]);
+  const finalTimeSlot = timeSlots[timeSlots.length - 1];
 
   const isSlotBooked = (time: string) => {
     const slotStart = new Date(`${formatDate(selectedDate)}T${time}`);
     const slotEnd = new Date(slotStart.getTime() + 30 * 60000);
     
     return bookings.some((b: any) => {
-        if (b.resourceId !== resource.id || !isActiveBooking(b)) return false;
+        if (b.id === initialValues?.id || b.resourceId !== resource.id || !isActiveBooking(b)) return false;
         const bStart = new Date(b.startTime);
         const bEnd = new Date(b.endTime);
         return (slotStart < bEnd && slotEnd > bStart);
@@ -1440,7 +1804,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
 
   const handleTimeClick = (time: string) => {
     if (isSlotBooked(time) || isSlotPast(time)) return;
-    if (time === '20:00' && (!selectedTimeRange.start || selectedTimeRange.end)) return;
+    if (time === finalTimeSlot && (!selectedTimeRange.start || selectedTimeRange.end)) return;
     setFormError(null);
     
     const { start, end } = selectedTimeRange;
@@ -1478,75 +1842,157 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
     }
   };
 
-  const handleSubmit = () => {
-    setFormError(null);
+  const selectedRange = useMemo(() => {
+    if (isRoom && (!selectedTimeRange.start || !selectedTimeRange.end)) return null;
+    const startTime = isRoom ? `${formatDate(selectedDate)}T${selectedTimeRange.start}:00` : `${formatDate(selectedDate)}T09:00:00`;
+    const endTime = isRoom ? `${formatDate(selectedDate)}T${selectedTimeRange.end}:00` : `${formatDate(deskEndDate)}T18:00:00`;
+    return new Date(endTime) > new Date(startTime) ? { startTime, endTime } : null;
+  }, [isRoom, selectedDate, deskEndDate, selectedTimeRange.start, selectedTimeRange.end]);
+  const quotaSegments = selectedRange ? splitBookingByNaturalDay(new Date(selectedRange.startTime).toISOString(), new Date(selectedRange.endTime).toISOString()) : [];
+  const attendeeWarnings = useMemo(() => {
+    if (!selectedRange || !attendeeIds.length) return [];
+    const candidate = { ...selectedRange, resourceId: resource.id, attendeeIds } as Booking;
+    const overlaps = findAttendeeOverlaps(bookings, candidate, initialValues?.id);
+    return [...new Set(attendeeIds.filter(id => overlaps.some(booking => booking.userId === id || booking.attendeeIds?.includes(id) || booking.overlapParticipantIds?.includes(id)))
+      .map(id => availableUsers.find((user: User) => user.id === id)?.name || '参会人')
+      .map(name => `${name}在该时段已有其他预约`))];
+  }, [selectedRange, attendeeIds, bookings, availableUsers, initialValues?.id, resource.id]);
+  const applicableServiceCatalog = (serviceCatalog as ServiceCatalogItem[]).filter(item => item.resourceTypes.includes(resource.type)
+    && (!item.roomCategories?.length || (resource.roomCategory && item.roomCategories.includes(resource.roomCategory))));
+  const catalogFor = (type: BookingServiceRequirement['type']) => applicableServiceCatalog.find(item => item.type === type);
+  const toggleService = (type: BookingServiceRequirement['type']) => setServiceRequirements(prev => prev.some(item => item.type === type) ? prev.filter(item => item.type !== type) : [...prev, { type }]);
+  const updateServiceField = (type: BookingServiceRequirement['type'], key: string, value: string) => {
+    const update = (item: BookingServiceRequirement) => ({
+      ...item,
+      fieldValues: { ...(item.fieldValues || {}), [key]: value },
+      ...(key === 'notes' ? { details: value } : {})
+    });
+    if (type === 'TEA') setTeaRequirement(update);
+    else if (type === 'VIDEO') setVideoRequirement(update);
+    else setServiceRequirements(prev => prev.map(item => item.type === type ? update(item) : item));
+  };
+  const renderServiceFields = (requirement: BookingServiceRequirement) => {
+    const catalog = catalogFor(requirement.type);
+    if (!catalog?.fields.length) return null;
+    return <div className="space-y-3 rounded-2xl border border-gray-100 bg-gray-50 p-3" aria-label={`${catalog.name}字段`}>
+      <p className="text-[10px] font-black text-gray-500">{catalog.name} · 当前目录 v{catalog.version} · 提交时冻结快照</p>
+      {catalog.fields.map(field => {
+        const id = `booking-service-${requirement.type}-${field.key}`;
+        const value = requirement.fieldValues?.[field.key] ?? (field.key === 'notes' ? requirement.details || '' : '');
+        return <label key={field.key} htmlFor={id} className="block text-[11px] font-bold text-gray-600">{field.label}{field.required ? '（必填）' : ''}
+          {field.type === 'TEXTAREA' ? <textarea id={id} aria-required={field.required} rows={2} maxLength={500} value={value} onChange={event => updateServiceField(requirement.type, field.key, event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white p-3 text-xs outline-none"/> : field.type === 'SELECT' ? <select id={id} aria-required={field.required} value={value} onChange={event => updateServiceField(requirement.type, field.key, event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white p-3 text-xs outline-none"><option value="">请选择</option>{field.options?.map(option => <option key={option} value={option}>{option}</option>)}</select> : <input id={id} aria-required={field.required} type={field.type === 'NUMBER' ? 'number' : 'text'} min={field.type === 'NUMBER' ? '0' : undefined} maxLength={field.type === 'NUMBER' ? undefined : 500} value={value} onChange={event => updateServiceField(requirement.type, field.key, event.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 bg-white p-3 text-xs outline-none"/>}
+        </label>;
+      })}
+    </div>;
+  };
 
-    if (!purpose.trim()) {
-        setFormError('请填写会议主题或申请用途');
-        return;
+  const handleSubmit = async () => {
+    setFormError(null);
+    if (!purpose.trim()) return showFormError('请填写会议主题或申请用途', 'booking-purpose');
+    if (!meetingType) return showFormError(BOOKING_ERROR_MESSAGES.MEETING_TYPE_REQUIRED, 'booking-meeting-type');
+    if (!confidentialityChoice) return showFormError(BOOKING_ERROR_MESSAGES.CONFIDENTIALITY_CHOICE_REQUIRED, 'booking-confidentiality');
+    if ((meetingType === 'CONFIDENTIAL') !== (confidentialityChoice === 'CONFIDENTIAL')) {
+      return showFormError(BOOKING_ERROR_MESSAGES.CONFIDENTIALITY_TYPE_MISMATCH, 'booking-confidentiality');
     }
-    if (!Number.isFinite(participants) || participants < 1) {
-        setFormError('请填写有效的参与人数');
-        return;
+    if (!contactUser?.name || !contactUser.landline?.trim() || !contactUser.mobile?.trim()) {
+      return showFormError(BOOKING_ERROR_MESSAGES.CONTACT_SNAPSHOT_INCOMPLETE);
     }
+    if (!Number.isInteger(participants) || participants < 1) return showFormError('请填写有效的参与人数', 'booking-participants');
     if (isRoom && resource.capacity && participants > resource.capacity) {
-        setFormError(`「${resource.name}」最多容纳 ${resource.capacity} 人，请减少人数或更换更大的会议室`);
-        return;
+      return showFormError(`「${resource.name}」最多容纳 ${resource.capacity} 人，请减少人数或更换更大的会议室`, 'booking-participants');
+    }
+    if (resource.isExclusive && exclusiveRequestReason.trim().length < 2) {
+      return showFormError(BOOKING_ERROR_MESSAGES.EXCLUSIVE_REQUEST_REASON_REQUIRED, 'booking-exclusive-reason');
+    }
+    const selectedServices = [...serviceRequirements,
+      ...(needsTeaService ? [teaRequirement] : []),
+      ...(isVideoConference ? [videoRequirement] : [])];
+    for (const requirement of selectedServices) {
+      const catalog = catalogFor(requirement.type);
+      if (!catalog) return showFormError('所选服务不适用于当前资源，请取消该服务或更换资源。', `booking-service-${requirement.type}`);
+      for (const field of catalog.fields) {
+        const value = String(requirement.fieldValues?.[field.key] ?? (field.key === 'notes' ? requirement.details || '' : '')).trim();
+        if (field.required && !value) return showFormError(`请填写${catalog.name}的“${field.label}”。`, `booking-service-${requirement.type}-${field.key}`);
+        if (value && field.type === 'NUMBER' && (!Number.isFinite(Number(value)) || Number(value) < 0)) return showFormError(`“${field.label}”必须是非负数字。`, `booking-service-${requirement.type}-${field.key}`);
+      }
     }
 
     let finalStart, finalEnd;
-
     if (isRoom) {
-        if (!selectedTimeRange.start || !selectedTimeRange.end) {
-            setFormError("请选择开始和结束时间");
-            return;
-        }
-        finalStart = `${formatDate(selectedDate)}T${selectedTimeRange.start}:00`;
-        finalEnd = `${formatDate(selectedDate)}T${selectedTimeRange.end}:00`;
+      if (!selectedTimeRange.start || !selectedTimeRange.end) return showFormError('请选择开始和结束时间', 'booking-start-time');
+      finalStart = `${formatDate(selectedDate)}T${selectedTimeRange.start}:00`;
+      finalEnd = `${formatDate(selectedDate)}T${selectedTimeRange.end}:00`;
     } else {
-        finalStart = `${formatDate(selectedDate)}T09:00:00`;
-        finalEnd = `${formatDate(deskEndDate)}T18:00:00`;
-        if (new Date(deskEndDate) < new Date(selectedDate)) {
-             setFormError("结束日期不能早于开始日期");
-             return;
-        }
+      finalStart = `${formatDate(selectedDate)}T09:00:00`;
+      finalEnd = `${formatDate(deskEndDate)}T18:00:00`;
+      if (new Date(deskEndDate) < new Date(selectedDate)) return showFormError('结束日期不能早于开始日期');
     }
 
     const requestedFeatures = [...new Set<RoomFeature>([...requiredFeatures, ...(isVideoConference ? ['VIDEO' as const] : [])])];
     const resourceError = validateBookingResource(resource, { startTime: finalStart, endTime: finalEnd, participants, requiredFeatures: requestedFeatures, isVideoConference });
-    if (resourceError) {
-      setFormError(BOOKING_ERROR_MESSAGES[resourceError]);
-      return;
-    }
+    if (resourceError) return showFormError(BOOKING_ERROR_MESSAGES[resourceError], 'booking-start-time');
 
     let recurrence;
     if (repeatFrequency === 'DAILY') {
-        if (longTermDays < 1) {
-            setFormError('长期预订截止日期不能早于开始日期');
-            return;
-        }
-        if (longTermEndDate > longTermMaxEndDate) {
-            setFormError(`单期长期预订最长一个月，请选择 ${formatDate(longTermMaxEndDate)} 或更早的截止日期`);
-            return;
-        }
-        recurrence = { frequency: 'DAILY', count: longTermDays };
+      if (longTermDays < 1) return showFormError('长期预订截止日期不能早于开始日期');
+      if (longTermEndDate > longTermMaxEndDate) {
+        return showFormError(`单期长期预订最长 ${ruleSettings.longTermMaxCalendarMonths} 个日历月，请选择 ${formatDate(longTermMaxEndDate)} 或更早的截止日期`);
+      }
+      recurrence = { frequency: 'DAILY', count: longTermDays };
     } else if (repeatFrequency !== 'NONE') {
-        recurrence = { frequency: repeatFrequency, count: repeatCount };
+      recurrence = { frequency: repeatFrequency, count: repeatCount };
     }
 
-    onConfirm(resource.id, purpose, finalStart, finalEnd, participants, {
+    const services = selectedServices.map(item => ({
+      ...item,
+      details: item.details?.trim() || undefined,
+      fieldValues: Object.fromEntries(Object.entries(item.fieldValues || {}).map(([key, value]) => [key, String(value).trim()]).filter(([, value]) => value))
+    }));
+    const wasConfidential = initialValues?.extras?.meetingType === 'CONFIDENTIAL' || initialValues?.extras?.confidentialityChoice === 'CONFIDENTIAL';
+    const declassify = Boolean(initialValues?.id && wasConfidential && meetingType !== 'CONFIDENTIAL' && confidentialityChoice !== 'CONFIDENTIAL');
+    const attendeeChange = Boolean(initialValues?.id && wasConfidential
+      && JSON.stringify([...(initialValues?.extras?.attendeeIds || [])].sort()) !== JSON.stringify([...attendeeIds].sort()));
+    const usableAuthorizations = confidentialityAuthorizations.filter((item: ConfidentialityAuthorization) => item.bookingId === initialValues?.id && !item.usedAt);
+    const securityAuthorizationIds: string[] = [];
+    if (declassify) {
+      const authorizers = new Set<string>();
+      for (const item of usableAuthorizations.filter((authorization: ConfidentialityAuthorization) => authorization.action === 'DECLASSIFY')) {
+        if (authorizers.has(item.authorizedBy)) continue;
+        authorizers.add(item.authorizedBy);
+        securityAuthorizationIds.push(item.id);
+        if (authorizers.size === 2) break;
+      }
+      if (authorizers.size !== 2) return showFormError(BOOKING_ERROR_MESSAGES.CONFIDENTIAL_DECLASSIFY_DUAL_AUTHORIZATION_REQUIRED, 'booking-confidentiality');
+    }
+    if (attendeeChange) {
+      const authorization = usableAuthorizations.find((item: ConfidentialityAuthorization) => item.action === 'ATTENDEE_CHANGE');
+      if (!authorization) return showFormError(BOOKING_ERROR_MESSAGES.CONFIDENTIAL_ATTENDEE_AUTHORIZATION_REQUIRED, 'booking-attendees');
+      securityAuthorizationIds.push(authorization.id);
+    }
+    setSubmitting(true);
+    try {
+      await onConfirm(resource.id, purpose.trim(), finalStart, finalEnd, participants, {
+        meetingType,
+        confidentialityChoice,
+        serviceRequirements: services,
+        exclusiveRequestReason: resource.isExclusive ? exclusiveRequestReason.trim() : undefined,
+        auditoriumSetup: isAuditorium ? { ...auditoriumSetup, notes: auditoriumSetup.notes?.trim() || undefined } : undefined,
         hasLeader,
         leaderDetails: hasLeader ? leaderDetails : undefined,
         isVideoConference,
         needsTeaService,
         requiredFeatures: requestedFeatures,
         attendeeIds,
+        securityAuthorizationIds,
         recurrence,
         seriesKind: repeatFrequency === 'DAILY' ? 'LONG_TERM' : undefined,
         seriesEndDate: repeatFrequency === 'DAILY' ? formatDate(longTermEndDate) : undefined,
         renewalOfSeriesId: initialValues?.renewalOfSeriesId,
         rootSeriesId: initialValues?.rootSeriesId
-    });
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   const isSlotSelected = (time: string) => {
@@ -1584,7 +2030,9 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">申请用途</label>
             <input
+              id="booking-purpose"
               aria-label="申请用途"
+              aria-required="true"
               value={purpose}
               onChange={e => setPurpose(e.target.value)}
               placeholder="会议主题或办公内容..."
@@ -1592,11 +2040,33 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
             />
           </div>
 
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">会议类型
+              <select id="booking-meeting-type" aria-label="会议类型" aria-required="true" value={meetingType} onChange={e => setMeetingType(e.target.value as MeetingType | '')} className="mt-2 w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none normal-case tracking-normal">
+                <option value="">请选择会议类型</option><option value="NORMAL">普通会议</option><option value="IMPORTANT">重要会议</option><option value="CONFIDENTIAL">涉密会议</option>
+              </select>
+            </label>
+            <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">涉密确认
+              <select id="booking-confidentiality" aria-label="涉密确认" aria-required="true" value={confidentialityChoice} onChange={e => setConfidentialityChoice(e.target.value as ConfidentialityChoice | '')} className="mt-2 w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none normal-case tracking-normal">
+                <option value="">请明确选择</option><option value="NON_CONFIDENTIAL">非涉密</option><option value="CONFIDENTIAL">涉密</option>
+              </select>
+            </label>
+          </div>
+          <div className="p-3 rounded-2xl bg-gray-50 border border-gray-100 text-[11px] text-gray-600 space-y-1" aria-label="联系人快照说明">
+            <p className="font-black text-gray-700">联系人快照 · {contactUser?.name || '当前用户'}</p>
+            <p>座机：{contactUser?.landline || '未维护'} · 手机：{contactUser?.mobile || '未维护'}</p>
+            <p className="text-gray-500">提交时由服务端读取{initialValues?.userId ? '原申请人' : '当前'}档案并冻结快照，不使用草案或表单中伪造的联系方式。</p>
+          </div>
+          {resource.isExclusive && <div className="space-y-2">
+            <label htmlFor="booking-exclusive-reason" className="text-[11px] font-black text-gray-500 uppercase tracking-widest">专属会议室临时申请理由</label>
+            <textarea id="booking-exclusive-reason" aria-required="true" rows={3} maxLength={500} value={exclusiveRequestReason} onChange={e => setExclusiveRequestReason(e.target.value)} placeholder={`该资源默认关闭，仅会前 ${ruleSettings.exclusiveRequestOpenHours} 小时内可申请，请说明临时使用理由`} className="w-full p-3 bg-amber-50 rounded-xl border border-amber-100 text-xs font-bold outline-none" />
+          </div>}
+
           {/* Date Picker - Horizontal Scroll */}
           <div className="space-y-2">
              <div className="flex items-center justify-between">
                <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">{isRenewal ? '续期开始日期（自动衔接）' : '选择日期'}</label>
-               <input aria-label="自定义预约日期" type="date" min={formatDate(new Date())} value={formatDate(selectedDate)} disabled={isRenewal} onChange={e => { if (!e.target.value) return; const nextDate = new Date(`${e.target.value}T12:00`); setSelectedDate(nextDate); setLongTermEndDate(getLongTermMaxEndDate(nextDate)); setSelectedTimeRange({ start: null, end: null }); }} className="text-xs font-bold text-gray-500 bg-gray-50 rounded-lg px-2 py-1 outline-none disabled:opacity-60"/>
+               <input aria-label="自定义预约日期" type="date" min={formatDate(new Date())} value={formatDate(selectedDate)} disabled={isRenewal} onChange={e => { if (!e.target.value) return; const nextDate = new Date(`${e.target.value}T12:00`); setSelectedDate(nextDate); setLongTermEndDate(getLongTermMaxEndDate(nextDate, ruleSettings.longTermMaxCalendarMonths)); setSelectedTimeRange({ start: null, end: null }); }} className="text-xs font-bold text-gray-500 bg-gray-50 rounded-lg px-2 py-1 outline-none disabled:opacity-60"/>
              </div>
              <div className="flex space-x-3 overflow-x-auto pb-2 custom-scrollbar">
                 {dateOptions.map((d) => {
@@ -1606,7 +2076,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                     return (
                         <button 
                             key={formatDate(d)}
-                            onClick={() => { if (isRenewal) return; setSelectedDate(d); setLongTermEndDate(getLongTermMaxEndDate(d)); setSelectedTimeRange({start:null,end:null}); }}
+                            onClick={() => { if (isRenewal) return; setSelectedDate(d); setLongTermEndDate(getLongTermMaxEndDate(d, ruleSettings.longTermMaxCalendarMonths)); setSelectedTimeRange({start:null,end:null}); }}
                             aria-pressed={isSelected}
                             disabled={isRenewal}
                             className={`flex flex-col items-center justify-center w-14 h-20 rounded-2xl border-2 transition-all shrink-0 disabled:cursor-default ${isSelected ? `bg-${theme}-600 border-${theme}-600 text-white shadow-lg scale-105` : 'bg-white border-gray-100 text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}
@@ -1623,13 +2093,13 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           {isRoom ? (
             <div className="space-y-2">
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex justify-between">
-                    <span>选择时段 (08:00 - 20:00)</span>
+                    <span>选择时段 ({resource.openStart || '08:00'} - {resource.openEnd || '20:00'})</span>
                     {selectedTimeRange.start && selectedTimeRange.end && <span className={`text-${theme}-600`}>{selectedTimeRange.start} - {selectedTimeRange.end}</span>}
                 </label>
                 <div className="grid grid-cols-2 gap-2">
-                  <select aria-label="预约开始时间" value={selectedTimeRange.start || ''} onChange={e => { setFormError(null); setSelectedTimeRange({ start: e.target.value, end: null }); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none">
+                  <select id="booking-start-time" aria-label="预约开始时间" value={selectedTimeRange.start || ''} onChange={e => { setFormError(null); setSelectedTimeRange({ start: e.target.value, end: null }); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none">
                     <option value="" disabled>开始时间</option>
-                    {timeSlots.filter(t => t !== '20:00').map(t => <option key={t} value={t} disabled={isSlotBooked(t) || isSlotPast(t)}>{t}{isSlotBooked(t) ? '（已占用）' : ''}</option>)}
+                    {timeSlots.filter(t => t !== finalTimeSlot).map(t => <option key={t} value={t} disabled={isSlotBooked(t) || isSlotPast(t)}>{t}{isSlotBooked(t) ? '（已占用）' : ''}</option>)}
                   </select>
                   <select aria-label="预约结束时间" value={selectedTimeRange.end || ''} disabled={!selectedTimeRange.start} onChange={e => selectRange(selectedTimeRange.start!, e.target.value)} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-50">
                     <option value="" disabled>结束时间</option>
@@ -1638,13 +2108,13 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                 </div>
                 <div className="flex items-center gap-2">
                   <span className="text-[11px] font-bold text-gray-500 shrink-0">快捷时长</span>
-                  {[30, 60, 90, 120].map(minutes => <button key={minutes} disabled={!selectedTimeRange.start || timeToMinutes(selectedTimeRange.start) + minutes > 1200} onClick={() => selectRange(selectedTimeRange.start!, minutesToTime(timeToMinutes(selectedTimeRange.start!) + minutes))} className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-30 ${selectedTimeRange.start && selectedTimeRange.end && timeToMinutes(selectedTimeRange.end) - timeToMinutes(selectedTimeRange.start) === minutes ? `border-${theme}-300 bg-${theme}-50 text-${theme}-600` : 'border-gray-100 text-gray-500 hover:bg-gray-50'}`}>{minutes < 60 ? `${minutes}分钟` : `${minutes / 60}小时`}</button>)}
+                  {[30, 60, 90, 120].map(minutes => <button key={minutes} disabled={!selectedTimeRange.start || timeToMinutes(selectedTimeRange.start) + minutes > timeToMinutes(finalTimeSlot)} onClick={() => selectRange(selectedTimeRange.start!, minutesToTime(timeToMinutes(selectedTimeRange.start!) + minutes))} className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-30 ${selectedTimeRange.start && selectedTimeRange.end && timeToMinutes(selectedTimeRange.end) - timeToMinutes(selectedTimeRange.start) === minutes ? `border-${theme}-300 bg-${theme}-50 text-${theme}-600` : 'border-gray-100 text-gray-500 hover:bg-gray-50'}`}>{minutes < 60 ? `${minutes}分钟` : `${minutes / 60}小时`}</button>)}
                 </div>
                 <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
                     {timeSlots.map(time => {
                         const booked = isSlotBooked(time);
                         const past = isSlotPast(time);
-                        const endOnlyBlocked = time === '20:00' && (!selectedTimeRange.start || !!selectedTimeRange.end);
+                        const endOnlyBlocked = time === finalTimeSlot && (!selectedTimeRange.start || !!selectedTimeRange.end);
                         const disabled = booked || past || endOnlyBlocked;
                         const selected = isSlotSelected(time);
                         const inRange = isSlotInRange(time);
@@ -1653,7 +2123,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                                 key={time}
                                 onClick={() => handleTimeClick(time)}
                                 disabled={disabled}
-                                title={booked ? '该时段已被预订' : past ? '已过时间不可预订' : endOnlyBlocked ? '20:00 仅可作为结束时间' : undefined}
+                                title={booked ? '该时段已被预订' : past ? '已过时间不可预订' : endOnlyBlocked ? `${finalTimeSlot} 仅可作为结束时间` : undefined}
                                 className={`py-2.5 rounded-xl text-xs font-bold transition-all border ${
                                     booked ? 'bg-gray-100 text-gray-500 border-transparent cursor-not-allowed line-through' :
                                     disabled ? 'bg-gray-50 text-gray-500 border-transparent cursor-not-allowed' :
@@ -1681,20 +2151,34 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               <span>人数</span>
               {resource.capacity ? <span className="text-gray-500 normal-case">该空间最多 {resource.capacity} 人</span> : null}
             </label>
-            <input aria-label="参与人数" type="number" min="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
+            <input id="booking-participants" aria-label="参与人数" type="number" min="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
           </div>
+
+          {isAuditorium && <fieldset className="space-y-3 p-4 rounded-2xl bg-gray-50 border border-gray-100">
+            <legend className="px-1 text-[11px] font-black text-gray-500 uppercase tracking-widest">礼堂布置</legend>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-xs font-bold text-gray-600">座位布局
+                <select id="booking-auditorium-layout" value={auditoriumSetup.seatingLayout} onChange={e => setAuditoriumSetup(prev => ({ ...prev, seatingLayout: e.target.value as AuditoriumSetup['seatingLayout'] }))} className="mt-1 w-full p-3 bg-white rounded-xl text-xs font-bold outline-none"><option value="THEATER">剧院式</option><option value="CLASSROOM">课桌式</option><option value="ROUNDTABLE">圆桌式</option></select>
+              </label>
+              <label className="text-xs font-bold text-gray-600">彩排时长（分钟）
+                <input aria-label="彩排时长" type="number" min="0" max="1440" step="30" value={auditoriumSetup.rehearsalMinutes || 0} onChange={e => setAuditoriumSetup(prev => ({ ...prev, rehearsalMinutes: Number(e.target.value) }))} className="mt-1 w-full p-3 bg-white rounded-xl text-xs font-bold outline-none" />
+              </label>
+            </div>
+            <label className="flex items-center gap-2 text-xs font-bold text-gray-600"><input type="checkbox" checked={auditoriumSetup.stageRequired} onChange={e => setAuditoriumSetup(prev => ({ ...prev, stageRequired: e.target.checked }))} className="accent-indigo-600" />需要舞台</label>
+            <textarea aria-label="礼堂布置备注" rows={2} maxLength={500} value={auditoriumSetup.notes || ''} onChange={e => setAuditoriumSetup(prev => ({ ...prev, notes: e.target.value }))} placeholder="礼堂布置补充说明（可选）" className="w-full p-3 bg-white rounded-xl text-xs font-bold outline-none" />
+          </fieldset>}
 
           <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">参会人（可选）</label>
-            <div className="max-h-32 overflow-y-auto grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-2xl">
-              {availableUsers.filter((u: User) => u.id !== currentUserId).map((u: User) => <label key={u.id} className="flex items-center gap-2 text-xs font-bold text-gray-600 cursor-pointer"><input type="checkbox" checked={attendeeIds.includes(u.id)} onChange={() => setAttendeeIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])} className="accent-indigo-600"/><span>{u.name}<small className="block text-gray-500 font-medium">{u.department}</small></span></label>)}
+            <div id="booking-attendees" tabIndex={-1} className="max-h-32 overflow-y-auto grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-2xl outline-none">
+              {availableUsers.filter((u: User) => u.id !== contactUser?.id).map((u: User) => <label key={u.id} className="flex items-center gap-2 text-xs font-bold text-gray-600 cursor-pointer"><input type="checkbox" checked={attendeeIds.includes(u.id)} onChange={() => setAttendeeIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])} className="accent-indigo-600"/><span>{u.name}<small className="block text-gray-500 font-medium">{u.department}</small></span></label>)}
             </div>
           </div>
 
           {isRoom && !initialValues?.id && <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">预订方式</label>
             <div className="grid grid-cols-2 gap-2">
-              <select aria-label="重复频率" value={repeatFrequency} disabled={isRenewal} onChange={e => { const frequency = e.target.value as any; setRepeatFrequency(frequency); setFormError(null); if (frequency === 'DAILY') setLongTermEndDate(getLongTermMaxEndDate(selectedDate)); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-60"><option value="NONE">单次预约</option><option value="DAILY">长期预订 · 每天</option><option value="WEEKLY">每周重复</option><option value="BIWEEKLY">隔周重复</option></select>
+              <select aria-label="重复频率" value={repeatFrequency} disabled={isRenewal} onChange={e => { const frequency = e.target.value as any; setRepeatFrequency(frequency); setFormError(null); if (frequency === 'DAILY') setLongTermEndDate(getLongTermMaxEndDate(selectedDate, ruleSettings.longTermMaxCalendarMonths)); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-60"><option value="NONE">单次预约</option><option value="DAILY">长期预订 · 每天</option><option value="WEEKLY">每周重复</option><option value="BIWEEKLY">隔周重复</option></select>
               {repeatFrequency === 'DAILY' ? (
                 <input aria-label="长期预订截止日期" type="date" min={formatDate(selectedDate)} max={formatDate(longTermMaxEndDate)} value={formatDate(longTermEndDate)} onChange={e => { if (e.target.value) setLongTermEndDate(new Date(`${e.target.value}T12:00:00`)); setFormError(null); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none" />
               ) : (
@@ -1704,7 +2188,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
             {repeatFrequency === 'DAILY' ? (
               <div className={`p-3 rounded-xl bg-${theme}-50 text-[11px] leading-relaxed text-gray-600`}>
                 <p><strong>本期 {longTermDays} 天</strong> · {formatDate(selectedDate)} 至 {formatDate(longTermEndDate)}，每天 {selectedTimeRange.start || '--:--'} - {selectedTimeRange.end || '--:--'}。</p>
-                <p className="mt-1">单期最长一个日历月；到期可续期，审批通过后衔接使用。逐次检测冲突，冲突日期可跳过。</p>
+                <p className="mt-1">单期最长 {ruleSettings.longTermMaxCalendarMonths} 个日历月；到期可续期，审批通过后衔接使用。逐次检测冲突，冲突日期可跳过。</p>
               </div>
             ) : repeatFrequency !== 'NONE' && <p className="text-[11px] text-gray-500">提交后逐次检测冲突，冲突单次可跳过或改期</p>}
           </div>}
@@ -1739,8 +2223,8 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                     type="button"
                     aria-label="视频会议"
                     aria-pressed={isVideoConference}
-                    disabled={!videoSupported && !isVideoConference}
-                    title={!videoSupported ? '当前会议室未配置视频会议设备' : undefined}
+                    disabled={(!videoSupported || !catalogFor('VIDEO')) && !isVideoConference}
+                    title={!videoSupported ? '当前会议室未配置视频会议设备' : !catalogFor('VIDEO') ? '当前资源不在视频会议服务目录适用范围内' : undefined}
                     onClick={() => { const enabled = !isVideoConference; setIsVideoConference(enabled); setRequiredFeatures(prev => enabled ? [...new Set<RoomFeature>([...prev, 'VIDEO'])] : prev.filter(feature => feature !== 'VIDEO')); }}
                     className={`w-10 h-6 rounded-full p-1 transition-all disabled:opacity-40 ${isVideoConference ? `bg-${theme}-600` : 'bg-gray-200'}`}
                 >
@@ -1748,31 +2232,55 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                 </button>
              </div>
              {!videoSupported && <p className="-mt-2 text-[11px] text-gray-500">当前会议室未配置视频会议设备。</p>}
+             {isVideoConference && renderServiceFields(videoRequirement)}
 
              <div className="flex items-center justify-between">
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center space-x-1">
                     <CupSoda size={12}/> <span>茶水服务</span>
                 </label>
-                <button 
-                    onClick={() => setNeedsTeaService(!needsTeaService)} 
+                <button
+                    type="button"
+                    aria-label="茶水服务"
+                    aria-pressed={needsTeaService}
+                    disabled={!catalogFor('TEA') && !needsTeaService}
+                    title={!catalogFor('TEA') ? '当前资源不在茶水服务目录适用范围内' : undefined}
+                    onClick={() => setNeedsTeaService(!needsTeaService)}
                     className={`w-10 h-6 rounded-full p-1 transition-all ${needsTeaService ? `bg-${theme}-600` : 'bg-gray-200'}`}
                 >
                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${needsTeaService ? 'translate-x-4' : 'translate-x-0'}`}></div>
                 </button>
              </div>
+             {needsTeaService && renderServiceFields(teaRequirement)}
+             <div className="flex flex-wrap gap-2" aria-label="其他会务服务">
+               {applicableServiceCatalog.filter(item => !['TEA', 'VIDEO'].includes(item.type)).map(item => {
+                 const selected = serviceRequirements.some(requirement => requirement.type === item.type);
+                 return <button key={item.id} id={`booking-service-${item.type}`} type="button" aria-pressed={selected} onClick={() => toggleService(item.type)} className={`px-3 py-2 rounded-xl text-[11px] font-bold border ${selected ? `bg-${theme}-600 text-white border-${theme}-600` : 'bg-white text-gray-500 border-gray-200'}`}>{item.name}{item.heavyService ? ' · 重服务' : ''}</button>;
+               })}
+             </div>
+             {serviceRequirements.map(item => <React.Fragment key={item.type}>{renderServiceFields(item)}</React.Fragment>)}
           </div>
 
+          {selectedRange && <div className="p-3 rounded-2xl bg-gray-50 border border-gray-100 text-[11px] leading-relaxed text-gray-600" aria-label="部门额度提示">
+            <p className="font-black text-gray-700">部门每日净额度 · 每日 {ruleSettings.departmentDailyNetMinutes} 分钟</p>
+            {quotaSegments.map(segment => <p key={segment.date}>{segment.date}：本次计 {segment.minutes} 分钟{segment.minutes > ruleSettings.departmentDailyNetMinutes ? '，已超过单日上限' : ''}</p>)}
+            <p className="text-gray-500">跨日按中国自然日拆分；系列逐期累计，取消或驳回自动返还。实际剩余额度以服务端提交校验为准。</p>
+          </div>}
+          {attendeeWarnings.length > 0 && <div role="status" className="p-3 rounded-2xl bg-amber-50 border border-amber-100 text-[11px] font-bold text-amber-700 space-y-1">
+            <p>参会人时间重叠提示（不阻断申请）</p>{attendeeWarnings.map(warning => <p key={warning}>{warning}</p>)}
+          </div>}
+
           {formError && (
-            <p role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3">{formError}</p>
+            <p ref={errorRef} tabIndex={-1} role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3 outline-none">{formError}</p>
           )}
 
           <div className="flex space-x-3 mt-6 pt-4 border-t border-gray-100">
             <button onClick={onClose} className="flex-1 py-3 rounded-2xl bg-gray-50 font-bold text-gray-500 hover:bg-gray-100 transition-colors">取消</button>
-            <button 
-              onClick={handleSubmit} 
-              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.02] active:scale-95 transition-all`}
+            <button
+              onClick={() => void handleSubmit()}
+              disabled={submitting}
+              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-60 disabled:scale-100`}
             >
-              {initialValues?.id ? '保存修改' : isRenewal ? '提交续期审批' : '确认预约'}
+              {submitting ? '正在校验并提交…' : initialValues?.id ? '保存修改' : isRenewal ? '提交续期审批' : '确认预约'}
             </button>
           </div>
         </div>
@@ -1917,6 +2425,56 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
   );
 };
 
+const ConfidentialityAdminPanel = ({ users, authorizationTargets, whitelist, authorizations, currentUser, onAddWhitelist, onRemoveWhitelist, onAuthorize }: any) => {
+  const [whitelistUserId, setWhitelistUserId] = useState('');
+  const [whitelistReason, setWhitelistReason] = useState('');
+  const [bookingId, setBookingId] = useState('');
+  const [action, setAction] = useState<'DECLASSIFY' | 'ATTENDEE_CHANGE'>('DECLASSIFY');
+  const [authorizationReason, setAuthorizationReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const userName = (id: string) => users.find((user: User) => user.id === id)?.name || id;
+  const availableUsers = users.filter((user: User) => !whitelist.some((entry: ConfidentialWhitelistEntry) => entry.userId === user.id));
+  const confidentialBookings = authorizationTargets.filter((booking: ConfidentialAuthorizationTarget) => booking.userId !== currentUser.id);
+  const selectedAuthorizations = authorizations.filter((item: ConfidentialityAuthorization) => item.bookingId === bookingId);
+  const run = async (operation: () => Promise<void>) => {
+    setBusy(true);
+    setError('');
+    try { await operation(); }
+    catch (cause: any) { setError(BOOKING_ERROR_MESSAGES[cause?.message] || cause?.message || '操作失败，请刷新后重试。'); }
+    finally { setBusy(false); }
+  };
+  return <div className="space-y-6 animate-in fade-in">
+    <div><h3 className="text-2xl font-black text-gray-800">保密控制</h3><p className="text-sm text-gray-500 mt-1">维护涉密申请白名单，并为待审批申请签发一次性变更授权。</p></div>
+    {error && <p role="alert" className="p-4 rounded-2xl bg-rose-50 border border-rose-100 text-xs font-bold text-rose-700">{error}</p>}
+    <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+      <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="whitelist-title">
+        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 grid place-items-center"><ShieldCheck size={20}/></div><div><h4 id="whitelist-title" className="font-black text-gray-800">涉密白名单</h4><p className="text-xs text-gray-500 mt-1">申请人与全部参会人均须在名单内。</p></div></div>
+        <form className="mt-5 space-y-3" onSubmit={event => { event.preventDefault(); if (!whitelistUserId || !whitelistReason.trim()) return setError('请选择成员并填写白名单设置理由。'); void run(async () => { await onAddWhitelist({ userId: whitelistUserId, reason: whitelistReason.trim() }); setWhitelistUserId(''); setWhitelistReason(''); }); }}>
+          <select aria-label="白名单成员" value={whitelistUserId} onChange={event => setWhitelistUserId(event.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="">选择待加入成员</option>{availableUsers.map((user: User) => <option key={user.id} value={user.id}>{user.name} · {user.department}</option>)}</select>
+          <textarea aria-label="白名单设置理由" rows={2} maxLength={500} value={whitelistReason} onChange={event => setWhitelistReason(event.target.value)} placeholder="设置理由（必填）" className="w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none resize-none"/>
+          <button disabled={busy || !availableUsers.length} className="w-full py-3 rounded-xl bg-indigo-600 text-white text-xs font-black disabled:opacity-40">加入白名单</button>
+        </form>
+        <div className="mt-5 space-y-2 max-h-80 overflow-y-auto">
+          {whitelist.map((entry: ConfidentialWhitelistEntry) => <div key={entry.id} className="p-4 rounded-2xl bg-gray-50 flex items-start justify-between gap-3"><div><p className="text-sm font-black text-gray-800">{userName(entry.userId)}</p><p className="mt-1 text-xs text-gray-500">{entry.reason}</p><p className="mt-1 text-[11px] text-gray-500">设置人：{userName(entry.createdBy)} · {toLocalDateTimeString(entry.createdAt)}</p></div><button disabled={busy} aria-label={`移除${userName(entry.userId)}的白名单资格`} onClick={() => { if (!confirm(`确定移除${userName(entry.userId)}的白名单资格吗？进行中的最终核准也会重新校验。`)) return; void run(() => onRemoveWhitelist(entry.id)); }} className="p-2 text-gray-500 hover:text-rose-600 disabled:opacity-40"><Trash2 size={16}/></button></div>)}
+          {!whitelist.length && <p className="py-8 text-center border border-dashed rounded-2xl text-xs font-bold text-gray-500">暂无白名单成员</p>}
+        </div>
+      </section>
+      <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="authorization-title">
+        <div className="flex items-center gap-3"><div className="w-10 h-10 rounded-2xl bg-amber-50 text-amber-600 grid place-items-center"><Key size={20}/></div><div><h4 id="authorization-title" className="font-black text-gray-800">涉密变更授权</h4><p className="text-xs text-gray-500 mt-1">降级需两名不同授权人；参会范围变化需一人。</p></div></div>
+        <form className="mt-5 space-y-3" onSubmit={event => { event.preventDefault(); if (!bookingId || !authorizationReason.trim()) return setError('请选择待审批申请并填写授权理由。'); void run(async () => { await onAuthorize(bookingId, { action, reason: authorizationReason.trim() }); setAuthorizationReason(''); }); }}>
+          <select aria-label="涉密变更申请" value={bookingId} onChange={event => setBookingId(event.target.value)} className="w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="">选择待审批涉密申请</option>{confidentialBookings.map((booking: ConfidentialAuthorizationTarget) => <option key={booking.id} value={booking.id}>{userName(booking.userId)} · {toLocalDateTimeString(booking.startTime)} · {booking.id}</option>)}</select>
+          <select aria-label="涉密变更类型" value={action} onChange={event => setAction(event.target.value as 'DECLASSIFY' | 'ATTENDEE_CHANGE')} className="w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="DECLASSIFY">涉密降级授权</option><option value="ATTENDEE_CHANGE">参会范围变化授权</option></select>
+          <textarea aria-label="涉密变更授权理由" rows={2} maxLength={500} value={authorizationReason} onChange={event => setAuthorizationReason(event.target.value)} placeholder="授权理由（必填）" className="w-full p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none resize-none"/>
+          <button disabled={busy || !confidentialBookings.length} className="w-full py-3 rounded-xl bg-amber-600 text-white text-xs font-black disabled:opacity-40">签发一次性授权</button>
+        </form>
+        {bookingId && <div className="mt-5 space-y-2"><p className="text-[11px] font-black text-gray-500">当前申请授权记录</p>{selectedAuthorizations.map((item: ConfidentialityAuthorization) => <div key={item.id} className="p-3 rounded-xl bg-gray-50 text-xs"><div className="flex justify-between gap-3"><span className="font-black text-gray-700">{item.action === 'DECLASSIFY' ? '降级' : '参会变化'} · {userName(item.authorizedBy)}</span><span className={item.usedAt ? 'text-gray-500' : 'text-emerald-600'}>{item.usedAt ? '已使用' : '未使用'}</span></div><p className="mt-1 text-gray-500">{item.reason}</p></div>)}{!selectedAuthorizations.length && <p className="text-xs text-gray-500">尚未签发授权</p>}</div>}
+        {!confidentialBookings.length && <p className="mt-5 py-8 text-center border border-dashed rounded-2xl text-xs font-bold text-gray-500">暂无可授权的他人待审批涉密申请</p>}
+      </section>
+    </div>
+  </div>;
+};
+
 // --- Main App ---
 
 const App: React.FC = () => {
@@ -1938,7 +2496,27 @@ const App: React.FC = () => {
   const [departments, setDepartments] = useState<Department[]>([]);
   const [workflow, setWorkflow] = useState<ApprovalNode[]>([]);
   const [approvalDelegates, setApprovalDelegates] = useState<ApprovalDelegate[]>([]);
+  const [approvalRuleSetVersions, setApprovalRuleSetVersions] = useState<ApprovalRuleSetVersion[]>([]);
+  const [confidentialWhitelist, setConfidentialWhitelist] = useState<ConfidentialWhitelistEntry[]>([]);
+  const [confidentialAuthorizationTargets, setConfidentialAuthorizationTargets] = useState<ConfidentialAuthorizationTarget[]>([]);
+  const [confidentialityAuthorizations, setConfidentialityAuthorizations] = useState<ConfidentialityAuthorization[]>([]);
   const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const [serviceCatalog, setServiceCatalog] = useState<ServiceCatalogItem[]>([]);
+  const [serviceAreas, setServiceAreas] = useState<ServiceArea[]>([]);
+  const [serviceShifts, setServiceShifts] = useState<ServiceShift[]>([]);
+  const [serviceInspections, setServiceInspections] = useState<ServiceInspection[]>([]);
+  const [checkInEvents, setCheckInEvents] = useState<CheckInEvent[]>([]);
+  const [usageFacts, setUsageFacts] = useState<BookingUsageFact[]>([]);
+  const [usageAppeals, setUsageAppeals] = useState<UsageAppeal[]>([]);
+  const [dashboard, setDashboard] = useState<DashboardSnapshot | null>(null);
+  const [exceptions, setExceptions] = useState<OperationalException[]>([]);
+  const [devices, setDevices] = useState<Array<Omit<DoorDevice, 'tokenHash'>>>([]);
+  const operationRequestRef = useRef<{ id: number; owner: string } | null>(null);
+  const operationSequenceRef = useRef(0);
+  const operationOwnerRef = useRef<string | null>(null);
+  operationOwnerRef.current = currentUser?.id || null;
+  const [ruleSettings, setRuleSettings] = useState<BookingRuleSettings>(DEFAULT_RULE_SETTINGS);
+  const [bookingFormError, setBookingFormError] = useState<{ code?: string; message: string } | null>(null);
   const preferencesSnapshotRef = useRef('');
   const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
@@ -1955,7 +2533,7 @@ const App: React.FC = () => {
       .finally(() => setAuthLoading(false));
   }, []);
 
-  const applyWorkspace = (data: any) => {
+  const applyWorkspace = useCallback((data: any) => {
     if (!data) return;
     setRoles(data.roles || []);
     setUsers(data.users || []);
@@ -1964,8 +2542,21 @@ const App: React.FC = () => {
     setDepartments(data.departments || []);
     setWorkflow(data.workflow || []);
     setApprovalDelegates(data.approvalDelegates || []);
+    setApprovalRuleSetVersions(data.approvalRuleSetVersions || []);
+    setConfidentialWhitelist(data.confidentialWhitelist || []);
+    setConfidentialAuthorizationTargets(data.confidentialAuthorizationTargets || []);
+    setConfidentialityAuthorizations(data.confidentialityAuthorizations || []);
     setWorkOrders(data.workOrders || []);
-  };
+    setServiceCatalog(data.serviceCatalog || []);
+    setServiceAreas(data.serviceAreas || []);
+    setServiceShifts(data.serviceShifts || []);
+    setServiceInspections(data.serviceInspections || []);
+    setCheckInEvents(data.checkInEvents || []);
+    setUsageFacts(data.usageFacts || []);
+    setUsageAppeals(data.usageAppeals || []);
+    setDevices(data.devices || []);
+    setRuleSettings(data.ruleSettings || DEFAULT_RULE_SETTINGS);
+  }, []);
 
   const loadWorkspace = async () => {
     try {
@@ -1987,14 +2578,37 @@ const App: React.FC = () => {
     }
   };
 
-  const apiRequest = async (path: string, method: string, body: any = {}) => {
+  const refreshOperations = async () => {
+    const owner = currentUser?.id;
+    if (!owner || operationRequestRef.current?.owner === owner) return;
+    const requestId = ++operationSequenceRef.current;
+    operationRequestRef.current = { id: requestId, owner };
+    try {
+      const [dashboardResponse, exceptionResponse] = await Promise.all([fetch('/api/dashboard'), fetch('/api/exceptions')]);
+      const dashboardData = await dashboardResponse.json();
+      const exceptionData = await exceptionResponse.json();
+      if (!dashboardResponse.ok || !exceptionResponse.ok) throw new Error('OPERATIONS_REFRESH_FAILED');
+      if (operationOwnerRef.current !== owner) return;
+      setDashboard(dashboardData);
+      setExceptions(exceptionData.exceptions || []);
+      setIsOnline(true);
+    } catch {
+      if (operationOwnerRef.current === owner) setIsOnline(false);
+    } finally {
+      if (operationRequestRef.current?.id === requestId) operationRequestRef.current = null;
+    }
+  };
+
+  const apiRequest = useCallback(async (path: string, method: string, body: any = {}) => {
     setSaveStatus('saving');
     try {
       const res = await fetch(path, {
-        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: ['GET', 'HEAD'].includes(method.toUpperCase()) ? undefined : JSON.stringify(body)
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(result.detail || result.error || '操作失败，请刷新后重试。');
+      if (!res.ok) throw new Error(BOOKING_ERROR_MESSAGES[result.error] || result.detail || result.error || '操作失败，请刷新后重试。');
       if (result.workspace) applyWorkspace(result.workspace);
       setSaveStatus('saved');
       setIsOnline(true);
@@ -2003,12 +2617,36 @@ const App: React.FC = () => {
       setSaveStatus('error');
       throw error;
     }
-  };
+  }, [applyWorkspace]);
 
   useEffect(() => {
     setWorkspaceLoaded(false);
     setPreferencesLoaded(false);
     if (currentUser) void loadWorkspace();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    setDashboard(null);
+    setExceptions([]);
+    setDevices([]);
+    if (!currentUser) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const poll = async () => {
+      if (!active) return;
+      if (!document.hidden && navigator.onLine) await refreshOperations();
+      if (active) timer = setTimeout(() => void poll(), 10000);
+    };
+    const resume = () => { if (!document.hidden && navigator.onLine) void refreshOperations(); };
+    void poll();
+    window.addEventListener('online', resume);
+    document.addEventListener('visibilitychange', resume);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+      window.removeEventListener('online', resume);
+      document.removeEventListener('visibilitychange', resume);
+    };
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -2056,13 +2694,12 @@ const App: React.FC = () => {
   const [resourceStatusFilter, setResourceStatusFilter] = useState<'ALL' | ResourceStatus>('ALL');
   const [resourceBuildingFilter, setResourceBuildingFilter] = useState<'ALL' | BuildingId>('ALL');
   const [resourceMinCapacity, setResourceMinCapacity] = useState(0);
-  const [reportRange, setReportRange] = useState<'7' | '30' | '90' | 'ALL'>('30');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showResourceModal, setShowResourceModal] = useState(false);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
-  const [spatialFocus, setSpatialFocus] = useState<{ location: string; token: number | string } | null>(null);
+  const [spatialFocus, setSpatialFocus] = useState<{ location: string; building?: BuildingId; floor?: number; token: number | string } | null>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
@@ -2173,25 +2810,32 @@ const App: React.FC = () => {
     || workflow.some(node => currentUser.role.includes(node.approverRole))
     || approvalDelegates.some(item => item.delegateId === currentUser.id && Date.parse(item.startsAt) <= Date.now() && Date.now() < Date.parse(item.endsAt))
   );
-  const canAccessWorkOrders = !!currentUser && currentUser.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'].includes(role));
-  const visibleWorkOrders = workOrders.filter(order => currentUser?.role.includes('SYSTEM_ADMIN') || currentUser?.role.includes(order.assigneeRole)).sort((a, b) => a.status === b.status ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() : a.status === 'TODO' ? -1 : 1);
-  const openWorkOrderCount = visibleWorkOrders.filter(order => order.status === 'TODO').length;
+  const ownsWorkOrder = !!currentUser && workOrders.some(order => bookings.some(booking => booking.id === order.bookingId && booking.userId === currentUser.id));
+  const canAccessWorkOrders = !!currentUser && (ownsWorkOrder || currentUser.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'].includes(role)));
+  const workOrderRank = (status: WorkOrder['status']) => ['DONE', 'CANCELLED'].includes(status) ? 1 : 0;
+  const visibleWorkOrders = workOrders.filter(order => currentUser?.role.includes('SYSTEM_ADMIN') || currentUser?.role.includes(order.assigneeRole) || bookings.some(booking => booking.id === order.bookingId && booking.userId === currentUser?.id)).sort((a, b) => workOrderRank(a.status) - workOrderRank(b.status) || new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  const openWorkOrderCount = visibleWorkOrders.filter(order => !['DONE', 'CANCELLED'].includes(order.status)).length;
+  const canAccessExceptions = canAccessApproval
+    || !!currentUser?.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'].includes(role))
+    || workOrders.some(order => currentUser?.role.includes(order.assigneeRole));
 
-  const stats = useMemo(() => {
+  const fallbackStats = useMemo(() => {
     const totalResources = resources.length;
     const availableRooms = resources.filter(r => r.type === 'ROOM' && r.status === 'AVAILABLE').length;
     const availableDesks = resources.filter(r => r.type === 'DESK' && r.status === 'AVAILABLE').length;
     const activeBookings = bookings.filter(b => b.status === 'APPROVED').length;
     return { totalResources, availableRooms, availableDesks, activeBookings };
   }, [resources, bookings]);
+  const stats = dashboard?.stats || fallbackStats;
 
-  const nextBooking = useMemo(() => {
+  const localNextBooking = useMemo(() => {
     if (!currentUser) return null;
     const now = Date.now();
     return bookings
       .filter(b => b.status === 'APPROVED' && new Date(b.endTime).getTime() >= now && (b.userId === currentUser.id || (b.attendeeIds || []).includes(currentUser.id)))
       .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0] || null;
   }, [bookings, currentUser]);
+  const nextBooking = dashboard ? dashboard.nextBooking || null : localNextBooking;
   const nextBookingResource = nextBooking ? resources.find(r => r.id === nextBooking.resourceId) : null;
   const activeSchedule = SCHEDULE_RANGES.find(range => range.id === scheduleRange)!;
 
@@ -2219,38 +2863,12 @@ const App: React.FC = () => {
     document.getElementById(`schedule-tab-${nextRange}`)?.focus();
   };
 
-  const reportData = useMemo(() => {
-    const now = Date.now();
-    const bookingEnds = bookings.map(b => new Date(b.endedEarlyAt || b.endTime).getTime()).filter(Number.isFinite);
-    const end = new Date(reportRange === 'ALL' && bookingEnds.length ? Math.max(now, ...bookingEnds) : now);
-    const earliest = bookings.length ? Math.min(...bookings.map(b => new Date(b.startTime).getTime()).filter(Number.isFinite)) : end.getTime();
-    const start = new Date(reportRange === 'ALL' ? earliest : end.getTime() - (Number(reportRange) - 1) * 86400000);
-    start.setHours(0, 0, 0, 0);
-    return generateReport(bookings, resources, users, { start, end });
-  }, [bookings, resources, users, reportRange]);
-
-  const downloadReportCsv = () => {
-    const escape = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
-    const rows = [reportData.overall, ...reportData.rows];
-    const csv = '\uFEFF' + [
-      ['维度', '名称', '预约数', '使用小时', '使用率(%)', '取消率(%)', 'No-show率(%)', '驳回率(%)', '平均审批时长(小时)'],
-      ...rows.map(row => [row.dimension === 'RESOURCE' ? '资源' : row.dimension === 'DEPARTMENT' ? '部门' : '整体', row.name, row.bookingCount, row.usageHours, row.utilization, row.cancellationRate, row.noShowRate, row.rejectionRate, row.averageApprovalHours])
-    ].map(row => row.map(escape).join(',')).join('\r\n');
-    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = `运营报表_${formatDate(reportData.start)}_${formatDate(reportData.end)}.csv`;
-    link.click();
-    URL.revokeObjectURL(url);
-  };
-
   // Filters
   const filteredResources = useMemo(() => filterResources(resources, searchQuery, {
     type: resourceTypeFilter,
     status: resourceStatusFilter,
     minCapacity: resourceMinCapacity
-  }).filter(resource => resourceBuildingFilter === 'ALL' || parseBuilding(resource.location) === resourceBuildingFilter), [resources, searchQuery, resourceTypeFilter, resourceStatusFilter, resourceMinCapacity, resourceBuildingFilter]);
+  }).filter(resource => resourceBuildingFilter === 'ALL' || getResourceBuilding(resource) === resourceBuildingFilter), [resources, searchQuery, resourceTypeFilter, resourceStatusFilter, resourceMinCapacity, resourceBuildingFilter]);
   const resourceFinderResults = useMemo(() => findAvailableRooms(filteredResources, bookings, {
     startTime: `${resourceFinderCriteria.date}T${resourceFinderCriteria.start}`,
     endTime: `${resourceFinderCriteria.date}T${resourceFinderCriteria.end}`,
@@ -2274,6 +2892,8 @@ const App: React.FC = () => {
     if (!firstMatch) return null;
     return {
       location: firstMatch.location,
+      building: getResourceBuilding(firstMatch),
+      floor: getResourceFloor(firstMatch) || undefined,
       token: `${JSON.stringify(resourceFinderCriteria)}:${firstMatch.id}`
     };
   }, [resourceFinderResults, resourceFinderCriteria]);
@@ -2321,7 +2941,7 @@ const App: React.FC = () => {
 
   const handleSaveResource = async (data: any) => {
     if (!isOnline) throw new Error('预约服务未连接，暂时无法保存会议室配置。');
-    const resourceId = editingResource?.id || `r-${Date.now()}`;
+    const resourceId = editingResource?.id || `r-${String(data.code).trim().toLowerCase()}`;
     const payload: Resource = { ...editingResource, ...data, id: resourceId };
     let res: Response;
     try {
@@ -2337,17 +2957,24 @@ const App: React.FC = () => {
     if (!res.ok) {
       const impactCount = Array.isArray(result.conflicts) ? result.conflicts.length : 0;
       const messages: Record<string, string> = {
+        ...RESOURCE_IMPORT_ERROR_MESSAGES,
         ACTIVE_BOOKINGS_REQUIRE_REVIEW: `当前有 ${impactCount} 条未结束的有效预约，请先取消或改期后再切换维护状态。`,
         CAPACITY_EXCEEDED: `有 ${impactCount} 条有效预约超过新容量，请先调整相关预约。`,
         REQUIRED_FEATURE_UNAVAILABLE: `有 ${impactCount} 条有效预约仍依赖即将移除的设备，请先调整相关预约。`,
-        INVALID_RESOURCE: '会议室配置不完整，请检查名称、容量、状态和设备信息。'
+        RESOURCE_CODE_IMMUTABLE: '资源永久编码创建后不可修改。',
+        DUPLICATE_RESOURCE_ID: '资源 ID 已存在，请检查永久编码。',
+        DUPLICATE_RESOURCE_CODE: '永久编码已被其他资源使用。',
+        DUPLICATE_RESOURCE_NAME: '资源名称已存在，请使用唯一名称。',
+        INVALID_RESOURCE_OPEN_HOURS: '开放时段必须成对填写，且开始时间早于结束时间。',
+        INVALID_RESOURCE_LEADER_LEVEL: '专属会议室必须填写适用领导层级。',
+        INVALID_RESOURCE: '资源配置不完整，请检查名称、容量、状态和设备信息。'
       };
       throw new Error(messages[result.error] || '保存失败，请刷新后重试。');
     }
     const saved = result.resource || payload;
     if (result.workspace) applyWorkspace(result.workspace);
     else setResources(prev => editingResource ? prev.map(resource => resource.id === editingResource.id ? saved : resource) : [...prev, saved]);
-    if (saved.type === 'ROOM') setSpatialFocus({ location: saved.location, token: Date.now() });
+    if (saved.type === 'ROOM') setSpatialFocus({ location: saved.location, building: saved.building, floor: saved.floor, token: Date.now() });
     setShowResourceModal(false);
     setEditingResource(null);
     addNotification('配置已同步', saved.type === 'ROOM' ? `会议室设备、容量与服务状态已同步至预约服务，3D 视图已定位至${saved.location}。` : '资源配置已同步至预约服务。', 'SUCCESS');
@@ -2388,6 +3015,9 @@ const App: React.FC = () => {
       const result = await res.json().catch(() => ({}));
       if (res.ok) {
         if (result.workspace) applyWorkspace(result.workspace);
+        setBookingFormError(null);
+        const warnings = [...new Set((result.bookings || []).flatMap((booking: Booking) => booking.attendeeWarnings || []))];
+        if (warnings.length) addNotification('参会人时间重叠提示', warnings.join('；'), 'WARNING');
       }
       if (!res.ok) {
         if (result.error === 'CONFLICT') {
@@ -2402,12 +3032,16 @@ const App: React.FC = () => {
             INVALID_RENEWAL: '续期信息已变化，请重新打开续期表单。',
             INVALID_LONG_TERM_SERIES: '长期预订数据不完整，请重新提交。'
           };
-          addNotification('无法提交系列预约', messages[result.error] || '预约信息未通过校验，请调整后重试。', 'WARNING');
+          const message = messages[result.error] || '预约信息未通过校验，请调整后重试。';
+          setBookingFormError({ code: result.error, message });
+          addNotification('无法提交系列预约', message, 'WARNING');
         }
         return;
       }
     } catch {
-      addNotification('预约未保存', '无法连接预约服务，请检查网络后重试。', 'WARNING');
+      const message = '无法连接预约服务，请检查网络后重试。';
+      setBookingFormError({ message });
+      addNotification('预约未保存', message, 'WARNING');
       return;
     }
     setRecurringPlan(null);
@@ -2444,6 +3078,7 @@ const App: React.FC = () => {
   };
 
   const handleBooking = async (resourceId: string, purpose: string, startTime: string, endTime: string, participants?: number, extras?: any) => {
+    setBookingFormError(null);
     const resource = resources.find(r => r.id === resourceId);
     if (!resource || !currentUser) return;
 
@@ -2515,6 +3150,7 @@ const App: React.FC = () => {
       addNotification('预约未保存', '预约服务未连接，请恢复连接后再提交。', 'WARNING');
       return;
     }
+    let savedBooking = newBooking;
     try {
       const res = await fetch(editingBooking ? `/api/bookings/${editingBooking.id}` : '/api/bookings', {
         method: editingBooking ? 'PUT' : 'POST',
@@ -2523,15 +3159,24 @@ const App: React.FC = () => {
       });
       const result = await res.json().catch(() => ({}));
       if (res.ok) {
+        savedBooking = result.booking || newBooking;
         if (result.workspace) applyWorkspace(result.workspace);
+        setBookingFormError(null);
+        if (result.booking?.attendeeWarnings?.length) addNotification('参会人时间重叠提示', result.booking.attendeeWarnings.join('；'), 'WARNING');
       }
       if (!res.ok) {
         if (result.error === 'CONFLICT') openConflict('CONFLICT');
-        else addNotification('预约未保存', BOOKING_ERROR_MESSAGES[result.error] || '预约服务暂时不可用，请稍后重试。', 'WARNING');
+        else {
+          const message = BOOKING_ERROR_MESSAGES[result.error] || '预约服务暂时不可用，请稍后重试。';
+          setBookingFormError({ code: result.error, message });
+          addNotification('预约未保存', message, 'WARNING');
+        }
         return;
       }
     } catch {
-      addNotification('预约未保存', '无法连接预约服务，请检查网络后重试。', 'WARNING');
+      const message = '无法连接预约服务，请检查网络后重试。';
+      setBookingFormError({ message });
+      addNotification('预约未保存', message, 'WARNING');
       return;
     }
 
@@ -2540,9 +3185,14 @@ const App: React.FC = () => {
     setBookingPrefill(null);
     setEditingBooking(null);
     addNotification(editingBooking ? "预约已修改" : "预约申请已提交", editingBooking ? `资源 ${resource.name} 的预约已更新，并重新进入审批流程。` : `资源 ${resource.name} 的预约已进入审批流程。`, "SUCCESS");
-    (extras?.attendeeIds || []).filter((id: string) => id !== currentUser.id).forEach((id: string) => addNotification('会议邀请', `${currentUser.name} 邀请您参加「${purpose}」，时间：${toLocalDateTimeString(newBooking.startTime)}。`, 'INFO', id));
-    const firstRole = workflow[0]?.approverRole;
-    if (firstRole) users.filter(u => u.id !== currentUser.id && u.role.includes(firstRole)).forEach(u => addNotification('新预约待审批', `${currentUser.name} 提交了「${purpose}」，资源：${resource.name}，时间：${toLocalDateTimeString(newBooking.startTime)}。`, 'INFO', u.id));
+    const confidential = savedBooking.meetingType === 'CONFIDENTIAL' || savedBooking.confidentialityChoice === 'CONFIDENTIAL';
+    (extras?.attendeeIds || []).filter((id: string) => id !== currentUser.id).forEach((id: string) => addNotification('会议邀请', confidential
+      ? `${currentUser.name} 邀请您参加一项涉密会议，请在“我的申请”中查看已授权详情。`
+      : `${currentUser.name} 邀请您参加「${purpose}」，时间：${toLocalDateTimeString(savedBooking.startTime)}。`, 'INFO', id));
+    const firstRole = savedBooking.approvalWorkflow?.[0]?.approverRole || workflow[0]?.approverRole;
+    if (firstRole) users.filter(u => u.id !== currentUser.id && u.role.includes(firstRole)).forEach(u => addNotification('新预约待审批', confidential
+      ? `${currentUser.name} 提交了一项涉密会议申请，请在审批工作台处理。`
+      : `${currentUser.name} 提交了「${purpose}」，资源：${resource.name}，时间：${toLocalDateTimeString(savedBooking.startTime)}。`, 'INFO', u.id));
   };
 
   const handleRenewLongTerm = (booking: Booking) => {
@@ -2571,11 +3221,12 @@ const App: React.FC = () => {
     nextStart.setHours(originalStart.getHours(), originalStart.getMinutes(), 0, 0);
     const nextEnd = new Date(nextDate);
     nextEnd.setHours(originalEnd.getHours(), originalEnd.getMinutes(), 0, 0);
-    const seriesEndDate = formatDate(getLongTermMaxEndDate(nextStart));
+    const seriesEndDate = formatDate(getLongTermMaxEndDate(nextStart, ruleSettings.longTermMaxCalendarMonths));
     setEditingBooking(null);
     setSelectedResource(resource);
     setCalendarDateForBooking(null);
     setBookingPrefill({
+      userId: booking.userId,
       purpose: booking.purpose,
       start: nextStart.toISOString(),
       end: nextEnd.toISOString(),
@@ -2585,6 +3236,11 @@ const App: React.FC = () => {
       renewalOfSeriesId: booking.seriesId,
       rootSeriesId: booking.rootSeriesId || booking.seriesId,
       extras: {
+        meetingType: booking.meetingType,
+        confidentialityChoice: booking.confidentialityChoice,
+        serviceRequirements: booking.serviceRequirements || [],
+        exclusiveRequestReason: booking.exclusiveRequestReason,
+        auditoriumSetup: booking.auditoriumSetup,
         hasLeader: booking.hasLeader,
         leaderDetails: booking.leaderDetails,
         isVideoConference: booking.isVideoConference,
@@ -2603,11 +3259,17 @@ const App: React.FC = () => {
     } catch {}
   };
 
-  const handleCheckIn = async (id: string) => {
+  const handleCheckIn = async (id: string, source: 'QR' | 'MANUAL' = 'MANUAL', scheduleVersion?: number) => {
+    if (!navigator.onLine) {
+      addNotification('签到未完成', '当前离线，未保存任何签到或释放操作，请联网后重试。', 'WARNING');
+      return false;
+    }
     try {
-      await handleAgentAction({ type: 'PROPOSE_CHECK_IN', bookingId: id, summary: '会议签到' });
+      await apiRequest(`/api/bookings/${encodeURIComponent(id)}/check-in`, 'POST', { source, subjectUserId: currentUser?.id, ...(source === 'QR' ? { scheduleVersion } : {}) });
+      addNotification('签到成功', source === 'QR' ? '扫码结果已通过服务端校验，签到事件与实际使用事实已保存。' : '人工签到事件与实际使用事实已保存。', 'SUCCESS');
       return true;
-    } catch {
+    } catch (err: any) {
+      addNotification('签到未完成', err?.message || '请刷新后重试。', 'WARNING');
       return false;
     }
   };
@@ -2624,12 +3286,6 @@ const App: React.FC = () => {
     } catch (err: any) {
       addNotification('操作未完成', err?.message || '请刷新后重试。', 'WARNING');
     }
-  };
-
-  const handleCompleteWorkOrder = async (id: string) => {
-    try {
-      await handleAgentAction({ type: 'PROPOSE_WORK_ORDER', workOrderId: id, summary: '完成服务工单' });
-    } catch {}
   };
 
   const runApprovalAction = async (key: string, booking: Booking, targets: Booking[], decision: 'APPROVE' | 'REJECT', comment?: string) => {
@@ -2708,6 +3364,10 @@ const App: React.FC = () => {
         participants: action.draft.participants,
         recurrence: action.draft.recurrence,
         extras: {
+          meetingType: action.draft.meetingType,
+          serviceRequirements: action.draft.serviceRequirements || [],
+          exclusiveRequestReason: action.draft.exclusiveRequestReason,
+          auditoriumSetup: action.draft.auditoriumSetup,
           hasLeader: Boolean(action.draft.hasLeader),
           leaderDetails: action.draft.leaderDetails || '',
           isVideoConference: Boolean(action.draft.isVideoConference),
@@ -2830,6 +3490,21 @@ const App: React.FC = () => {
     } catch (error) { adminError(error); }
   };
 
+  const handleAddConfidentialWhitelist = async (entry: { userId: string; reason: string }) => {
+    await apiRequest('/api/confidential-whitelist', 'POST', { entry });
+    addNotification('白名单已更新', '成员已获得涉密会议申请与参会资格。', 'SUCCESS');
+  };
+
+  const handleRemoveConfidentialWhitelist = async (id: string) => {
+    await apiRequest(`/api/confidential-whitelist/${id}`, 'DELETE');
+    addNotification('白名单已更新', '资格已移除，后续提交和最终核准将按新名单校验。', 'SUCCESS');
+  };
+
+  const handleCreateConfidentialityAuthorization = async (bookingId: string, input: { action: 'DECLASSIFY' | 'ATTENDEE_CHANGE'; reason: string }) => {
+    await apiRequest(`/api/bookings/${bookingId}/confidential-authorizations`, 'POST', input);
+    addNotification('授权已签发', '一次性授权已记录，申请人提交匹配变更后自动核销。', 'SUCCESS');
+  };
+
   const loadAuditEvents = async () => {
     setAuditLoading(true);
     setAuditError('');
@@ -2869,6 +3544,7 @@ const App: React.FC = () => {
   if (authLoading) return <div className="min-h-screen grid place-items-center bg-gray-50 text-sm font-bold text-gray-500">正在验证企业会话…</div>;
   if (!currentUser) return <LoginView onLogin={setCurrentUser} />;
 
+  const latestApprovalRuleSet = [...approvalRuleSetVersions].sort((a, b) => b.version - a.version)[0];
   const normalizedAuditQuery = auditQuery.trim().toLowerCase();
   const filteredAuditEvents = auditEvents.filter(event => !normalizedAuditQuery || [
     event.action, event.entityType, event.entityId, event.actorId,
@@ -2877,16 +3553,21 @@ const App: React.FC = () => {
 
   const workflowNavItems: NavItem[] = [
     ...(canAccessApproval ? [{ id: 'APPROVAL_CENTER', label: '审批工作台', shortLabel: '审批', icon: ShieldCheck, badge: pendingCount } as NavItem] : []),
-    ...(canAccessWorkOrders ? [{ id: 'WORK_ORDERS', label: '服务工单', shortLabel: '工单', icon: Coffee, badge: openWorkOrderCount } as NavItem] : [])
+    ...(canAccessWorkOrders ? [{ id: 'WORK_ORDERS', label: '服务工单', shortLabel: '工单', icon: Coffee, badge: openWorkOrderCount } as NavItem] : []),
+    ...(canAccessExceptions ? [{ id: 'EXCEPTIONS', label: '异常中心', shortLabel: '异常', icon: AlertTriangle, badge: exceptions.filter(item => item.status !== 'RESOLVED').length } as NavItem] : [])
   ];
-  const adminNavItems: NavItem[] = currentUser.role.includes('SYSTEM_ADMIN') ? [
-    { id: 'WORKFLOW_CONFIG', label: '流程配置', shortLabel: '流程', icon: GitMerge },
-    { id: 'DEPARTMENTS', label: '部门管理', shortLabel: '部门', icon: Building2 },
-    { id: 'ROLES', label: '角色管理', shortLabel: '角色', icon: Shield },
-    { id: 'USERS', label: '成员中心', shortLabel: '成员', icon: Users },
-    { id: 'REPORTS', label: '运营报表', shortLabel: '报表', icon: PieChart },
-    { id: 'DATA_CENTER', label: '数据中心', shortLabel: '数据', icon: Database }
-  ] : [];
+  const adminNavItems: NavItem[] = [
+    ...(currentUser.role.includes('SYSTEM_ADMIN') ? [
+      { id: 'WORKFLOW_CONFIG', label: '流程配置', shortLabel: '流程', icon: GitMerge },
+      { id: 'DEPARTMENTS', label: '部门管理', shortLabel: '部门', icon: Building2 },
+      { id: 'ROLES', label: '角色管理', shortLabel: '角色', icon: Shield },
+      { id: 'USERS', label: '成员中心', shortLabel: '成员', icon: Users },
+      { id: 'REPORTS', label: '运营报表', shortLabel: '报表', icon: PieChart },
+      { id: 'DEVICES', label: '门口屏设备', shortLabel: '设备', icon: Monitor }
+    ] as NavItem[] : []),
+    ...((currentUser.role.includes('SYSTEM_ADMIN') || currentUser.role.includes('SECURITY_ADMIN')) ? [{ id: 'CONFIDENTIALITY', label: '保密控制', shortLabel: '保密', icon: Lock } as NavItem] : []),
+    ...(currentUser.role.includes('SYSTEM_ADMIN') ? [{ id: 'DATA_CENTER', label: '数据中心', shortLabel: '数据', icon: Database } as NavItem] : [])
+  ];
   const primaryWorkflowItem = canAccessApproval ? workflowNavItems.find(item => item.id === 'APPROVAL_CENTER') : workflowNavItems.find(item => item.id === 'WORK_ORDERS');
   const mobilePrimaryItems: NavItem[] = [
     { id: 'DASHBOARD', label: '数据全景看板', shortLabel: '看板', icon: LayoutDashboard },
@@ -2996,7 +3677,10 @@ const App: React.FC = () => {
               {view === 'BOOKINGS' && '我的申请记录'}
               {view === 'APPROVAL_CENTER' && '审批中心'}
               {view === 'WORK_ORDERS' && '服务工单中心'}
+              {view === 'EXCEPTIONS' && '异常中心'}
+              {view === 'DEVICES' && '门口屏设备'}
               {view === 'WORKFLOW_CONFIG' && '审批引擎配置'}
+              {view === 'CONFIDENTIALITY' && '保密控制'}
               {view === 'DEPARTMENTS' && '组织架构'}
               {view === 'ROLES' && '角色权限集'}
               {view === 'REPORTS' && '运营报表'}
@@ -3340,6 +4024,8 @@ const App: React.FC = () => {
                                const resource = resources.find(r => r.id === b.resourceId);
                                const longTermSeries = b.seriesKind === 'LONG_TERM' && b.seriesId ? bookings.filter(item => item.seriesId === b.seriesId) : [];
                                const activeRenewal = b.seriesId && bookings.some(item => item.renewalOfSeriesId === b.seriesId && isActiveBooking(item));
+                               const usageFact = usageFacts.find(item => item.bookingId === b.id && item.scheduleVersion === (b.scheduleVersion || 1));
+                               const bookingAppeals = usageAppeals.filter(item => item.bookingId === b.id);
                                return (
                                    <div key={b.id} className={`bg-white rounded-[2rem] border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg border-indigo-100' : 'shadow-sm border-gray-100 hover:border-gray-200'}`}>
                                        {/* Header - Click to Toggle */}
@@ -3405,14 +4091,15 @@ const App: React.FC = () => {
 
                                                <WorkflowStepper booking={b} workflow={workflow} users={users} theme={theme} />
                                                {b.approvalHistory?.length > 0 && <div className="mt-5 space-y-2">{b.approvalHistory.map((record, index) => <div key={`${record.timestamp}-${index}`} className={`p-3 rounded-xl text-xs ${record.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-gray-50 text-gray-600'}`}><span className="font-black">{record.nodeName} · {record.approverName} · {record.status === 'REJECTED' ? '驳回原因' : '审批附言'}</span><p className="mt-1">{record.comment || (record.status === 'REJECTED' ? '未填写' : '无附言')}</p></div>)}</div>}
+                                               {b.type === 'ROOM' && b.userId === currentUser.id && <BookingUsageActions booking={b} fact={usageFact} appeals={bookingAppeals} apiRequest={apiRequest} notify={addNotification}/>}
 
                                                <div className="mt-8 flex justify-end gap-3 flex-wrap">
                                                  {b.seriesKind === 'LONG_TERM' && b.recurrenceIndex === 0 && b.status === 'APPROVED' && b.userId === currentUser.id && <button onClick={() => handleRenewLongTerm(b)} disabled={!!activeRenewal} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl border border-indigo-100 disabled:opacity-50"><RefreshCw size={14}/><span>{activeRenewal ? '续期已提交' : '申请续期'}</span></button>}
-                                                 {(b.status === 'APPROVED' || b.status === 'CANCELLED') && resource && <button onClick={() => downloadBookingIcs(b, resource, users)} className="flex items-center space-x-2 text-xs font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-5 py-2.5 rounded-xl border border-emerald-100"><Download size={14}/><span>下载 ICS 日历</span></button>}
+                                                 {(b.status === 'APPROVED' || b.status === 'CANCELLED') && resource && <button onClick={() => void downloadBookingIcs(b).then(() => addNotification('日历已导出', 'ICS 文件已通过服务端权限校验并下载。', 'SUCCESS')).catch((error: Error) => addNotification('日历导出失败', error.message, 'WARNING'))} className="flex items-center space-x-2 text-xs font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-5 py-2.5 rounded-xl border border-emerald-100"><Download size={14}/><span>下载 ICS 日历</span></button>}
                                                  {checkableBookings.some(item => item.id === b.id) && <button onClick={() => setShowQRScanner(true)} className={`flex items-center space-x-2 text-xs font-bold text-${theme}-600 bg-${theme}-50 hover:bg-${theme}-100 px-5 py-2.5 rounded-xl border border-${theme}-100`}><CheckCircle size={14}/><span>会议签到</span></button>}
                                                  {b.status === 'APPROVED' && b.checkedInAt && b.userId === currentUser.id && Date.now() >= new Date(b.startTime).getTime() && Date.now() < new Date(b.endTime).getTime() && <button onClick={() => handleEndEarly(b.id)} className="flex items-center space-x-2 text-xs font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 px-5 py-2.5 rounded-xl border border-amber-100"><LogOut size={14}/><span>提前结束并释放</span></button>}
                                                  {['PENDING', 'APPROVED'].includes(b.status) && b.userId === currentUser.id && <>
-                                                        <button onClick={(e) => { e.stopPropagation(); if (!resource) return; setEditingBooking(b); setSelectedResource(resource); setCalendarDateForBooking(null); setBookingPrefill({ id: b.id, purpose: b.purpose, start: b.startTime, end: b.endTime, participants: b.participants, extras: { hasLeader: b.hasLeader, leaderDetails: b.leaderDetails, isVideoConference: b.isVideoConference, needsTeaService: b.needsTeaService, requiredFeatures: b.requiredFeatures || [], attendeeIds: b.attendeeIds || [] } }); setShowBookingModal(true); }} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl transition-all border border-indigo-100"><Edit2 size={14}/><span>修改预约</span></button>
+                                                        <button onClick={(e) => { e.stopPropagation(); if (!resource) return; setEditingBooking(b); setSelectedResource(resource); setCalendarDateForBooking(null); setBookingPrefill({ id: b.id, userId: b.userId, purpose: b.purpose, start: b.startTime, end: b.endTime, participants: b.participants, extras: { meetingType: b.meetingType, confidentialityChoice: b.confidentialityChoice, serviceRequirements: b.serviceRequirements || [], exclusiveRequestReason: b.exclusiveRequestReason, auditoriumSetup: b.auditoriumSetup, hasLeader: b.hasLeader, leaderDetails: b.leaderDetails, isVideoConference: b.isVideoConference, needsTeaService: b.needsTeaService, requiredFeatures: b.requiredFeatures || [], attendeeIds: b.attendeeIds || [] } }); setShowBookingModal(true); }} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl transition-all border border-indigo-100"><Edit2 size={14}/><span>修改预约</span></button>
                                                         <button
                                                            onClick={(e) => { e.stopPropagation(); handleCancelBooking(b.id); }}
                                                            className="flex items-center space-x-2 text-xs font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-5 py-2.5 rounded-xl transition-all border border-rose-100"
@@ -3476,6 +4163,10 @@ const App: React.FC = () => {
                  ))}
                  {workflow.length === 0 && <div className="p-20 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold">暂无审批节点，流程将默认免审通过。</div>}
                </div>
+               {latestApprovalRuleSet && <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="approval-rules-title">
+                 <div><h4 id="approval-rules-title" className="font-black text-gray-800">动态规则集 V{latestApprovalRuleSet.version}</h4><p className="mt-1 text-xs text-gray-500">按优先级从高到低命中第一条规则；未命中时使用默认流程 V{latestApprovalRuleSet.defaultWorkflowVersion}。提交后冻结规则集与流程版本。</p></div>
+                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">{[...latestApprovalRuleSet.rules].sort((a, b) => b.priority - a.priority).map(rule => <div key={rule.id} className="p-4 rounded-2xl bg-gray-50 border border-gray-100"><div className="flex items-center justify-between gap-3"><p className="text-sm font-black text-gray-800">{rule.name}</p><span className="text-[11px] font-black text-indigo-600">优先级 {rule.priority}</span></div><p className="mt-2 text-xs text-gray-500">{[rule.conditions.meetingTypes?.length ? `会议类型：${rule.conditions.meetingTypes.join(' / ')}` : '', rule.conditions.exclusive !== undefined ? `专属资源：${rule.conditions.exclusive ? '是' : '否'}` : '', rule.conditions.heavyService !== undefined ? `重服务：${rule.conditions.heavyService ? '是' : '否'}` : ''].filter(Boolean).join(' · ')}</p><p className="mt-1 text-[11px] font-bold text-gray-500">目标流程 V{rule.workflowVersion}</p></div>)}</div>
+               </section>}
                <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="delegation-title">
                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
                    <div><h4 id="delegation-title" className="font-black text-gray-800">代理审批</h4><p className="mt-1 text-xs text-gray-500">代理继承委托人在当前节点的角色与范围，过期后自动失效，自审限制始终有效。</p></div>
@@ -3494,6 +4185,17 @@ const App: React.FC = () => {
                </section>
              </div>
           )}
+
+          {view === 'CONFIDENTIALITY' && (currentUser.role.includes('SYSTEM_ADMIN') || currentUser.role.includes('SECURITY_ADMIN')) && <ConfidentialityAdminPanel
+            users={users}
+            authorizationTargets={confidentialAuthorizationTargets}
+            whitelist={confidentialWhitelist}
+            authorizations={confidentialityAuthorizations}
+            currentUser={currentUser}
+            onAddWhitelist={handleAddConfidentialWhitelist}
+            onRemoveWhitelist={handleRemoveConfidentialWhitelist}
+            onAuthorize={handleCreateConfidentialityAuthorization}
+          />}
 
           {view === 'ROLES' && (
              <div className="space-y-6 animate-in fade-in">
@@ -3531,42 +4233,44 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {view === 'WORK_ORDERS' && canAccessWorkOrders && (
-            <div className="space-y-6 animate-in fade-in">
-              <div><h3 className="text-2xl font-black text-gray-800">服务工单</h3><p className="text-sm text-gray-500 mt-1">已核准会议的茶水与视频会议保障需求，共 {openWorkOrderCount} 项待处理。</p></div>
-              {visibleWorkOrders.length === 0 ? <div className="py-24 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold"><Coffee size={40} className="mx-auto mb-4 opacity-30"/>暂无服务工单</div> : <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
-                {visibleWorkOrders.map(order => {
-                  const booking = bookings.find(b => b.id === order.bookingId);
-                  const resource = resources.find(r => r.id === booking?.resourceId);
-                  return <div key={order.id} className={`bg-white rounded-3xl p-6 border shadow-sm ${order.status === 'DONE' ? 'opacity-70' : ''}`}>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex items-start gap-3"><div className={`w-11 h-11 rounded-2xl flex items-center justify-center ${order.type === 'TEA' ? 'bg-emerald-50 text-emerald-600' : 'bg-indigo-50 text-indigo-600'}`}>{order.type === 'TEA' ? <Coffee size={20}/> : <Video size={20}/>}</div><div><p className="text-[11px] font-black text-gray-500 uppercase">{order.type === 'TEA' ? '行政 · 茶水服务' : 'IT · 视频会议'}</p><h4 className="font-black text-gray-800 mt-1">{order.title}</h4></div></div>
-                      <span className={`shrink-0 px-2 py-1 rounded-lg text-[11px] font-bold ${order.status === 'DONE' ? 'bg-gray-100 text-gray-500' : 'bg-amber-50 text-amber-600'}`}>{order.status === 'DONE' ? '已处理' : '待处理'}</span>
-                    </div>
-                    <div className="my-5 p-4 bg-gray-50 rounded-2xl text-xs text-gray-500 space-y-1"><p className="font-bold text-gray-700">{resource?.name || '未知资源'}</p><p>{booking ? `${toLocalDateTimeString(booking.startTime)} - ${toLocalTimeString(booking.endTime)}` : '关联预约已删除'}</p>{order.completedAt && <p>处理时间：{toLocalDateTimeString(order.completedAt)}</p>}</div>
-                    {order.status === 'TODO' && <button onClick={() => handleCompleteWorkOrder(order.id)} className={`w-full py-3 rounded-xl bg-${theme}-600 text-white text-xs font-black flex items-center justify-center gap-2`}><CheckCircle size={15}/>标记已处理</button>}
-                  </div>;
-                })}
-              </div>}
-            </div>
-          )}
+          {view === 'WORK_ORDERS' && canAccessWorkOrders && <ServiceOperations
+            currentUser={currentUser}
+            users={users}
+            resources={resources}
+            bookings={bookings}
+            workOrders={visibleWorkOrders}
+            serviceCatalog={serviceCatalog}
+            serviceAreas={serviceAreas}
+            serviceShifts={serviceShifts}
+            serviceInspections={serviceInspections}
+            checkInEvents={checkInEvents}
+            usageFacts={usageFacts}
+            usageAppeals={usageAppeals}
+            roles={roles}
+            apiRequest={apiRequest}
+            notify={addNotification}
+          />}
+
+          {view === 'EXCEPTIONS' && canAccessExceptions && <ExceptionCenter
+            currentUser={currentUser}
+            users={users}
+            roles={roles}
+            exceptions={exceptions}
+            apiRequest={apiRequest}
+            onChanged={refreshOperations}
+            notify={addNotification}
+          />}
+
+          {view === 'DEVICES' && currentUser.role.includes('SYSTEM_ADMIN') && <DeviceManagement
+            devices={devices}
+            resources={resources}
+            apiRequest={apiRequest}
+            onChanged={async () => { await loadWorkspace(); }}
+            notify={addNotification}
+          />}
 
           {view === 'REPORTS' && currentUser.role.includes('SYSTEM_ADMIN') && (
-            <div className="space-y-6 animate-in fade-in">
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div><h3 className="text-2xl font-black text-gray-800">利用率与审批效率</h3><p className="text-sm text-gray-500 mt-1">{formatDate(reportData.start)} 至 {formatDate(reportData.end)} · 使用率按每日 12 小时可预约容量计算</p></div>
-                <div className="flex gap-2"><select aria-label="报表时间范围" value={reportRange} onChange={e => setReportRange(e.target.value as any)} className="px-4 py-3 bg-white border border-gray-200 rounded-xl text-xs font-bold"><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="ALL">全部数据</option></select><button onClick={downloadReportCsv} className={`px-4 py-3 bg-${theme}-600 text-white rounded-xl text-xs font-black flex items-center gap-2`}><Download size={15}/>导出 CSV</button></div>
-              </div>
-              <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
-                {[['预约数', reportData.overall.bookingCount, '单'], ['使用时长', reportData.overall.usageHours, '小时'], ['使用率', reportData.overall.utilization, '%'], ['取消率', reportData.overall.cancellationRate, '%'], ['No-show 率', reportData.overall.noShowRate, '%'], ['平均审批', reportData.overall.averageApprovalHours, '小时']].map(([label, value, unit]) => <div key={String(label)} className="bg-white p-5 rounded-3xl border border-gray-100"><p className="text-[11px] font-black text-gray-500">{label}</p><p className="text-2xl font-black text-gray-800 mt-2">{value}<span className="text-xs text-gray-500 ml-1">{unit}</span></p></div>)}
-              </div>
-              <div className="studio-table-shell">
-                <table className="w-full text-left min-w-[900px]">
-                  <thead><tr className="bg-gray-50 text-[11px] font-black text-gray-500 uppercase">{['维度', '名称', '预约数', '使用小时', '使用率', '取消率', 'No-show率', '驳回率', '平均审批'].map(label => <th key={label} className="px-5 py-4">{label}</th>)}</tr></thead>
-                  <tbody className="divide-y divide-gray-50">{reportData.rows.map(row => <tr key={`${row.dimension}-${row.id}`} className="text-xs text-gray-600"><td className="px-5 py-4"><span className={`px-2 py-1 rounded-lg font-bold ${row.dimension === 'RESOURCE' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'}`}>{row.dimension === 'RESOURCE' ? '资源' : '部门'}</span></td><td className="px-5 py-4 font-black text-gray-800">{row.name}</td><td className="px-5 py-4">{row.bookingCount}</td><td className="px-5 py-4">{row.usageHours}</td><td className="px-5 py-4 font-bold">{row.utilization}%</td><td className="px-5 py-4">{row.cancellationRate}%</td><td className="px-5 py-4">{row.noShowRate}%</td><td className="px-5 py-4">{row.rejectionRate}%</td><td className="px-5 py-4">{row.averageApprovalHours} 小时</td></tr>)}</tbody>
-                </table>
-              </div>
-            </div>
+            <OperationsReports bookings={bookings} notify={addNotification} />
           )}
 
           {view === 'DATA_CENTER' && (
@@ -3678,17 +4382,27 @@ const App: React.FC = () => {
           theme={theme} 
           existingDepartments={departments} 
           roles={roles}
-          onClose={() => setShowImportModal(null)} 
+          onClose={() => setShowImportModal(null)}
+          onPreflight={async (data: any) => {
+            const result = await apiRequest('/api/resources/ledger/preflight', 'POST', { items: data });
+            return result.report as ResourceImportReport;
+          }}
           onImport={async (data: any) => {
             try {
               if (!Array.isArray(data) || !data.length) throw new Error('未解析到有效数据。');
-              await apiRequest(`/api/imports/${showImportModal}`, 'POST', { items: data });
-              addNotification('导入成功', `已成功导入 ${data.length} 条数据并写入 MySQL。`, 'SUCCESS');
+              if (showImportModal === 'RESOURCES') {
+                const result = await apiRequest('/api/resources/ledger/import', 'POST', { items: data });
+                addNotification('台账导入成功', `已写入 MySQL：新增 ${result.report.creates} 条、更新 ${result.report.updates} 条，不变 ${result.report.unchanged} 条。`, 'SUCCESS');
+              } else {
+                await apiRequest(`/api/imports/${showImportModal}`, 'POST', { items: data });
+                addNotification('导入成功', `已成功导入 ${data.length} 条数据并写入 MySQL。`, 'SUCCESS');
+              }
               setShowImportModal(null);
             } catch (err: any) {
               addNotification('导入失败', err?.message || '请刷新后重试。', 'WARNING');
+              throw err;
             }
-          }} 
+          }}
         />
       )}
 
@@ -3722,7 +4436,7 @@ const App: React.FC = () => {
       }} theme={theme} />}
       {showDelegateModal && <ApprovalDelegateModal users={users} onClose={() => setShowDelegateModal(false)} onSave={handleSaveDelegate} theme={theme} />}
       
-      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} initialValues={bookingPrefill} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); setBookingPrefill(null); setEditingBooking(null); }} onConfirm={handleBooking} availableUsers={users} currentUserId={currentUser.id} bookings={bookings} />)}
+      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} initialValues={bookingPrefill} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); setBookingPrefill(null); setEditingBooking(null); setBookingFormError(null); }} onConfirm={handleBooking} availableUsers={users} currentUser={currentUser} bookings={bookings} ruleSettings={ruleSettings} confidentialityAuthorizations={confidentialityAuthorizations} serviceCatalog={serviceCatalog} externalError={bookingFormError} />)}
 
       {bookingConflict && (
         <BookingConflictModal 

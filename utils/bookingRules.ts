@@ -1,5 +1,32 @@
 import type { Booking, Resource, RoomFeature } from '../types';
 
+const CHINA_DAY_OFFSET_MS = 8 * 3600000;
+export const bookingDateKey = (value: Date | string | number) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() + CHINA_DAY_OFFSET_MS).toISOString().slice(0, 10);
+};
+export const bookingLocalTime = (value: Date | string | number) => {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return new Date(date.getTime() + CHINA_DAY_OFFSET_MS).toISOString().slice(11, 16);
+};
+export const splitBookingByNaturalDay = (startTime: string, endTime: string) => {
+  const start = new Date(startTime).getTime();
+  const end = new Date(endTime).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return [];
+  const segments: Array<{ date: string; minutes: number }> = [];
+  let cursor = start;
+  while (cursor < end) {
+    const date = bookingDateKey(cursor);
+    const nextDay = Date.parse(`${date}T00:00:00+08:00`) + 86400000;
+    const segmentEnd = Math.min(end, nextDay);
+    segments.push({ date, minutes: Math.round((segmentEnd - cursor) / 60000) });
+    cursor = segmentEnd;
+  }
+  return segments;
+};
+
 export interface BookingTimeRange {
   resourceId: string;
   startTime: string;
@@ -78,6 +105,27 @@ export const findBookingConflicts = (bookings: Booking[], candidate: BookingTime
 export const hasBookingConflict = (bookings: Booking[], candidate: BookingTimeRange, excludeBookingId?: string) =>
   findBookingConflicts(bookings, candidate, excludeBookingId).length > 0;
 
+export const findRequesterConflicts = (bookings: Booking[], candidate: Booking, excludeBookingId?: string) => {
+  const start = new Date(candidate.startTime);
+  const end = new Date(candidate.endTime);
+  return bookings.filter(booking => booking.id !== excludeBookingId
+    && booking.userId === candidate.userId
+    && isActiveBooking(booking)
+    && timeRangesOverlap(start, end, new Date(booking.startTime), new Date(booking.endTime)));
+};
+
+export const findAttendeeOverlaps = (bookings: Booking[], candidate: Booking, excludeBookingId?: string) => {
+  const attendeeIds = new Set(candidate.attendeeIds || []);
+  if (!attendeeIds.size) return [];
+  const start = new Date(candidate.startTime);
+  const end = new Date(candidate.endTime);
+  return bookings.filter(booking => booking.id !== excludeBookingId
+    && isActiveBooking(booking)
+    && (attendeeIds.has(booking.userId) || (booking.attendeeIds || []).some(id => attendeeIds.has(id))
+      || (booking.overlapParticipantIds || []).some(id => attendeeIds.has(id)))
+    && timeRangesOverlap(start, end, new Date(booking.startTime), new Date(booking.endTime)));
+};
+
 export const findAvailableRooms = (resources: Resource[], bookings: Booking[], criteria: BookingResourceRequirements) =>
   resources.filter(resource => resource.type === 'ROOM'
     && !validateBookingResource(resource, criteria)
@@ -87,18 +135,18 @@ export const findAvailableRooms = (resources: Resource[], bookings: Booking[], c
       endTime: criteria.endTime
     }));
 
-export const addCalendarMonthClamped = (value: Date) => {
+export const addCalendarMonthClamped = (value: Date, months = 1) => {
   const result = new Date(value);
   const day = result.getDate();
   result.setDate(1);
-  result.setMonth(result.getMonth() + 1);
+  result.setMonth(result.getMonth() + months);
   const lastDay = new Date(result.getFullYear(), result.getMonth() + 1, 0).getDate();
   result.setDate(Math.min(day, lastDay));
   return result;
 };
 
-export const getLongTermMaxEndDate = (start: Date) => {
-  const result = addCalendarMonthClamped(start);
+export const getLongTermMaxEndDate = (start: Date, maxCalendarMonths = 1) => {
+  const result = addCalendarMonthClamped(start, maxCalendarMonths);
   result.setDate(result.getDate() - 1);
   return result;
 };
@@ -110,12 +158,17 @@ export const getDailyOccurrenceCount = (start: Date, endDate: Date) => {
   return Math.max(0, Math.floor((endDay - startDay) / 86400000) + 1);
 };
 
-export const isLongTermSeriesWithinLimit = (bookings: Array<Pick<Booking, 'startTime' | 'endTime'>>) => {
+export const isLongTermSeriesWithinLimit = (bookings: Array<Pick<Booking, 'startTime' | 'endTime'>>, maxCalendarMonths = 1) => {
   if (!bookings.length) return false;
   const sorted = [...bookings].sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime());
   const firstStart = new Date(sorted[0].startTime);
   if (Number.isNaN(firstStart.getTime())) return false;
-  const limit = addCalendarMonthClamped(firstStart);
+  if (!Number.isInteger(maxCalendarMonths) || maxCalendarMonths < 1) return false;
+  const limit = new Date(firstStart);
+  limit.setDate(1);
+  limit.setMonth(limit.getMonth() + maxCalendarMonths);
+  const lastDay = new Date(limit.getFullYear(), limit.getMonth() + 1, 0).getDate();
+  limit.setDate(Math.min(firstStart.getDate(), lastDay));
   return sorted.every(booking => {
     const start = new Date(booking.startTime);
     const end = new Date(booking.endTime);
