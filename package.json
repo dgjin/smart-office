@@ -4,19 +4,34 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "vite --port 3001 --strictPort",
     "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/index.ts",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
-    "preview": "vite preview"
+    "test:unit": "node --test tests/*.test.ts",
+    "test:integration": "node --env-file-if-exists=.env --test --test-concurrency=1 tests/integration/*.test.ts",
+    "test:e2e": "node --env-file-if-exists=.env node_modules/@playwright/test/cli.js test",
+    "db:migrate": "node --env-file-if-exists=.env scripts/db/migrate.ts",
+    "db:status": "node --env-file-if-exists=.env scripts/db/status.ts",
+    "db:verify": "node --env-file-if-exists=.env scripts/db/verify.ts",
+    "db:seed": "node --env-file-if-exists=.env scripts/db/seed.ts",
+    "db:backup": "node --env-file-if-exists=.env scripts/db/native-backup.ts",
+    "db:restore": "node --env-file-if-exists=.env scripts/db/native-restore.ts",
+    "db:drill": "node --env-file-if-exists=.env scripts/db/native-drill.ts",
+    "auth:bind": "node --env-file-if-exists=.env scripts/auth/bind-identity.ts",
+    "auth:bootstrap": "node --env-file-if-exists=.env scripts/auth/bootstrap-admin.ts",
+    "preview": "vite preview --port 3001 --strictPort"
   },
   "dependencies": {
-    "@google/genai": "^1.38.0",
     "lucide-react": "^0.562.0",
+    "mysql2": "^3.24.6",
+    "openid-client": "^6.9.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

@@ -3,23 +3,28 @@ import {
   Users, MapPin, Calendar, CheckCircle, XCircle, LayoutDashboard, Plus, LogOut, 
   Cpu, Monitor, Coffee, Edit2, Trash2, UserPlus, RefreshCw,
   Clock, GitMerge, ChevronRight, ArrowRight, ChevronDown, ChevronUp,
-  Zap, ShieldCheck, Check, X, Building2, 
+  ShieldCheck, Check, X, Building2,
   PieChart, ChevronLeft, Timer, Briefcase, Shield, FolderTree,
   UserCircle, AlertTriangle, Download, Upload, Database,
   Info, MoreHorizontal, Activity, ArrowRightCircle, MessageSquare, Send,
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
-  Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff
+  Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
+  PanelLeftClose, PanelLeftOpen
 } from 'lucide-react';
-import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder } from './types';
-import { INITIAL_USERS, INITIAL_RESOURCES, INITIAL_BOOKINGS, DEFAULT_WORKFLOW, INITIAL_DEPARTMENTS, INITIAL_ROLES } from './constants';
-import { getSmartRecommendation, type SmartRecommendation } from './services/aiService';
+import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
-import { findBookingConflicts, findNextAvailableSlot, hasBookingConflict, isActiveBooking } from './utils/bookingRules';
-import { approveBooking, canApproveBooking, isLastApprovalNode, rejectBooking } from './utils/approval';
+import { findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, resourceSupportsFeature, validateBookingResource } from './utils/bookingRules';
+import { validateBookingDraft } from './utils/bookingDraft';
+import { filterResources } from './utils/resourceSearch';
+import { getApprovalGroups, getBookingWorkflow } from './utils/approval';
+import { generateReport } from './utils/reports';
+import { generateBookingIcs } from './utils/calendar';
+import ChatDock, { type AgentAction } from './components/ChatDock';
+import BuildingExplorer, { BUILDINGS, getFloorNumbers, parseBuilding, parseFloor, type BuildingId } from './components/BuildingExplorer';
 
-const STORAGE_KEY = 'SMART_OFFICE_DATA_V35';
-const THEME_KEY = 'SMART_OFFICE_THEME';
+type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'DATA_CENTER';
+type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
 const THEMES = [
@@ -30,21 +35,26 @@ const THEMES = [
   { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-purple-600', border: 'border-purple-100', bg: 'bg-purple-50' },
 ];
 
+const ROOM_FEATURES: Array<{ id: RoomFeature; label: string }> = [
+  { id: 'VIDEO', label: '视频会议系统' },
+  { id: 'DISPLAY', label: '投屏显示器' },
+  { id: 'WHITEBOARD', label: '白板' }
+];
+
+const BOOKING_ERROR_MESSAGES: Record<string, string> = {
+  RESOURCE_NOT_FOUND: '会议室信息已不存在，请刷新后重试。',
+  RESOURCE_MAINTENANCE: '该会议室正在维护，请选择其他会议室。',
+  RESOURCE_UNAVAILABLE: '该会议室暂未开放预约，请选择其他会议室。',
+  INVALID_TIME_RANGE: '预约时间无效，请重新选择。',
+  INVALID_PARTICIPANTS: '参与人数无效，请重新填写。',
+  CAPACITY_EXCEEDED: '参与人数超过会议室当前容量，请减少人数或更换会议室。',
+  REQUIRED_FEATURE_UNAVAILABLE: '会议室当前设备不满足预约要求，请调整设备需求或更换会议室。',
+  ACTIVE_BOOKINGS_REQUIRE_REVIEW: '仍有未结束的有效预约，请先取消或改期后再切换维护状态。'
+};
+
 const downloadBookingIcs = (booking: Booking, resource: Resource, users: User[]) => {
-  const timestamp = (iso: string) => new Date(iso).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
-  const escape = (value: string) => value.replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\n/g, '\\n');
-  const organizer = users.find(u => u.id === booking.userId);
-  const attendees = (booking.attendeeIds || []).map(id => users.find(u => u.id === id)).filter(Boolean) as User[];
-  const lines = [
-    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//SmartOffice//Booking//ZH-CN', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH',
-    'BEGIN:VEVENT', `UID:${booking.id}@smartoffice.local`, `DTSTAMP:${timestamp(new Date().toISOString())}`,
-    `DTSTART:${timestamp(booking.startTime)}`, `DTEND:${timestamp(booking.endTime)}`,
-    `SUMMARY:${escape(booking.purpose)}`, `LOCATION:${escape(resource.name)}`,
-    organizer ? `ORGANIZER;CN=${escape(organizer.name)}:MAILTO:${organizer.email}` : '',
-    ...attendees.map(u => `ATTENDEE;CN=${escape(u.name)};RSVP=TRUE:MAILTO:${u.email}`),
-    'END:VEVENT', 'END:VCALENDAR'
-  ].filter(Boolean);
-  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+  const ics = generateBookingIcs(booking, resource, users, new Date());
+  const blob = new Blob([ics], { type: 'text/calendar;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.href = url;
@@ -78,6 +88,27 @@ const useModalA11y = (onClose: () => void) => {
 
 // --- Sub-components ---
 
+const ToastNotification = ({ notification, onClose }: { notification: Notification; onClose: () => void }) => {
+  const [visible, setVisible] = useState(true);
+  useEffect(() => {
+    const timer = setTimeout(() => setVisible(false), 4000);
+    return () => clearTimeout(timer);
+  }, []);
+  if (!visible) return null;
+  return (
+    <div role="status" className="studio-toast backdrop-blur-md flex items-start space-x-3 animate-in slide-in-from-right-8 fade-in pointer-events-auto">
+      <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${notification.type === 'SUCCESS' ? 'bg-emerald-50 text-emerald-600' : notification.type === 'WARNING' ? 'bg-amber-50 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
+        {notification.type === 'SUCCESS' ? <CheckCircle size={18}/> : notification.type === 'WARNING' ? <AlertTriangle size={18}/> : <Info size={18}/>}
+      </div>
+      <div className="flex-1">
+        <h5 className="text-sm font-black text-gray-800">{notification.title}</h5>
+        <p className="text-xs text-gray-500 font-medium mt-0.5">{notification.content}</p>
+      </div>
+      <button onClick={onClose} aria-label="关闭提醒" className="text-gray-500 hover:text-gray-500"><X size={14}/></button>
+    </div>
+  );
+};
+
 const StatusBadge = ({ status, theme }: { status: string, theme: string }) => {
   const styles: any = { 
     AVAILABLE: 'bg-emerald-50 text-emerald-600 border-emerald-100', 
@@ -93,7 +124,7 @@ const StatusBadge = ({ status, theme }: { status: string, theme: string }) => {
     AVAILABLE: '空闲', PENDING: '审批中', APPROVED: '已通过', REJECTED: '驳回', 
     OCCUPIED: '占用', CANCELLED: '已撤销', COMPLETED: '结束', MAINTENANCE: '维护中' 
   };
-  return <span className={`px-2 py-0.5 rounded-lg text-[11px] font-bold border ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
+  return <span className={`status-badge status-${String(status).toLowerCase()} ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
 };
 
 const RoleTag = ({ roleId, roles, theme }: any) => {
@@ -102,28 +133,81 @@ const RoleTag = ({ roleId, roles, theme }: any) => {
   return <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${role.color}-100 text-${role.color}-700 border border-${role.color}-200`}>{role.name}</span>;
 };
 
-const SidebarItem = ({ icon: Icon, label, id, active, onClick, theme, badge }: any) => (
-  <button onClick={() => onClick(id)} className={`w-full flex items-center justify-between px-4 py-3 rounded-xl transition-all ${active ? `bg-${theme}-600 text-white shadow-lg` : `text-gray-500 hover:bg-${theme}-50 hover:text-${theme}-600`}`}>
-    <div className="flex items-center space-x-3">
-      <Icon size={18} /> 
-      <span className="text-sm font-medium">{label}</span>
-    </div>
-    {badge > 0 && <span className={`px-1.5 py-0.5 rounded-full text-[11px] font-bold ${active ? 'bg-white text-indigo-600' : 'bg-rose-500 text-white'}`}>{badge}</span>}
+const SidebarItem = ({ icon: Icon, label, id, active, onClick, badge }: any) => (
+  <button type="button" onClick={() => onClick(id)} className="studio-nav-item" data-active={active} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
+    <Icon size={17} strokeWidth={1.7} />
+    <span>{label}</span>
+    {badge > 0 && <span className="studio-nav-count">{badge}</span>}
   </button>
 );
 
+const MobileMoreSheet = ({ items, currentView, onSelect, onClose, theme, onThemeChange, currentUser, isOnline, saveStatus, onLogout }: {
+  items: NavItem[];
+  currentView: AppView;
+  onSelect: (id: AppView) => void;
+  onClose: () => void;
+  theme: string;
+  onThemeChange: (theme: string) => void;
+  currentUser: User;
+  isOnline: boolean;
+  saveStatus: 'saved' | 'saving' | 'error';
+  onLogout: () => void;
+}) => {
+  const sheetRef = useModalA11y(onClose);
+  return (
+    <div className="mobile-more-layer lg:hidden fixed inset-0 z-[120]">
+      <button type="button" className="mobile-more-backdrop" aria-label="关闭更多功能" onClick={onClose} />
+      <div ref={sheetRef} role="dialog" aria-modal="true" aria-label="更多功能" className="mobile-more-sheet">
+        <div className="mobile-more-handle" aria-hidden="true" />
+        <header className="mobile-more-head">
+          <div><span>WORKSPACE / MENU</span><h2>更多功能</h2></div>
+          <button type="button" onClick={onClose} aria-label="关闭更多功能"><X size={18} /></button>
+        </header>
+        {items.length > 0 && (
+          <nav aria-label="更多功能导航" className="mobile-more-grid">
+            {items.map(item => (
+              <button key={item.id} type="button" data-active={currentView === item.id} aria-current={currentView === item.id ? 'page' : undefined} onClick={() => onSelect(item.id)}>
+                <item.icon size={20} strokeWidth={1.6} />
+                <span>{item.label}</span>
+                {(item.badge || 0) > 0 && <strong>{item.badge}</strong>}
+              </button>
+            ))}
+          </nav>
+        )}
+        <section className="mobile-more-section" aria-labelledby="mobile-theme-title">
+          <div className="mobile-more-section-title"><span id="mobile-theme-title">界面主题</span><small>THEME</small></div>
+          <div className="mobile-theme-grid">
+            {THEMES.map(item => (
+              <button key={item.id} type="button" data-active={theme === item.id} aria-pressed={theme === item.id} onClick={() => onThemeChange(item.id)}>
+                <i className={item.color} aria-hidden="true" /><span>{item.name}</span>
+              </button>
+            ))}
+          </div>
+        </section>
+        <section className="mobile-account-card" aria-label="当前账户">
+          <div className="studio-user-avatar">{currentUser.name[0]}</div>
+          <div><strong>{currentUser.name}</strong><span>{currentUser.department} · {saveStatus === 'saving' ? '正在同步' : isOnline && saveStatus !== 'error' ? 'MySQL 已同步' : '连接异常，更改未保存'}</span></div>
+          <button type="button" onClick={onLogout}><LogOut size={16} />退出登录</button>
+        </section>
+      </div>
+    </div>
+  );
+};
+
 const StatCard = ({ title, value, icon: Icon, trend, color, onClick }: any) => (
-  <button onClick={onClick} className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all text-left">
-    <div className="space-y-1">
-      <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">{title}</p>
-      <h3 className="text-2xl font-black text-gray-800">{value}</h3>
-      {trend && <p className={`text-[11px] font-bold ${trend.startsWith('+') ? 'text-emerald-500' : 'text-rose-500'}`}>{trend} <span className="text-gray-500">较上周</span></p>}
-    </div>
-    <div className={`w-12 h-12 rounded-2xl bg-${color}-50 flex items-center justify-center text-${color}-600 group-hover:scale-110 transition-transform`}>
-      <Icon size={24} />
-    </div>
+  <button onClick={onClick} className="studio-stat" data-tone={color}>
+    <div className="studio-stat-label"><span>{title}</span><Icon size={17} strokeWidth={1.6}/></div>
+    <h3>{value}</h3>
+    <p>{trend || 'REALTIME · 实时数据'}</p>
   </button>
 );
+
+const SCHEDULE_RANGES = [
+  { id: 'TODAY', label: '今日', code: 'DAY', description: '08:00—20:00 时间轨 · 点击会议查看详情' },
+  { id: 'WEEK', label: '本周', code: '7 DAYS', description: '未来 7 天申请概况 · 点击日期查看详情' },
+  { id: 'MONTH', label: '本月', code: '30 DAYS', description: '未来 30 天申请概况 · 点击日期查看详情' }
+] as const;
+type ScheduleRange = typeof SCHEDULE_RANGES[number]['id'];
 
 const QRScannerModal = ({ theme, bookings, resources, onClose, onCheckIn }: any) => {
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -156,7 +240,7 @@ const QRScannerModal = ({ theme, bookings, resources, onClose, onCheckIn }: any)
           {error ? <p className="p-6 text-center text-white text-xs font-bold">{error}</p> : <video ref={videoRef} autoPlay playsInline muted className="absolute inset-0 w-full h-full object-cover" />}
         </div>
         <div className="space-y-3">
-          {bookings.map((b: Booking) => <button key={b.id} onClick={() => { if (onCheckIn(b.id)) onClose(); }} className={`w-full p-4 rounded-2xl bg-${theme}-50 border border-${theme}-100 text-left hover:bg-${theme}-100 transition-colors`}>
+          {bookings.map((b: Booking) => <button key={b.id} onClick={async () => { if (await onCheckIn(b.id)) onClose(); }} className={`w-full p-4 rounded-2xl bg-${theme}-50 border border-${theme}-100 text-left hover:bg-${theme}-100 transition-colors`}>
             <div className="flex items-center justify-between gap-3">
               <div><p className="text-sm font-black text-gray-800">{b.purpose}</p><p className="text-[11px] text-gray-500 mt-1">{resources.find((r: Resource) => r.id === b.resourceId)?.name} · {toLocalDateTimeString(b.startTime)} - {toLocalTimeString(b.endTime)}</p></div>
               <span className={`shrink-0 px-3 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-black`}>确认签到</span>
@@ -169,29 +253,75 @@ const QRScannerModal = ({ theme, bookings, resources, onClose, onCheckIn }: any)
   );
 };
 
-const LoginView = ({ users, onLogin, theme }: any) => {
+const LoginView = ({ onLogin }: any) => {
+  const [options, setOptions] = useState<{ oidc: boolean; development: boolean; users: User[] }>({ oidc: false, development: false, users: [] });
+  const [optionsLoaded, setOptionsLoaded] = useState(false);
+  const [error, setError] = useState('');
+  useEffect(() => {
+    fetch('/api/auth/options')
+      .then(res => res.ok ? res.json() : Promise.reject(new Error(String(res.status))))
+      .then(setOptions)
+      .catch(() => setError('认证服务暂时不可用，请稍后重试。'))
+      .finally(() => setOptionsLoaded(true));
+  }, []);
+  const devLogin = async (userId: string) => {
+    setError('');
+    try {
+      const res = await fetch(`/api/auth/dev?userId=${encodeURIComponent(userId)}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'DEV_AUTH_FAILED');
+      onLogin(data.actor);
+    } catch {
+      setError('开发身份登录失败，请确认服务已启用开发认证。');
+    }
+  };
   return (
-    <div className={`min-h-screen bg-gray-50 flex items-center justify-center p-4`}>
-      <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-xl p-10 border border-gray-100">
-        <div className="text-center mb-10">
-          <div className={`w-16 h-16 bg-${theme}-600 rounded-2xl mx-auto flex items-center justify-center text-white shadow-lg mb-6`}>
-            <Cpu size={32} />
+    <div className="login-shell" data-theme="indigo">
+      <section className="login-editorial" aria-label="SmartOffice 品牌介绍">
+        <div className="login-brand">
+          <div className="login-brand-mark"><Cpu size={22} strokeWidth={1.5}/></div>
+          <div><div className="login-brand-name">SmartOffice</div><div className="login-brand-meta">WORKPLACE, WELL COMPOSED.</div></div>
+        </div>
+        <div className="login-hero">
+          <div className="login-kicker">THE DAILY OFFICE JOURNAL · 2026</div>
+          <h1>让每一次相聚，<br/><em>恰到好处。</em></h1>
+          <p>从一间会议室，到一天的工作节奏。<br/>把空间、时间与协作，写进同一页议程。</p>
+        </div>
+        <div className="login-steps">
+          <div className="login-step"><span>01 / RESERVE</span><strong>找到合适的空间</strong></div>
+          <div className="login-step"><span>02 / COORDINATE</span><strong>让流程自然发生</strong></div>
+          <div className="login-step"><span>03 / MEET</span><strong>专注真正重要的事</strong></div>
+        </div>
+      </section>
+      <main className="login-access">
+        <div className="login-access-inner">
+          <header className="login-access-heading">
+            <div className="login-date"><span>THE OFFICE DESK / 成员入口</span><span>{new Date().getFullYear()}</span></div>
+            <h2>今天，从这里开始。</h2>
+            <p className="login-access-intro">使用企业统一身份认证进入今日办公议程。</p>
+          </header>
+          <div className="login-accounts">
+            {options.oidc && <button onClick={() => { window.location.assign('/api/auth/login?returnTo=%2F'); }} className="login-account">
+              <span className="login-account-index">SSO</span>
+              <span className="login-account-avatar"><Key size={20}/></span>
+              <span><strong className="login-account-name">企业统一身份登录</strong><small className="login-account-role">Authorization Code · PKCE</small></span>
+              <ArrowUpRight size={19} strokeWidth={1.5}/>
+            </button>}
+            {options.development && options.users.map((user, index) => (
+              <button key={user.id} onClick={() => void devLogin(user.id)} className="login-account">
+                <span className="login-account-index">{String(index + 1).padStart(2, '0')}</span>
+                <span className="login-account-avatar">{user.name[0]}</span>
+                <span><strong className="login-account-name">{user.name}</strong><small className="login-account-role">开发身份 · {user.department}</small></span>
+                <ArrowUpRight size={19} strokeWidth={1.5}/>
+              </button>
+            ))}
+            {!optionsLoaded && !error && <p className="text-sm text-gray-500">正在检查认证配置…</p>}
+            {optionsLoaded && !options.oidc && !options.development && !error && <p role="alert" className="text-sm font-bold text-amber-600">未配置可用的认证方式，请联系管理员检查 OIDC 或开发认证配置。</p>}
+            {error && <p role="alert" className="text-sm font-bold text-rose-600">{error}</p>}
           </div>
-          <h1 className="text-3xl font-black text-gray-800 tracking-tight">SmartOffice</h1>
-          <p className="text-gray-500 font-medium mt-2">请选择演示账号登录</p>
+          <footer className="login-footnote flex justify-between gap-4"><span>SMARTOFFICE®</span><span>企业身份认证 · MySQL 会话</span></footer>
         </div>
-        <div className="space-y-3">
-          {users.map((u: any) => (
-            <button key={u.id} onClick={() => onLogin(u)} className="w-full p-4 flex items-center space-x-4 rounded-2xl border border-gray-100 hover:border-indigo-200 hover:bg-indigo-50 transition-all group text-left">
-              <div className={`w-10 h-10 rounded-full bg-gray-100 flex items-center justify-center font-black text-gray-500 group-hover:bg-indigo-200 group-hover:text-indigo-600 transition-colors`}>{u.name[0]}</div>
-              <div>
-                <h4 className="font-bold text-gray-800">{u.name}</h4>
-                <p className="text-xs text-gray-500">{u.role.join(', ')}</p>
-              </div>
-            </button>
-          ))}
-        </div>
-      </div>
+      </main>
     </div>
   );
 };
@@ -199,8 +329,7 @@ const LoginView = ({ users, onLogin, theme }: any) => {
 const TodayResourceUsage = ({ resources, bookings, users, theme, onBookingClick }: any) => {
   const hours = Array.from({ length: 13 }, (_, i) => i + 8); // 8:00 - 20:00
   return (
-    <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 overflow-x-auto">
-      <h3 className="font-black text-lg mb-6">今日资源占用概览</h3>
+    <div className="studio-timeline overflow-x-auto">
       <div className="min-w-[600px]">
         <div className="flex mb-4">
           <div className="w-32 shrink-0 p-2 text-xs font-black text-gray-500 uppercase tracking-widest">资源名称</div>
@@ -266,7 +395,7 @@ const TodayResourceUsage = ({ resources, bookings, users, theme, onBookingClick 
   );
 };
 
-const ResourceUsageGrid = ({ title, days, resources, bookings, onDayClick, theme }: any) => {
+const ResourceUsageGrid = ({ days, resources, bookings, onDayClick, theme }: any) => {
   const isBookingActiveOnDay = (booking: Booking, day: Date, resourceId: string) => {
     if (booking.resourceId !== resourceId) return false;
     if (booking.status !== 'APPROVED') return false;
@@ -280,8 +409,7 @@ const ResourceUsageGrid = ({ title, days, resources, bookings, onDayClick, theme
   };
 
   return (
-    <div className="bg-white p-6 rounded-[2rem] shadow-sm border border-gray-100 flex flex-col">
-      <h3 className="font-black text-lg mb-4">{title}</h3>
+    <div className="studio-usage-grid flex flex-col">
       <div className="overflow-x-auto custom-scrollbar pb-2">
         <table className="border-collapse w-full min-w-[800px]">
           <thead>
@@ -379,10 +507,11 @@ const ResourceUsageGrid = ({ title, days, resources, bookings, onDayClick, theme
 };
 
 const WorkflowStepper = ({ booking, workflow, theme }: any) => {
+  const effectiveWorkflow = getBookingWorkflow(booking, workflow);
   return (
     <div className="flex items-center justify-between relative mt-4">
       <div className="absolute left-0 right-0 top-1/2 h-0.5 bg-gray-100 -z-10"></div>
-      {workflow.map((node: any, idx: number) => {
+      {effectiveWorkflow.map((node: ApprovalNode, idx: number) => {
         const isPassed = booking.currentNodeIndex > idx || (booking.currentNodeIndex === idx && booking.status === 'APPROVED');
         const isCurrent = booking.currentNodeIndex === idx && booking.status === 'PENDING';
         return (
@@ -398,27 +527,32 @@ const WorkflowStepper = ({ booking, workflow, theme }: any) => {
   );
 };
 
-const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprove, onReject, selected, onToggleSelect }: any) => {
+const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users, resources, theme, onApprove, onReject, selected, onToggleSelect, busy = false, disabled = false, actionError = '' }: any) => {
   const user = users.find((u: any) => u.id === booking.userId);
   const resource = resources.find((r: any) => r.id === booking.resourceId);
+  const currentNode = getBookingWorkflow(booking, workflow)[booking.currentNodeIndex];
+  const isLongTerm = booking.seriesKind === 'LONG_TERM';
   const [comment, setComment] = useState('');
   const [error, setError] = useState('');
+  const controlsDisabled = disabled || busy;
   const reject = () => {
     if (!comment.trim()) { setError('驳回时必须填写具体原因'); return; }
     onReject(comment.trim());
   };
   return (
-    <div className={`bg-white p-6 rounded-[2rem] border shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6 ${selected ? `border-${theme}-300 ring-2 ring-${theme}-50` : 'border-gray-100'}`}>
-      <button onClick={onToggleSelect} aria-label={`选择${user?.name}的申请`} className={`self-start md:self-center ${selected ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-500'}`}>{selected ? <CheckSquare size={20}/> : <Square size={20}/>}</button>
+    <div aria-busy={busy} className={`bg-white p-6 rounded-[2rem] border shadow-sm flex flex-col md:flex-row md:items-center justify-between gap-6 ${selected ? `border-${theme}-300 ring-2 ring-${theme}-50` : 'border-gray-100'}`}>
+      <button disabled={controlsDisabled} onClick={onToggleSelect} aria-label={`选择${user?.name}的申请`} className={`self-start md:self-center disabled:cursor-not-allowed disabled:opacity-40 ${selected ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-500'}`}>{selected ? <CheckSquare size={20}/> : <Square size={20}/>}</button>
       <div className="flex items-center space-x-4 flex-1">
         <div className={`w-12 h-12 rounded-2xl bg-${theme}-50 flex items-center justify-center text-${theme}-600 font-bold text-xs shrink-0`}>{user?.name[0]}</div>
         <div>
-           <div className="flex items-center space-x-2">
+           <div className="flex flex-wrap items-center gap-2">
              <h4 className="font-bold text-gray-800 text-lg">{user?.name} 申请 {resource?.name}</h4>
-             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && <span className="bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-rose-100">特殊需求</span>}
+             {isLongTerm && <span className="shrink-0 whitespace-nowrap bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-indigo-100">{booking.renewalOfSeriesId ? '长期续期' : '长期预订'}</span>}
+             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && <span className="shrink-0 whitespace-nowrap bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-rose-100">特殊需求</span>}
            </div>
-           <p className="text-xs text-gray-500 font-medium">{toLocalDateTimeString(booking.startTime)} 至 {toLocalDateTimeString(booking.endTime)} · {booking.purpose}</p>
-           
+           <p className="text-xs text-gray-500 font-medium">{isLongTerm ? `${toLocalDateString(booking.startTime)} 至 ${booking.seriesEndDate} · 每天 ${toLocalTimeString(booking.startTime)} - ${toLocalTimeString(booking.endTime)} · ${seriesBookings.length} 个会议日` : `${toLocalDateTimeString(booking.startTime)} 至 ${toLocalDateTimeString(booking.endTime)}`} · {booking.purpose}</p>
+           <p className="mt-1 text-[11px] font-bold text-gray-500">当前节点：{currentNode?.name || '待审批'}{booking.workflowVersion ? ` · 流程 V${booking.workflowVersion}` : ''}</p>
+
            {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && (
              <div className="mt-2 flex flex-wrap gap-2">
                {booking.hasLeader && (
@@ -445,11 +579,11 @@ const ApprovalTaskCard = ({ booking, workflow, users, resources, theme, onApprov
       </div>
       <div className="w-full md:w-72 shrink-0 space-y-2">
         <label className="sr-only" htmlFor={`comment-${booking.id}`}>审批附言</label>
-        <textarea id={`comment-${booking.id}`} value={comment} onChange={e => { setComment(e.target.value); setError(''); }} placeholder="审批附言（通过可选，驳回必填）" className="w-full p-3 rounded-xl bg-gray-50 border border-gray-100 text-xs outline-none focus:ring-2 ring-indigo-100 resize-none" rows={2}/>
-        {error && <p className="text-[11px] font-bold text-rose-600">{error}</p>}
+        <textarea id={`comment-${booking.id}`} disabled={controlsDisabled} value={comment} onChange={e => { setComment(e.target.value); setError(''); }} placeholder="审批附言（通过可选，驳回必填）" className="w-full p-3 rounded-xl bg-gray-50 border border-gray-100 text-xs outline-none focus:ring-2 ring-indigo-100 resize-none disabled:opacity-60" rows={2}/>
+        {(error || actionError) && <p role="alert" className="text-[11px] font-bold text-rose-600">{error || actionError}</p>}
         <div className="flex space-x-3">
-          <button onClick={reject} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-500 font-bold text-xs hover:bg-gray-50 transition-colors">驳回</button>
-          <button onClick={() => onApprove(comment.trim())} className={`flex-1 px-4 py-2.5 rounded-xl bg-${theme}-600 text-white font-bold text-xs shadow-lg hover:shadow-xl transition-all`}>通过审批</button>
+          <button disabled={controlsDisabled} onClick={reject} className="flex-1 px-4 py-2.5 rounded-xl border border-gray-200 text-gray-500 font-bold text-xs hover:bg-gray-50 transition-colors disabled:cursor-not-allowed disabled:opacity-50">{busy ? '处理中…' : '驳回'}</button>
+          <button disabled={controlsDisabled} onClick={() => onApprove(comment.trim())} className={`flex-1 px-4 py-2.5 rounded-xl bg-${theme}-600 text-white font-bold text-xs shadow-lg hover:shadow-xl transition-all disabled:cursor-not-allowed disabled:opacity-50`}>{busy ? '处理中…' : '通过审批'}</button>
         </div>
       </div>
     </div>
@@ -862,29 +996,147 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
 };
 
 const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
+  const initialBuildingId: BuildingId = resource?.type === 'DESK' ? 'MAIN' : parseBuilding(resource?.location || '');
   const [formData, setFormData] = useState({
     name: resource?.name || '',
     type: resource?.type || 'ROOM',
-    capacity: resource?.capacity || 4,
-    location: resource?.location || '',
+    capacity: resource?.capacity ?? 4,
+    status: resource?.status || 'AVAILABLE',
+    campus: resource?.campus || '',
+    features: resource?.features || []
   });
+  const [newFeature, setNewFeature] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [buildingId, setBuildingId] = useState<BuildingId>(initialBuildingId);
+  const [floor, setFloor] = useState<number | null>(() => resource?.type === 'DESK' ? null : parseFloor(resource?.location || '', BUILDINGS[initialBuildingId].totalFloors));
+  const [locationDetail, setLocationDetail] = useState(() => resource?.type === 'DESK' ? '' : (resource?.location || '')
+    .replace(/(?:1|一|2|二)\s*号楼|主楼|配楼/gi, '')
+    .replace(/\d{1,2}\s*(?:层|F\b)/i, '')
+    .replace(/^[\s·,，\-—/]+|[\s·,，\-—/]+$/g, ''));
+  const [deskLocation, setDeskLocation] = useState(resource?.type === 'DESK' ? resource.location : '');
+  const [formError, setFormError] = useState('');
+  const building = BUILDINGS[buildingId];
+  const locationPreview = `${building.name} ${floor ? `${floor}层` : '待选择楼层'}${locationDetail ? ` · ${locationDetail}` : ''}`;
+
+  const toggleFeature = (feature: typeof ROOM_FEATURES[number]) => {
+    const enabled = resourceSupportsFeature({ features: formData.features }, feature.id);
+    setFormData({
+      ...formData,
+      features: enabled
+        ? formData.features.filter((label: string) => label.trim() && !resourceSupportsFeature({ features: [label] }, feature.id))
+        : [...formData.features, feature.label]
+    });
+    setFormError('');
+  };
+  const addCustomFeature = () => {
+    const label = newFeature.trim();
+    if (!label || formData.features.includes(label)) return;
+    setFormData({ ...formData, features: [...formData.features, label] });
+    setNewFeature('');
+  };
+
+  const handleSave = async () => {
+    const name = formData.name.trim();
+    if (!name) {
+      setFormError('请填写资源名称');
+      return;
+    }
+    if (!Number.isInteger(formData.capacity) || formData.capacity < (formData.type === 'ROOM' ? 1 : 0)) {
+      setFormError(formData.type === 'ROOM' ? '会议室容量必须为大于 0 的整数' : '工位容量不能小于 0');
+      return;
+    }
+    if (formData.type === 'ROOM' && !floor) {
+      setFormError('请选择会议室所在楼层，以便在 3D 图中展示');
+      return;
+    }
+    const location = formData.type === 'ROOM'
+      ? `${building.name} ${floor}层${locationDetail.trim() ? ` · ${locationDetail.trim()}` : ''}`
+      : deskLocation.trim();
+    if (!location) {
+      setFormError('请填写工位位置');
+      return;
+    }
+    setSaving(true);
+    try {
+      await onSave({ ...formData, name, location, campus: formData.campus.trim() || undefined });
+    } catch (error: any) {
+      setFormError(error?.message || '保存失败，请稍后重试');
+    } finally {
+      setSaving(false);
+    }
+  };
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl animate-in zoom-in">
         <h3 className="font-black text-xl mb-6">{resource ? '编辑资源' : '新增资源'}</h3>
         <div className="space-y-4">
-          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="资源名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input aria-label="资源名称" value={formData.name} onChange={e => { setFormData({...formData, name: e.target.value}); setFormError(''); }} placeholder="资源名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           <div className="flex space-x-2">
-            <button onClick={() => setFormData({...formData, type: 'ROOM'})} className={`flex-1 p-3 rounded-xl border ${formData.type === 'ROOM' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>会议室</button>
-            <button onClick={() => setFormData({...formData, type: 'DESK'})} className={`flex-1 p-3 rounded-xl border ${formData.type === 'DESK' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>工位</button>
+            <button type="button" aria-pressed={formData.type === 'ROOM'} onClick={() => { setFormData({...formData, type: 'ROOM'}); setFormError(''); }} className={`flex-1 p-3 rounded-xl border ${formData.type === 'ROOM' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>会议室</button>
+            <button type="button" aria-pressed={formData.type === 'DESK'} onClick={() => { setFormData({...formData, type: 'DESK'}); setFormError(''); }} className={`flex-1 p-3 rounded-xl border ${formData.type === 'DESK' ? `bg-${theme}-50 border-${theme}-200 text-${theme}-600` : 'bg-gray-50 border-gray-100 text-gray-500'}`}>工位</button>
           </div>
-          <input type="number" value={formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
-          <input value={formData.location} onChange={e => setFormData({...formData, location: e.target.value})} placeholder="位置" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input aria-label="资源容量" type="number" min={formData.type === 'ROOM' ? 1 : 0} value={Number.isNaN(formData.capacity) ? '' : formData.capacity} onChange={e => setFormData({...formData, capacity: parseInt(e.target.value)})} placeholder="容量" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <label className="block">
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">所属园区</span>
+            <input aria-label="资源所属园区" value={formData.campus} onChange={e => setFormData({ ...formData, campus: e.target.value })} placeholder="如：总部园区（用于审批范围）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          </label>
+          <label className="block">
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">预约服务状态</span>
+            <select aria-label="资源服务状态" value={formData.status} onChange={e => { setFormData({ ...formData, status: e.target.value }); setFormError(''); }} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100 text-sm font-bold">
+              <option value="AVAILABLE">空闲 · 开放预约</option>
+              <option value="OCCUPIED">当前占用 · 允许预约未来空档</option>
+              <option value="MAINTENANCE">维护中 · 暂停新预约</option>
+              <option value="PENDING">待开放 · 暂停新预约</option>
+            </select>
+          </label>
+          {formData.type === 'ROOM' && <div className="p-3 bg-gray-50 rounded-xl space-y-3">
+            <div><p className="text-xs text-gray-600 font-black">会议室设备与功能</p><p className="text-[11px] text-gray-500 mt-1">预订时会同步展示并校验设备要求。</p></div>
+            <div className="grid grid-cols-3 gap-2">
+              {ROOM_FEATURES.map(feature => {
+                const enabled = resourceSupportsFeature({ features: formData.features }, feature.id);
+                return <button key={feature.id} type="button" aria-pressed={enabled} onClick={() => toggleFeature(feature)} className={`px-2 py-2 rounded-lg border text-[11px] font-bold ${enabled ? `bg-${theme}-600 text-white border-${theme}-600` : 'bg-white text-gray-500 border-gray-200'}`}>{feature.label}</button>;
+              })}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {formData.features.filter((label: string) => !ROOM_FEATURES.some(feature => resourceSupportsFeature({ features: [label] }, feature.id))).map((label: string) => <span key={label} className="inline-flex items-center gap-1 px-2 py-1 bg-white rounded-lg text-[11px] font-bold text-gray-600">{label}<button type="button" aria-label={`移除${label}`} onClick={() => setFormData({ ...formData, features: formData.features.filter((item: string) => item !== label) })}><X size={12}/></button></span>)}
+            </div>
+            <div className="flex gap-2">
+              <input aria-label="自定义设备功能" value={newFeature} onChange={e => setNewFeature(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); addCustomFeature(); } }} placeholder="其他设备，如电话会议" className="flex-1 min-w-0 p-2.5 bg-white rounded-lg border border-gray-100 text-xs" />
+              <button type="button" onClick={addCustomFeature} disabled={!newFeature.trim()} className="px-3 rounded-lg bg-white border border-gray-200 text-xs font-bold disabled:opacity-40">添加</button>
+            </div>
+          </div>}
+          {formData.type === 'ROOM' ? (
+            <>
+              <div className="grid grid-cols-2 gap-3">
+                <label>
+                  <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">楼栋</span>
+                  <select aria-label="资源楼栋" value={buildingId} onChange={e => { setBuildingId(e.target.value as BuildingId); setFloor(null); setFormError(''); }} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    {Object.values(BUILDINGS).map(item => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">楼层</span>
+                  <select aria-label="资源楼层" value={floor || ''} onChange={e => { setFloor(Number(e.target.value)); setFormError(''); }} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+                    <option value="">请选择楼层</option>
+                    {getFloorNumbers(building.totalFloors).reverse().map(item => <option key={item} value={item}>{item} 层</option>)}
+                  </select>
+                </label>
+              </div>
+              <input aria-label="位置补充" value={locationDetail} onChange={e => setLocationDetail(e.target.value)} placeholder="位置补充（选填，如：东侧 / 101室）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+              <p className="px-3 py-2 bg-gray-50 text-[11px] text-gray-500 rounded-xl">3D 联动位置 · {locationPreview}</p>
+            </>
+          ) : (
+            <label className="block">
+              <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">工位位置</span>
+              <input aria-label="工位位置" value={deskLocation} onChange={e => { setDeskLocation(e.target.value); setFormError(''); }} placeholder="如：A办公区" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+            </label>
+          )}
+          {formError && <p role="alert" className="text-xs text-rose-600">{formError}</p>}
         </div>
         <div className="flex space-x-3 mt-6">
-          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+          <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button type="button" onClick={handleSave} disabled={saving} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold disabled:opacity-60`}>{saving ? '保存中…' : '保存'}</button>
         </div>
       </div>
     </div>
@@ -920,70 +1172,155 @@ const RoleModal = ({ role, onClose, onSave, theme }: any) => {
   );
 };
 
-const WorkflowModal = ({ node, roles, onClose, onSave, theme }: any) => {
+const WorkflowModal = ({ node, roles, departments, onClose, onSave, theme }: any) => {
   const [formData, setFormData] = useState({
     name: node?.name || '',
-    approverRole: node?.approverRole || roles[0]?.id || ''
+    approverRole: node?.approverRole || roles[0]?.id || '',
+    departmentIds: node?.departmentIds || [],
+    campuses: (node?.campuses || []).join('，')
   });
+  const toggleDepartment = (id: string) => setFormData((current: any) => ({
+    ...current,
+    departmentIds: current.departmentIds.includes(id)
+      ? current.departmentIds.filter((item: string) => item !== id)
+      : [...current.departmentIds, id]
+  }));
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-sm w-full shadow-2xl animate-in zoom-in">
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl animate-in zoom-in">
         <h3 className="font-black text-xl mb-6">{node ? '编辑节点' : '新增审批节点'}</h3>
         <div className="space-y-4">
-          <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="节点名称（如：行政初审）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          <input aria-label="审批节点名称" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="节点名称（如：行政初审）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           <div>
             <label className="text-xs text-gray-500 font-bold ml-1 mb-1 block">审批负责人角色</label>
-            <select value={formData.approverRole} onChange={e => setFormData({...formData, approverRole: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
+            <select aria-label="审批负责人角色" value={formData.approverRole} onChange={e => setFormData({...formData, approverRole: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
               {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
             </select>
           </div>
+          <fieldset>
+            <legend className="text-xs text-gray-500 font-bold ml-1 mb-2">申请部门范围</legend>
+            <p className="mb-2 text-[11px] text-gray-500">不选择表示全部部门；选择父部门时包含其子孙部门。</p>
+            <div className="grid grid-cols-2 gap-2 max-h-40 overflow-y-auto rounded-xl bg-gray-50 p-3">
+              {departments.map((department: Department) => <label key={department.id} className="flex items-center gap-2 text-xs font-bold text-gray-600"><input type="checkbox" checked={formData.departmentIds.includes(department.id)} onChange={() => toggleDepartment(department.id)} />{department.name}</label>)}
+            </div>
+          </fieldset>
+          <label className="block">
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">资源园区范围</span>
+            <input aria-label="审批资源园区范围" value={formData.campuses} onChange={e => setFormData({ ...formData, campuses: e.target.value })} placeholder="留空表示全部园区；多个园区用逗号分隔" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+          </label>
         </div>
         <div className="flex space-x-3 mt-6">
           <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+          <button onClick={() => onSave({ ...formData, campuses: formData.campuses.split(/[,，]/).map((item: string) => item.trim()).filter(Boolean) })} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存并发布新版本</button>
         </div>
       </div>
     </div>
   );
 };
 
-const ResourceFinder = ({ resources, bookings, theme, onBook }: any) => {
+const ApprovalDelegateModal = ({ users, onClose, onSave, theme }: any) => {
+  const inputDateTime = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+  const [formData, setFormData] = useState({
+    delegatorId: users[0]?.id || '',
+    delegateId: users[1]?.id || '',
+    startsAt: inputDateTime(new Date()),
+    endsAt: inputDateTime(new Date(Date.now() + 86400000))
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const save = async () => {
+    if (!formData.delegatorId || !formData.delegateId || formData.delegatorId === formData.delegateId) {
+      setError('委托人与代理人必须不同');
+      return;
+    }
+    if (new Date(formData.endsAt) <= new Date(formData.startsAt)) {
+      setError('代理结束时间必须晚于开始时间');
+      return;
+    }
+    setSaving(true);
+    setError('');
+    try {
+      await onSave({
+        ...formData,
+        startsAt: new Date(formData.startsAt).toISOString(),
+        endsAt: new Date(formData.endsAt).toISOString()
+      });
+    } catch (reason: any) {
+      const messages: Record<string, string> = {
+        DELEGATION_OVERLAP: '同一委托人的代理时间段不能重叠',
+        DELEGATION_EXPIRED: '代理结束时间已过，请重新选择',
+        DELEGATION_USER_NOT_FOUND: '委托人或代理人不存在，请刷新后重试'
+      };
+      setError(messages[reason?.message] || reason?.message || '保存失败，请稍后重试');
+    } finally {
+      setSaving(false);
+    }
+  };
+  return (
+    <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+        <h3 className="font-black text-xl">新增代理审批</h3>
+        <p className="mt-2 text-xs text-gray-500">代理人仅在有效期内继承委托人的节点权限，不能审批委托人本人的申请。</p>
+        <div className="mt-6 space-y-4">
+          <label className="block text-xs font-bold text-gray-500">委托人<select aria-label="代理审批委托人" value={formData.delegatorId} onChange={e => setFormData({ ...formData, delegatorId: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100">{users.map((user: User) => <option key={user.id} value={user.id}>{user.name} · {user.department}</option>)}</select></label>
+          <label className="block text-xs font-bold text-gray-500">代理人<select aria-label="代理审批代理人" value={formData.delegateId} onChange={e => setFormData({ ...formData, delegateId: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100">{users.map((user: User) => <option key={user.id} value={user.id}>{user.name} · {user.department}</option>)}</select></label>
+          <div className="grid grid-cols-2 gap-3">
+            <label className="text-xs font-bold text-gray-500">开始时间<input aria-label="代理开始时间" type="datetime-local" value={formData.startsAt} onChange={e => setFormData({ ...formData, startsAt: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+            <label className="text-xs font-bold text-gray-500">结束时间<input aria-label="代理结束时间" type="datetime-local" value={formData.endsAt} onChange={e => setFormData({ ...formData, endsAt: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+          </div>
+          {error && <p role="alert" className="text-xs font-bold text-rose-600">{error}</p>}
+        </div>
+        <div className="flex space-x-3 mt-6">
+          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button onClick={() => void save()} disabled={saving || users.length < 2} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold disabled:opacity-50`}>{saving ? '保存中…' : '创建代理'}</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+type ResourceFinderCriteria = {
+  date: string;
+  start: string;
+  end: string;
+  participants: number;
+  requirements: { video: boolean; display: boolean; whiteboard: boolean };
+};
+
+const createResourceFinderCriteria = (): ResourceFinderCriteria => {
   const tomorrow = new Date();
   tomorrow.setDate(tomorrow.getDate() + 1);
-  const [date, setDate] = useState(formatDate(tomorrow));
-  const [start, setStart] = useState('10:00');
-  const [end, setEnd] = useState('11:00');
-  const [participants, setParticipants] = useState(2);
-  const [requirements, setRequirements] = useState({ video: false, display: false, whiteboard: false });
+  return {
+    date: formatDate(tomorrow),
+    start: '10:00',
+    end: '11:00',
+    participants: 2,
+    requirements: { video: false, display: false, whiteboard: false }
+  };
+};
 
+const ResourceFinder = ({ matches, criteria, onCriteriaChange, theme, onBook }: any) => {
+  const { date, start, end, participants, requirements } = criteria as ResourceFinderCriteria;
   const startDate = new Date(`${date}T${start}`);
   const endDate = new Date(`${date}T${end}`);
   const validTime = endDate > startDate;
-  const matches = resources.filter((r: Resource) => {
-    if (r.type !== 'ROOM' || r.status !== 'AVAILABLE' || (r.capacity || 0) < participants) return false;
-    if (requirements.video && !r.features.some(f => /视频|远程|会议系统/.test(f))) return false;
-    if (requirements.display && !r.features.some(f => /投屏|显示器|屏幕/.test(f))) return false;
-    if (requirements.whiteboard && !r.features.some(f => /白板/.test(f))) return false;
-    if (!validTime) return false;
-    return !bookings.some((b: Booking) => b.resourceId === r.id
-      && ['PENDING', 'APPROVED'].includes(b.status)
-      && startDate < new Date(b.endTime) && endDate > new Date(b.startTime));
+  const updateCriteria = (patch: Partial<ResourceFinderCriteria>) => onCriteriaChange({ ...criteria, ...patch });
+  const toggle = (key: keyof ResourceFinderCriteria['requirements']) => updateCriteria({
+    requirements: { ...requirements, [key]: !requirements[key] }
   });
 
-  const toggle = (key: keyof typeof requirements) => setRequirements(prev => ({ ...prev, [key]: !prev[key] }));
-
   return (
-    <section className="bg-white rounded-3xl border border-gray-100 shadow-sm p-6 space-y-5" aria-label="按条件找会议室">
+    <section className="studio-panel p-6 space-y-5" aria-label="按条件找会议室">
       <div className="flex items-center justify-between">
         <div><h4 className="font-black text-gray-800">按条件找会议室</h4><p className="text-xs text-gray-500 mt-1">实时排除容量不足、设备不符和时段冲突的会议室</p></div>
         <Search size={20} className={`text-${theme}-600`}/>
       </div>
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <label className="text-xs font-bold text-gray-500">日期<input aria-label="查找日期" type="date" min={formatDate(new Date())} value={date} onChange={e => setDate(e.target.value)} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
-        <label className="text-xs font-bold text-gray-500">开始<input aria-label="查找开始时间" type="time" step="1800" min="08:00" max="19:30" value={start} onChange={e => setStart(e.target.value)} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
-        <label className="text-xs font-bold text-gray-500">结束<input aria-label="查找结束时间" type="time" step="1800" min="08:30" max="20:00" value={end} onChange={e => setEnd(e.target.value)} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
-        <label className="text-xs font-bold text-gray-500">人数<input aria-label="查找人数" type="number" min="1" value={participants} onChange={e => setParticipants(Math.max(1, parseInt(e.target.value) || 1))} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
+        <label className="text-xs font-bold text-gray-500">日期<input aria-label="查找日期" type="date" min={formatDate(new Date())} value={date} onChange={e => updateCriteria({ date: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
+        <label className="text-xs font-bold text-gray-500">开始<input aria-label="查找开始时间" type="time" step="1800" min="08:00" max="19:30" value={start} onChange={e => updateCriteria({ start: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
+        <label className="text-xs font-bold text-gray-500">结束<input aria-label="查找结束时间" type="time" step="1800" min="08:30" max="20:00" value={end} onChange={e => updateCriteria({ end: e.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
+        <label className="text-xs font-bold text-gray-500">人数<input aria-label="查找人数" type="number" min="1" value={participants} onChange={e => updateCriteria({ participants: Math.max(1, parseInt(e.target.value) || 1) })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl outline-none focus:ring-2 ring-indigo-100"/></label>
       </div>
       <div className="flex flex-wrap gap-2" aria-label="设备条件">
         {([['video', '视频会议'], ['display', '投屏显示器'], ['whiteboard', '白板']] as const).map(([key, label]) => (
@@ -992,11 +1329,11 @@ const ResourceFinder = ({ resources, bookings, theme, onBook }: any) => {
       </div>
       {!validTime ? <p className="text-xs font-bold text-rose-500">结束时间必须晚于开始时间</p> : (
         <div className="space-y-2">
-          <p className="text-xs font-black text-gray-500">找到 {matches.length} 间可用会议室</p>
+          <p role="status" aria-live="polite" className="text-xs font-black text-gray-500">找到 {matches.length} 间可用会议室，空间导航已同步</p>
           {matches.map((r: Resource) => (
             <div key={r.id} className="flex items-center justify-between gap-4 p-4 rounded-2xl bg-gray-50 border border-gray-100">
               <div className="min-w-0"><p className="font-bold text-sm text-gray-800 truncate">{r.name}</p><p className="text-[11px] text-gray-500 mt-1 truncate">{r.location} · {r.capacity} 人 · {r.features.join('、') || '无特殊设备'}</p></div>
-              <button onClick={() => onBook(r, { start: startDate.toISOString(), end: endDate.toISOString(), participants, extras: { isVideoConference: requirements.video } })} className={`shrink-0 px-4 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-black`}>按此条件预约</button>
+              <button onClick={() => onBook(r, { start: startDate.toISOString(), end: endDate.toISOString(), participants, extras: { isVideoConference: requirements.video, requiredFeatures: [...requirements.video ? ['VIDEO'] : [], ...requirements.display ? ['DISPLAY'] : [], ...requirements.whiteboard ? ['WHITEBOARD'] : []] } })} className={`shrink-0 px-4 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-black`}>按此条件预约</button>
             </div>
           ))}
           {matches.length === 0 && <p className="p-6 text-center text-xs font-bold text-gray-500 border border-dashed rounded-2xl">暂无满足条件的会议室，请调整时间、人数或设备要求</p>}
@@ -1006,9 +1343,10 @@ const ResourceFinder = ({ resources, bookings, theme, onBook }: any) => {
   );
 };
 
-const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose, onConfirm, onResourceChange, availableResources, availableUsers = [], currentUserId, bookings = [] }: any) => {
+const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose, onConfirm, availableUsers = [], currentUserId, bookings = [] }: any) => {
   const modalRef = useModalA11y(onClose);
   const isRoom = resource.type === 'ROOM';
+  const videoSupported = resourceSupportsFeature(resource, 'VIDEO');
   const initialDateObj = initialValues?.start ? new Date(initialValues.start) : initialDate ? new Date(initialDate) : new Date();
   
   const [selectedDate, setSelectedDate] = useState(initialDateObj);
@@ -1020,18 +1358,21 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   
   const [purpose, setPurpose] = useState(initialValues?.purpose || '');
   const [participants, setParticipants] = useState(initialValues?.participants || resource.capacity || 1);
-  const [loadingAI, setLoadingAI] = useState(false);
-  const [aiSuggestion, setAiSuggestion] = useState<SmartRecommendation | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
 
   // New state variables for additional requirements
   const [hasLeader, setHasLeader] = useState(initialValues?.extras?.hasLeader || false);
   const [leaderDetails, setLeaderDetails] = useState(initialValues?.extras?.leaderDetails || '');
   const [isVideoConference, setIsVideoConference] = useState(initialValues?.extras?.isVideoConference || false);
+  const [requiredFeatures, setRequiredFeatures] = useState<RoomFeature[]>(initialValues?.extras?.requiredFeatures || initialValues?.requiredFeatures || []);
   const [needsTeaService, setNeedsTeaService] = useState(initialValues?.extras?.needsTeaService || false);
   const [attendeeIds, setAttendeeIds] = useState<string[]>(initialValues?.extras?.attendeeIds || []);
-  const [repeatFrequency, setRepeatFrequency] = useState<'NONE' | 'WEEKLY' | 'BIWEEKLY'>('NONE');
-  const [repeatCount, setRepeatCount] = useState(4);
+  const [repeatFrequency, setRepeatFrequency] = useState<'NONE' | 'DAILY' | 'WEEKLY' | 'BIWEEKLY'>(initialValues?.recurrence?.frequency || 'NONE');
+  const [repeatCount, setRepeatCount] = useState(initialValues?.recurrence?.count || 4);
+  const [longTermEndDate, setLongTermEndDate] = useState(() => initialValues?.seriesEndDate ? new Date(`${initialValues.seriesEndDate}T12:00:00`) : getLongTermMaxEndDate(initialDateObj));
+  const isRenewal = !!initialValues?.renewalOfSeriesId;
+  const longTermMaxEndDate = getLongTermMaxEndDate(selectedDate);
+  const longTermDays = getDailyOccurrenceCount(selectedDate, longTermEndDate);
 
   const initialDateKey = formatDate(initialDateObj);
   const dateOptions = useMemo(() => {
@@ -1137,45 +1478,6 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
     }
   };
 
-  const handleSmartRecommend = async () => {
-    if (!purpose.trim()) {
-      setFormError('请先填写会议主题或申请用途');
-      return;
-    }
-    if (isRoom && (!selectedTimeRange.start || !selectedTimeRange.end)) {
-      setFormError('请先选择完整的预约时段，AI 才能排除冲突会议室');
-      return;
-    }
-    const start = isRoom
-      ? new Date(`${formatDate(selectedDate)}T${selectedTimeRange.start}:00`)
-      : new Date(`${formatDate(selectedDate)}T09:00:00`);
-    const end = isRoom
-      ? new Date(`${formatDate(selectedDate)}T${selectedTimeRange.end}:00`)
-      : new Date(`${formatDate(deskEndDate)}T18:00:00`);
-    setFormError(null);
-    setLoadingAI(true);
-    try {
-      const suggestion = await getSmartRecommendation({
-        purpose,
-        participants,
-        resources: availableResources,
-        bookings,
-        startTime: start.toISOString(),
-        endTime: end.toISOString(),
-        requirements: {
-          video: isVideoConference || /视频|远程|连线|线上/.test(purpose),
-          display: /投屏|显示器|屏幕|投影|演示|汇报/.test(purpose),
-          whiteboard: /白板|头脑风暴|脑暴|研讨/.test(purpose)
-        },
-        resourceType: resource.type,
-        excludeBookingId: initialValues?.id
-      });
-      setAiSuggestion(suggestion);
-    } finally {
-      setLoadingAI(false);
-    }
-  };
-
   const handleSubmit = () => {
     setFormError(null);
 
@@ -1210,13 +1512,40 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
         }
     }
 
+    const requestedFeatures = [...new Set<RoomFeature>([...requiredFeatures, ...(isVideoConference ? ['VIDEO' as const] : [])])];
+    const resourceError = validateBookingResource(resource, { startTime: finalStart, endTime: finalEnd, participants, requiredFeatures: requestedFeatures, isVideoConference });
+    if (resourceError) {
+      setFormError(BOOKING_ERROR_MESSAGES[resourceError]);
+      return;
+    }
+
+    let recurrence;
+    if (repeatFrequency === 'DAILY') {
+        if (longTermDays < 1) {
+            setFormError('长期预订截止日期不能早于开始日期');
+            return;
+        }
+        if (longTermEndDate > longTermMaxEndDate) {
+            setFormError(`单期长期预订最长一个月，请选择 ${formatDate(longTermMaxEndDate)} 或更早的截止日期`);
+            return;
+        }
+        recurrence = { frequency: 'DAILY', count: longTermDays };
+    } else if (repeatFrequency !== 'NONE') {
+        recurrence = { frequency: repeatFrequency, count: repeatCount };
+    }
+
     onConfirm(resource.id, purpose, finalStart, finalEnd, participants, {
         hasLeader,
         leaderDetails: hasLeader ? leaderDetails : undefined,
         isVideoConference,
         needsTeaService,
+        requiredFeatures: requestedFeatures,
         attendeeIds,
-        recurrence: repeatFrequency === 'NONE' ? undefined : { frequency: repeatFrequency, count: repeatCount }
+        recurrence,
+        seriesKind: repeatFrequency === 'DAILY' ? 'LONG_TERM' : undefined,
+        seriesEndDate: repeatFrequency === 'DAILY' ? formatDate(longTermEndDate) : undefined,
+        renewalOfSeriesId: initialValues?.renewalOfSeriesId,
+        rootSeriesId: initialValues?.rootSeriesId
     });
   };
 
@@ -1240,61 +1569,34 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
       <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in max-h-[90vh] overflow-y-auto custom-scrollbar">
         <h3 className="font-black text-xl mb-6 flex items-center gap-2">
             {isRoom ? <Monitor size={24} className={`text-${theme}-600`}/> : <Coffee size={24} className={`text-${theme}-600`}/>}
-            <span>{initialValues?.id ? '修改预约' : '预约'} {resource.name}</span>
+            <span>{initialValues?.id ? '修改预约' : isRenewal ? '长期预订续期' : '预约'} {resource.name}</span>
         </h3>
+        <div className="mb-5 p-3 rounded-2xl bg-gray-50 border border-gray-100 space-y-2" aria-label="会议室当前配置">
+          <div className="flex items-center justify-between gap-3"><span className="text-[11px] font-bold text-gray-500">{resource.location} · 最多 {resource.capacity || 0} 人</span><StatusBadge status={resource.status} theme={theme}/></div>
+          <div className="flex flex-wrap gap-1.5">
+            {(resource.features || []).map((feature: string) => <span key={feature} className="px-2 py-1 bg-white rounded-lg text-[10px] font-bold text-gray-600 border border-gray-100">{feature}</span>)}
+            {!resource.features?.length && <span className="text-[11px] text-gray-500">未配置特殊设备</span>}
+          </div>
+          {!isResourceAcceptingBookings(resource) && <p role="alert" className="text-[11px] font-bold text-rose-600">当前状态暂停新预约，请返回选择其他会议室。</p>}
+        </div>
         
         <div className="space-y-6">
-          {/* Purpose & AI */}
           <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">申请用途</label>
-            <div className="flex space-x-2">
-              <input 
-                value={purpose} 
-                onChange={e => setPurpose(e.target.value)} 
-                placeholder="会议主题或办公内容..." 
-                className="flex-1 bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner focus:ring-2 ring-indigo-100 transition-all text-sm" 
-              />
-              <button 
-                onClick={handleSmartRecommend} 
-                disabled={loadingAI || !purpose}
-                className={`p-4 bg-${theme}-50 text-${theme}-600 rounded-2xl font-bold flex items-center space-x-1 hover:bg-${theme}-100 transition-colors disabled:opacity-50`}
-              >
-                {loadingAI ? <RefreshCw size={18} className="animate-spin" /> : <Zap size={18}/>}
-                <span>AI</span>
-              </button>
-            </div>
+            <input
+              aria-label="申请用途"
+              value={purpose}
+              onChange={e => setPurpose(e.target.value)}
+              placeholder="会议主题或办公内容..."
+              className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner focus:ring-2 ring-indigo-100 transition-all text-sm"
+            />
           </div>
-          
-          {aiSuggestion && (
-            <div className={`p-4 rounded-2xl bg-${theme}-50 text-${theme}-700 text-[11px] leading-relaxed border border-${theme}-100 animate-in slide-in-from-top-2 space-y-3`}>
-              <p>
-                <strong>{aiSuggestion.source === 'AI' ? 'AI 建议' : '本地推荐（AI 不可用）'}：</strong>
-                {aiSuggestion.resourceId && `建议「${availableResources.find((r: Resource) => r.id === aiSuggestion.resourceId)?.name || aiSuggestion.resourceId}」，`}
-                {aiSuggestion.reason}
-              </p>
-              {aiSuggestion.resourceId && (
-                <button
-                  onClick={() => {
-                    const recommended = availableResources.find((r: Resource) => r.id === aiSuggestion.resourceId);
-                    if (recommended) {
-                      onResourceChange(recommended);
-                      setFormError(null);
-                    }
-                  }}
-                  disabled={resource.id === aiSuggestion.resourceId}
-                  className={`px-3 py-2 rounded-xl bg-${theme}-600 text-white font-black disabled:opacity-50`}
-                >
-                  {resource.id === aiSuggestion.resourceId ? '已选中推荐资源' : '采纳推荐并保留当前条件'}
-                </button>
-              )}
-            </div>
-          )}
 
           {/* Date Picker - Horizontal Scroll */}
           <div className="space-y-2">
              <div className="flex items-center justify-between">
-               <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">选择日期</label>
-               <input aria-label="自定义预约日期" type="date" min={formatDate(new Date())} value={formatDate(selectedDate)} onChange={e => { if (!e.target.value) return; setSelectedDate(new Date(`${e.target.value}T12:00`)); setSelectedTimeRange({ start: null, end: null }); }} className="text-xs font-bold text-gray-500 bg-gray-50 rounded-lg px-2 py-1 outline-none"/>
+               <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">{isRenewal ? '续期开始日期（自动衔接）' : '选择日期'}</label>
+               <input aria-label="自定义预约日期" type="date" min={formatDate(new Date())} value={formatDate(selectedDate)} disabled={isRenewal} onChange={e => { if (!e.target.value) return; const nextDate = new Date(`${e.target.value}T12:00`); setSelectedDate(nextDate); setLongTermEndDate(getLongTermMaxEndDate(nextDate)); setSelectedTimeRange({ start: null, end: null }); }} className="text-xs font-bold text-gray-500 bg-gray-50 rounded-lg px-2 py-1 outline-none disabled:opacity-60"/>
              </div>
              <div className="flex space-x-3 overflow-x-auto pb-2 custom-scrollbar">
                 {dateOptions.map((d) => {
@@ -1304,9 +1606,10 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                     return (
                         <button 
                             key={formatDate(d)}
-                            onClick={() => { setSelectedDate(d); setSelectedTimeRange({start:null,end:null}); }}
+                            onClick={() => { if (isRenewal) return; setSelectedDate(d); setLongTermEndDate(getLongTermMaxEndDate(d)); setSelectedTimeRange({start:null,end:null}); }}
                             aria-pressed={isSelected}
-                            className={`flex flex-col items-center justify-center w-14 h-20 rounded-2xl border-2 transition-all shrink-0 ${isSelected ? `bg-${theme}-600 border-${theme}-600 text-white shadow-lg scale-105` : 'bg-white border-gray-100 text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}
+                            disabled={isRenewal}
+                            className={`flex flex-col items-center justify-center w-14 h-20 rounded-2xl border-2 transition-all shrink-0 disabled:cursor-default ${isSelected ? `bg-${theme}-600 border-${theme}-600 text-white shadow-lg scale-105` : 'bg-white border-gray-100 text-gray-500 hover:border-gray-200 hover:bg-gray-50'}`}
                         >
                             <span className={`text-[10px] font-bold ${isToday && !isSelected ? `text-${theme}-600` : 'opacity-80'}`}>{isToday ? '今天' : `周${dayName}`}</span>
                             <span className="text-lg font-black leading-none mt-1">{d.getDate()}</span>
@@ -1378,7 +1681,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               <span>人数</span>
               {resource.capacity ? <span className="text-gray-500 normal-case">该空间最多 {resource.capacity} 人</span> : null}
             </label>
-            <input type="number" min="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
+            <input aria-label="参与人数" type="number" min="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
           </div>
 
           <div className="space-y-2">
@@ -1389,12 +1692,21 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           </div>
 
           {isRoom && !initialValues?.id && <div className="space-y-2">
-            <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">周期会议</label>
+            <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">预订方式</label>
             <div className="grid grid-cols-2 gap-2">
-              <select aria-label="重复频率" value={repeatFrequency} onChange={e => setRepeatFrequency(e.target.value as any)} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="NONE">不重复</option><option value="WEEKLY">每周重复</option><option value="BIWEEKLY">隔周重复</option></select>
-              <select aria-label="重复次数" value={repeatCount} disabled={repeatFrequency === 'NONE'} onChange={e => setRepeatCount(Number(e.target.value))} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-50">{[2, 3, 4, 6, 8, 12].map(n => <option key={n} value={n}>共 {n} 次</option>)}</select>
+              <select aria-label="重复频率" value={repeatFrequency} disabled={isRenewal} onChange={e => { const frequency = e.target.value as any; setRepeatFrequency(frequency); setFormError(null); if (frequency === 'DAILY') setLongTermEndDate(getLongTermMaxEndDate(selectedDate)); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-60"><option value="NONE">单次预约</option><option value="DAILY">长期预订 · 每天</option><option value="WEEKLY">每周重复</option><option value="BIWEEKLY">隔周重复</option></select>
+              {repeatFrequency === 'DAILY' ? (
+                <input aria-label="长期预订截止日期" type="date" min={formatDate(selectedDate)} max={formatDate(longTermMaxEndDate)} value={formatDate(longTermEndDate)} onChange={e => { if (e.target.value) setLongTermEndDate(new Date(`${e.target.value}T12:00:00`)); setFormError(null); }} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none" />
+              ) : (
+                <select aria-label="重复次数" value={repeatCount} disabled={repeatFrequency === 'NONE'} onChange={e => setRepeatCount(Number(e.target.value))} className="p-3 bg-gray-50 rounded-xl text-xs font-bold outline-none disabled:opacity-50">{[2, 3, 4, 6, 8, 12].map(n => <option key={n} value={n}>共 {n} 次</option>)}</select>
+              )}
             </div>
-            {repeatFrequency !== 'NONE' && <p className="text-[11px] text-gray-500">提交后逐次检测冲突，冲突单次可跳过或改期</p>}
+            {repeatFrequency === 'DAILY' ? (
+              <div className={`p-3 rounded-xl bg-${theme}-50 text-[11px] leading-relaxed text-gray-600`}>
+                <p><strong>本期 {longTermDays} 天</strong> · {formatDate(selectedDate)} 至 {formatDate(longTermEndDate)}，每天 {selectedTimeRange.start || '--:--'} - {selectedTimeRange.end || '--:--'}。</p>
+                <p className="mt-1">单期最长一个日历月；到期可续期，审批通过后衔接使用。逐次检测冲突，冲突日期可跳过。</p>
+              </div>
+            ) : repeatFrequency !== 'NONE' && <p className="text-[11px] text-gray-500">提交后逐次检测冲突，冲突单次可跳过或改期</p>}
           </div>}
 
           {/* New Fields Section */}
@@ -1423,13 +1735,19 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center space-x-1">
                     <Video size={12}/> <span>视频会议</span>
                 </label>
-                <button 
-                    onClick={() => setIsVideoConference(!isVideoConference)} 
-                    className={`w-10 h-6 rounded-full p-1 transition-all ${isVideoConference ? `bg-${theme}-600` : 'bg-gray-200'}`}
+                <button
+                    type="button"
+                    aria-label="视频会议"
+                    aria-pressed={isVideoConference}
+                    disabled={!videoSupported && !isVideoConference}
+                    title={!videoSupported ? '当前会议室未配置视频会议设备' : undefined}
+                    onClick={() => { const enabled = !isVideoConference; setIsVideoConference(enabled); setRequiredFeatures(prev => enabled ? [...new Set<RoomFeature>([...prev, 'VIDEO'])] : prev.filter(feature => feature !== 'VIDEO')); }}
+                    className={`w-10 h-6 rounded-full p-1 transition-all disabled:opacity-40 ${isVideoConference ? `bg-${theme}-600` : 'bg-gray-200'}`}
                 >
                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${isVideoConference ? 'translate-x-4' : 'translate-x-0'}`}></div>
                 </button>
              </div>
+             {!videoSupported && <p className="-mt-2 text-[11px] text-gray-500">当前会议室未配置视频会议设备。</p>}
 
              <div className="flex items-center justify-between">
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center space-x-1">
@@ -1445,7 +1763,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           </div>
 
           {formError && (
-            <p className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3">{formError}</p>
+            <p role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3">{formError}</p>
           )}
 
           <div className="flex space-x-3 mt-6 pt-4 border-t border-gray-100">
@@ -1454,7 +1772,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               onClick={handleSubmit} 
               className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.02] active:scale-95 transition-all`}
             >
-              {initialValues?.id ? '保存修改' : '确认预约'}
+              {initialValues?.id ? '保存修改' : isRenewal ? '提交续期审批' : '确认预约'}
             </button>
           </div>
         </div>
@@ -1516,15 +1834,16 @@ const RecurringConflictModal = ({ plan, theme, onSkip, onReschedule, onCreate, o
   const modalRef = useModalA11y(onClose);
   const remaining = plan.occurrences.filter((o: any) => !o.skip);
   const unresolved = remaining.filter((o: any) => o.conflicts?.length);
-  return <div ref={modalRef} role="dialog" aria-modal="true" aria-label="周期会议冲突处理" className="fixed inset-0 z-[1100] bg-black/60 flex items-center justify-center p-4">
+  const isLongTerm = plan.extras?.seriesKind === 'LONG_TERM';
+  return <div ref={modalRef} role="dialog" aria-modal="true" aria-label={isLongTerm ? '长期预订冲突处理' : '周期会议冲突处理'} className="fixed inset-0 z-[1100] bg-black/60 flex items-center justify-center p-4">
     <div className="bg-white rounded-3xl p-6 md:p-8 max-w-2xl w-full max-h-[90vh] overflow-y-auto">
-      <h3 className="text-xl font-black text-gray-800">周期会议冲突处理</h3>
-      <p className="text-xs text-gray-500 mt-2">共 {plan.occurrences.length} 次，{unresolved.length} 次待处理。可逐次跳过或自动改期。</p>
+      <h3 className="text-xl font-black text-gray-800">{isLongTerm ? '长期预订冲突处理' : '周期会议冲突处理'}</h3>
+      <p className="text-xs text-gray-500 mt-2">共 {plan.occurrences.length} 次，{unresolved.length} 次待处理。可逐次跳过{isLongTerm ? '，长期预订改期请调整本期日期后重新提交' : '或自动改期'}。</p>
       <div className="space-y-3 my-6">
         {plan.occurrences.map((o: any, index: number) => <div key={`${o.start}-${index}`} className={`p-4 rounded-2xl border ${o.skip ? 'bg-gray-50 border-gray-100 opacity-50' : o.conflicts?.length ? 'bg-rose-50 border-rose-100' : 'bg-emerald-50 border-emerald-100'}`}>
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
             <div><p className="text-sm font-black text-gray-700">第 {index + 1} 次 · {toLocalDateTimeString(o.start)} - {toLocalTimeString(o.end)}</p><p className="text-[11px] text-gray-500 mt-1">{o.skip ? '已跳过' : o.conflicts?.length ? `与 ${o.conflicts.length} 项预约冲突` : '时段可用'}</p></div>
-            {!o.skip && o.conflicts?.length > 0 && <div className="flex gap-2"><button onClick={() => onSkip(index)} className="px-3 py-2 rounded-xl bg-white text-gray-600 text-xs font-bold border">跳过此次</button><button onClick={() => onReschedule(index)} className={`px-3 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-bold`}>自动改期</button></div>}
+            {!o.skip && o.conflicts?.length > 0 && <div className="flex gap-2"><button onClick={() => onSkip(index)} className="px-3 py-2 rounded-xl bg-white text-gray-600 text-xs font-bold border">跳过此次</button>{!isLongTerm && <button onClick={() => onReschedule(index)} className={`px-3 py-2 rounded-xl bg-${theme}-600 text-white text-xs font-bold`}>自动改期</button>}</div>}
           </div>
         </div>)}
       </div>
@@ -1572,6 +1891,7 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
                  <div className="flex justify-between"><span>类型</span><span className="text-gray-900 font-bold">{data.type === 'ROOM' ? '会议室' : '工位'}</span></div>
                  <div className="flex justify-between"><span>容量</span><span className="text-gray-900 font-bold">{data.capacity} 人</span></div>
                  <div className="flex justify-between"><span>状态</span><StatusBadge status={data.status} theme={theme} /></div>
+                 <div className="pt-2 border-t border-gray-100"><span className="block mb-2">设备与功能</span><div className="flex flex-wrap gap-1.5">{(data.features || []).map((feature: string) => <span key={feature} className="px-2 py-1 bg-white border border-gray-100 rounded-lg text-[11px] font-bold">{feature}</span>)}{!data.features?.length && <span className="text-xs text-gray-500">未配置特殊设备</span>}</div></div>
                </div>
              </div>
            )}
@@ -1600,98 +1920,163 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
 // --- Main App ---
 
 const App: React.FC = () => {
-  const [view, setView] = useState<'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'DATA_CENTER'>('DASHBOARD');
+  const [view, setView] = useState<AppView>('DASHBOARD');
+  const [scheduleRange, setScheduleRange] = useState<ScheduleRange>('TODAY');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
-  const [theme, setTheme] = useState<string>(() => localStorage.getItem(THEME_KEY) || 'indigo');
-  
-  // --- Persistent State Logic ---
+  const [authLoading, setAuthLoading] = useState(true);
+  const [theme, setTheme] = useState('indigo');
+  const [showAdminMenu, setShowAdminMenu] = useState(false);
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
+  const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
+  const [roles, setRoles] = useState<RoleDefinition[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
+  const [resources, setResources] = useState<Resource[]>([]);
+  const [bookings, setBookings] = useState<Booking[]>([]);
+  const [departments, setDepartments] = useState<Department[]>([]);
+  const [workflow, setWorkflow] = useState<ApprovalNode[]>([]);
+  const [approvalDelegates, setApprovalDelegates] = useState<ApprovalDelegate[]>([]);
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>([]);
+  const preferencesSnapshotRef = useRef('');
+  const [preferencesLoaded, setPreferencesLoaded] = useState(false);
 
-  // Load initial state from local storage first for speed, then try server
-  const [roles, setRoles] = useState<RoleDefinition[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).roles : INITIAL_ROLES; });
-  const [users, setUsers] = useState<User[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).users : INITIAL_USERS; });
-  const [resources, setResources] = useState<Resource[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? JSON.parse(saved).resources : INITIAL_RESOURCES; });
-  const [bookings, setBookings] = useState<Booking[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? migrateBookings(JSON.parse(saved).bookings) : INITIAL_BOOKINGS; });
-  const [departments, setDepartments] = useState<Department[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).departments || INITIAL_DEPARTMENTS) : INITIAL_DEPARTMENTS; });
-  const [workflow, setWorkflow] = useState<ApprovalNode[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).workflow || DEFAULT_WORKFLOW) : DEFAULT_WORKFLOW; });
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(() => { const saved = localStorage.getItem(STORAGE_KEY); return saved ? (JSON.parse(saved).workOrders || []) : []; });
-
-  // Sync: Load from server on mount
   useEffect(() => {
-    fetch('/api/db')
-      .then(res => res.json())
-      .then(data => {
-        setIsOnline(true);
-        // 服务端空库（首次启用后端）时保留本地数据，由防抖保存逻辑上行初始化，避免本地数据被空库覆盖。
-        const hasServerData = data && typeof data === 'object' && (data.users || data.bookings || data.resources || data.departments);
-        if (hasServerData) {
-          if(data.users) setUsers(data.users);
-          if(data.resources) setResources(data.resources);
-          if(data.bookings) setBookings(migrateBookings(data.bookings));
-          if(data.departments) setDepartments(data.departments);
-          if(data.roles) setRoles(data.roles);
-          if(data.workflow) setWorkflow(data.workflow);
-          if(data.workOrders) setWorkOrders(data.workOrders);
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        }
-      })
-      .catch((err) => {
-        console.warn("Could not load from server, using local cache.", err);
-        setIsOnline(false);
-      });
+    for (const key of ['SMART_OFFICE_DATA_V35', 'SMART_OFFICE_THEME', 'SMART_OFFICE_NOTIFICATIONS', 'SMART_OFFICE_REMINDERS']) {
+      localStorage.removeItem(key);
+    }
   }, []);
 
-  // Sync: Save to server on change (Debounced)
   useEffect(() => {
-    const data = { roles, users, resources, bookings, departments, workflow, workOrders };
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    fetch('/api/auth/me')
+      .then(res => res.ok ? res.json() : null)
+      .then(data => { if (data?.actor) setCurrentUser(data.actor); })
+      .finally(() => setAuthLoading(false));
+  }, []);
 
-    const saveToServer = async () => {
+  const applyWorkspace = (data: any) => {
+    if (!data) return;
+    setRoles(data.roles || []);
+    setUsers(data.users || []);
+    setResources(data.resources || []);
+    setBookings(migrateBookings(data.bookings || []));
+    setDepartments(data.departments || []);
+    setWorkflow(data.workflow || []);
+    setApprovalDelegates(data.approvalDelegates || []);
+    setWorkOrders(data.workOrders || []);
+  };
+
+  const loadWorkspace = async () => {
+    try {
+      const res = await fetch('/api/workspace');
+      const data = await res.json();
+      if (!res.ok) {
+        if (res.status === 401) setCurrentUser(null);
+        throw new Error(data.error || String(res.status));
+      }
+      applyWorkspace(data);
+      setIsOnline(true);
+      setSaveStatus('saved');
+      setWorkspaceLoaded(true);
+      return data;
+    } catch {
+      setIsOnline(false);
+      setSaveStatus('error');
+      return null;
+    }
+  };
+
+  const apiRequest = async (path: string, method: string, body: any = {}) => {
+    setSaveStatus('saving');
+    try {
+      const res = await fetch(path, {
+        method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      const result = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(result.detail || result.error || '操作失败，请刷新后重试。');
+      if (result.workspace) applyWorkspace(result.workspace);
+      setSaveStatus('saved');
+      setIsOnline(true);
+      return result;
+    } catch (error) {
+      setSaveStatus('error');
+      throw error;
+    }
+  };
+
+  useEffect(() => {
+    setWorkspaceLoaded(false);
+    setPreferencesLoaded(false);
+    if (currentUser) void loadWorkspace();
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch('/api/preferences')
+      .then(res => res.ok ? res.json() : Promise.reject(new Error(String(res.status))))
+      .then(preferences => {
+        setTheme(preferences.theme);
+        setSidebarCollapsed(preferences.sidebarCollapsed);
+        preferencesSnapshotRef.current = JSON.stringify({ theme: preferences.theme, sidebarCollapsed: preferences.sidebarCollapsed });
+        setPreferencesLoaded(true);
+      })
+      .catch(() => setSaveStatus('error'));
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!preferencesLoaded || !currentUser) return;
+    const preferences = { theme, sidebarCollapsed };
+    const serialized = JSON.stringify(preferences);
+    if (serialized === preferencesSnapshotRef.current) return;
+    const timer = setTimeout(async () => {
       setSaveStatus('saving');
       try {
-        const res = await fetch('/api/db', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(data)
+        const res = await fetch('/api/preferences', {
+          method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: serialized
         });
-        if (!res.ok) throw new Error(`save failed: ${res.status}`);
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.error || String(res.status));
+        preferencesSnapshotRef.current = JSON.stringify(result);
         setSaveStatus('saved');
-        setIsOnline(true);
-      } catch (err) {
-        console.error("Save failed", err);
+      } catch {
         setSaveStatus('error');
-        setIsOnline(false);
       }
-    };
-
-    const timer = setTimeout(saveToServer, 2000); // 2s debounce to prevent flooding
+    }, 250);
     return () => clearTimeout(timer);
-  }, [roles, users, resources, bookings, departments, workflow, workOrders]);
+  }, [preferencesLoaded, currentUser?.id, theme, sidebarCollapsed]);
 
-  useEffect(() => { localStorage.setItem(THEME_KEY, theme); }, [theme]);
-
-  const NOTIF_KEY = 'SMART_OFFICE_NOTIFICATIONS';
-  const [notifications, setNotifications] = useState<Notification[]>(() => {
-    try { return JSON.parse(localStorage.getItem('SMART_OFFICE_NOTIFICATIONS') || '[]'); } catch { return []; }
-  });
+  const [notifications, setNotifications] = useState<Notification[]>([]);
   const [showNotificationPanel, setShowNotificationPanel] = useState(false);
-  useEffect(() => { localStorage.setItem(NOTIF_KEY, JSON.stringify(notifications.slice(0, 50))); }, [notifications]);
+  const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
+  const [notificationActionError, setNotificationActionError] = useState('');
+  useEffect(() => { setShowNotificationPanel(false); }, [view]);
   const [searchQuery, setSearchQuery] = useState('');
+  const [resourceTypeFilter, setResourceTypeFilter] = useState<'ALL' | ResourceType>('ALL');
+  const [resourceStatusFilter, setResourceStatusFilter] = useState<'ALL' | ResourceStatus>('ALL');
+  const [resourceBuildingFilter, setResourceBuildingFilter] = useState<'ALL' | BuildingId>('ALL');
+  const [resourceMinCapacity, setResourceMinCapacity] = useState(0);
   const [reportRange, setReportRange] = useState<'7' | '30' | '90' | 'ALL'>('30');
   const [showQRScanner, setShowQRScanner] = useState(false);
   const [showUserModal, setShowUserModal] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [showResourceModal, setShowResourceModal] = useState(false);
   const [editingResource, setEditingResource] = useState<Resource | null>(null);
+  const [spatialFocus, setSpatialFocus] = useState<{ location: string; token: number | string } | null>(null);
   const [showBookingModal, setShowBookingModal] = useState(false);
   const [selectedResource, setSelectedResource] = useState<Resource | null>(null);
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [editingWorkflowNode, setEditingWorkflowNode] = useState<ApprovalNode | null>(null);
+  const [showDelegateModal, setShowDelegateModal] = useState(false);
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
+  const [auditQuery, setAuditQuery] = useState('');
+  const [auditLoading, setAuditLoading] = useState(false);
+  const [auditError, setAuditError] = useState('');
   const [showRoleModal, setShowRoleModal] = useState(false);
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
   const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
+  const [showAgent, setShowAgent] = useState(false);
   const [bookingConflict, setBookingConflict] = useState<{ 
     resource: Resource, 
     requestedStart: string, 
@@ -1706,6 +2091,7 @@ const App: React.FC = () => {
   const [recurringPlan, setRecurringPlan] = useState<any>(null);
   const [showResourceCalendar, setShowResourceCalendar] = useState<Resource | null>(null);
   const [showResourceFinder, setShowResourceFinder] = useState(false);
+  const [resourceFinderCriteria, setResourceFinderCriteria] = useState<ResourceFinderCriteria>(createResourceFinderCriteria);
   const [bookingPrefill, setBookingPrefill] = useState<any>(null);
   const [calendarDateForBooking, setCalendarDateForBooking] = useState<string | null>(null);
   const [dayDetail, setDayDetail] = useState<any | null>(null);
@@ -1723,80 +2109,70 @@ const App: React.FC = () => {
   const [bookingPage, setBookingPage] = useState(1);
   const [expandedBookingIds, setExpandedBookingIds] = useState<Set<string>>(new Set());
   const [selectedApprovalIds, setSelectedApprovalIds] = useState<string[]>([]);
+  const [pendingApprovalActions, setPendingApprovalActions] = useState<Record<string, boolean>>({});
+  const [approvalActionErrors, setApprovalActionErrors] = useState<Record<string, string>>({});
+  const approvalActionLocks = useRef(new Set<string>());
   const ITEMS_PER_PAGE = 5;
 
   // Computed days for dashboard views
   const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
   const monthDays = useMemo(() => Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
 
-  const markNotificationRead = (id: string) => setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
-
-  const addNotification = (title: string, content: string, type: 'INFO' | 'SUCCESS' | 'WARNING' = 'INFO', userId?: string) => {
-    const newNotif: Notification = { id: `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, userId: userId || currentUser?.id || 'sys', title, content, timestamp: new Date().toISOString(), isRead: false, type };
-    setNotifications(prev => [newNotif, ...prev].slice(0, 50));
-    // Toast 8 秒后自动标记已读；通知本体保留在通知中心，不再直接删除。
-    setTimeout(() => markNotificationRead(newNotif.id), 8000);
+  const markNotificationRead = (id: string) => {
+    setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
+    if (currentUser) void fetch('/api/notifications', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ids: [id] })
+    }).catch(() => {});
   };
+
+  const markAllNotificationsRead = async () => {
+    if (!currentUser || isMarkingAllRead) return;
+    const ids = notifications.filter(n => !n.isRead && (n.userId === currentUser.id || n.userId === 'sys')).map(n => n.id);
+    if (!ids.length) return;
+    setIsMarkingAllRead(true);
+    setNotificationActionError('');
+    try {
+      const res = await fetch('/api/notifications', {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids })
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setNotifications(prev => prev.map(n => ids.includes(n.id) ? { ...n, isRead: true } : n));
+    } catch {
+      setNotificationActionError('全部已读保存失败，请检查连接后重试。');
+    } finally {
+      setIsMarkingAllRead(false);
+    }
+  };
+
+  const addNotification = (title: string, content: string, type: 'INFO' | 'SUCCESS' | 'WARNING' = 'INFO', userId?: string, id?: string) => {
+    const newNotif: Notification = { id: id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, userId: userId || currentUser?.id || 'sys', title, content, timestamp: new Date().toISOString(), isRead: false, type };
+    if (newNotif.userId === currentUser?.id || newNotif.userId === 'sys') setNotifications(prev => prev.some(n => n.id === newNotif.id) ? prev : [newNotif, ...prev].slice(0, 50));
+  };
+
+  useEffect(() => {
+    setShowNotificationPanel(false);
+    setNotificationActionError('');
+    if (!currentUser) return;
+    fetch('/api/notifications')
+      .then(res => res.ok ? res.json() : Promise.reject(new Error(String(res.status))))
+      .then(data => setNotifications(data.notifications || []))
+      .catch(() => {});
+  }, [currentUser?.id]);
 
   const myNotifications = currentUser ? notifications.filter(n => n.userId === currentUser.id || n.userId === 'sys') : notifications;
   const unreadCount = myNotifications.filter(n => !n.isRead).length;
-  const remindedBookingIds = useRef<Set<string>>(new Set(JSON.parse(localStorage.getItem('SMART_OFFICE_REMINDERS') || '[]')));
-  const noShowNotifiedIds = useRef<Set<string>>(new Set(bookings.filter(b => b.noShow).map(b => b.id)));
-
-  useEffect(() => {
-    const checkReminders = () => {
-      const now = Date.now();
-      bookings.filter(b => b.status === 'APPROVED').forEach(b => {
-        const start = new Date(b.startTime).getTime();
-        const remaining = start - now;
-        if (remaining <= 0 || remaining > 15 * 60000 || remindedBookingIds.current.has(b.id)) return;
-        const resource = resources.find(r => r.id === b.resourceId);
-        [b.userId, ...(b.attendeeIds || [])].forEach(userId => addNotification('会前 15 分钟提醒', `「${b.purpose}」将于 ${formatTime(new Date(b.startTime))} 在 ${resource?.name || '预约空间'} 开始，请准时到场。`, 'INFO', userId));
-        remindedBookingIds.current.add(b.id);
-        localStorage.setItem('SMART_OFFICE_REMINDERS', JSON.stringify([...remindedBookingIds.current]));
-      });
-    };
-    checkReminders();
-    const timer = setInterval(checkReminders, 30000);
-    return () => clearInterval(timer);
-  }, [bookings, resources]);
-
-  useEffect(() => {
-    const releaseNoShows = () => {
-      const now = Date.now();
-      const noShows = bookings.filter(b => b.type === 'ROOM' && b.status === 'APPROVED' && !b.checkedInAt && now >= new Date(b.startTime).getTime() + 15 * 60000);
-      if (!noShows.length) return;
-      const ids = new Set(noShows.map(b => b.id));
-      setBookings(prev => prev.map(b => ids.has(b.id) ? { ...b, status: 'CANCELLED' as BookingStatus, noShow: true } : b));
-      noShows.forEach(b => {
-        if (noShowNotifiedIds.current.has(b.id)) return;
-        noShowNotifiedIds.current.add(b.id);
-        const resource = resources.find(r => r.id === b.resourceId);
-        [...new Set([b.userId, ...(b.attendeeIds || [])])].forEach(userId => addNotification('未签到，会议室已释放', `「${b.purpose}」开始 15 分钟后仍未签到，${resource?.name || '会议室'} 已自动释放。`, 'WARNING', userId));
-      });
-    };
-    releaseNoShows();
-    const timer = setInterval(releaseNoShows, 30000);
-    return () => clearInterval(timer);
-  }, [bookings, resources]);
-
-  useEffect(() => {
-    setWorkOrders(prev => {
-      const existing = new Set(prev.map(order => order.id));
-      const missing = bookings.filter(b => b.status === 'APPROVED').flatMap(b => {
-        const orders: WorkOrder[] = [];
-        if (b.needsTeaService) orders.push({ id: `wo-${b.id}-TEA`, bookingId: b.id, type: 'TEA', title: `「${b.purpose}」茶水服务`, assigneeRole: 'APPROVAL_ADMIN', status: 'TODO', createdAt: new Date().toISOString() });
-        if (b.isVideoConference) orders.push({ id: `wo-${b.id}-VIDEO`, bookingId: b.id, type: 'VIDEO', title: `「${b.purpose}」视频会议保障`, assigneeRole: 'SYSTEM_ADMIN', status: 'TODO', createdAt: new Date().toISOString() });
-        return orders;
-      }).filter(order => !existing.has(order.id));
-      return missing.length ? [...missing, ...prev] : prev;
-    });
-  }, [bookings]);
-
-  const canApprove = (booking: Booking) => !!currentUser && canApproveBooking(booking, workflow, currentUser.role);
-  const approvableBookings = bookings.filter(b => canApprove(b));
-  const pendingCount = approvableBookings.length;
-  const canAccessApproval = !!currentUser && workflow.some(node => currentUser.role.includes(node.approverRole));
+  const approvalGroups = currentUser ? getApprovalGroups(bookings, workflow, currentUser, {
+    users, resources, departments, delegates: approvalDelegates
+  }) : [];
+  const pendingCount = approvalGroups.length;
+  const isApprovalActionPending = Object.keys(pendingApprovalActions).length > 0;
+  const canAccessApproval = !!currentUser && (
+    approvalGroups.length > 0
+    || workflow.some(node => currentUser.role.includes(node.approverRole))
+    || approvalDelegates.some(item => item.delegateId === currentUser.id && Date.parse(item.startsAt) <= Date.now() && Date.now() < Date.parse(item.endsAt))
+  );
   const canAccessWorkOrders = !!currentUser && currentUser.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'].includes(role));
   const visibleWorkOrders = workOrders.filter(order => currentUser?.role.includes('SYSTEM_ADMIN') || currentUser?.role.includes(order.assigneeRole)).sort((a, b) => a.status === b.status ? new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime() : a.status === 'TODO' ? -1 : 1);
   const openWorkOrderCount = visibleWorkOrders.filter(order => order.status === 'TODO').length;
@@ -1809,46 +2185,49 @@ const App: React.FC = () => {
     return { totalResources, availableRooms, availableDesks, activeBookings };
   }, [resources, bookings]);
 
+  const nextBooking = useMemo(() => {
+    if (!currentUser) return null;
+    const now = Date.now();
+    return bookings
+      .filter(b => b.status === 'APPROVED' && new Date(b.endTime).getTime() >= now && (b.userId === currentUser.id || (b.attendeeIds || []).includes(currentUser.id)))
+      .sort((a, b) => new Date(a.startTime).getTime() - new Date(b.startTime).getTime())[0] || null;
+  }, [bookings, currentUser]);
+  const nextBookingResource = nextBooking ? resources.find(r => r.id === nextBooking.resourceId) : null;
+  const activeSchedule = SCHEDULE_RANGES.find(range => range.id === scheduleRange)!;
+
+  const openScheduleDay = (resourceId: string | null, date: Date) => {
+    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);
+    setDayDetail({
+      resource: resourceId ? resources.find(r => r.id === resourceId) : { name: '全公司资源概览' },
+      date,
+      bookings: bookings.filter(b => b.status === 'APPROVED' && (!resourceId || b.resourceId === resourceId) && new Date(b.startTime) < dayEnd && new Date(b.endTime) > dayStart)
+    });
+  };
+
+  const handleScheduleTabKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = SCHEDULE_RANGES.findIndex(range => range.id === scheduleRange);
+    let nextIndex = currentIndex;
+    if (event.key === 'ArrowRight') nextIndex = (currentIndex + 1) % SCHEDULE_RANGES.length;
+    else if (event.key === 'ArrowLeft') nextIndex = (currentIndex - 1 + SCHEDULE_RANGES.length) % SCHEDULE_RANGES.length;
+    else if (event.key === 'Home') nextIndex = 0;
+    else if (event.key === 'End') nextIndex = SCHEDULE_RANGES.length - 1;
+    else return;
+    event.preventDefault();
+    const nextRange = SCHEDULE_RANGES[nextIndex].id;
+    setScheduleRange(nextRange);
+    document.getElementById(`schedule-tab-${nextRange}`)?.focus();
+  };
+
   const reportData = useMemo(() => {
-    const end = new Date();
+    const now = Date.now();
+    const bookingEnds = bookings.map(b => new Date(b.endedEarlyAt || b.endTime).getTime()).filter(Number.isFinite);
+    const end = new Date(reportRange === 'ALL' && bookingEnds.length ? Math.max(now, ...bookingEnds) : now);
     const earliest = bookings.length ? Math.min(...bookings.map(b => new Date(b.startTime).getTime()).filter(Number.isFinite)) : end.getTime();
     const start = new Date(reportRange === 'ALL' ? earliest : end.getTime() - (Number(reportRange) - 1) * 86400000);
     start.setHours(0, 0, 0, 0);
-    const relevant = bookings.filter(b => {
-      const time = new Date(b.startTime).getTime();
-      return time >= start.getTime() && time <= end.getTime();
-    });
-    const days = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000));
-    const buildRow = (dimension: 'RESOURCE' | 'DEPARTMENT' | 'OVERALL', id: string, name: string, items: Booking[], resourceCount: number) => {
-      const usageMinutes = items.reduce((total, b) => {
-        if (!['APPROVED', 'COMPLETED'].includes(b.status)) return total;
-        const actualEnd = new Date(b.endedEarlyAt || b.endTime).getTime();
-        const overlap = Math.min(actualEnd, end.getTime()) - Math.max(new Date(b.startTime).getTime(), start.getTime());
-        return total + Math.max(0, overlap) / 60000;
-      }, 0);
-      const approvalDurations = items.filter(b => b.currentNodeIndex >= workflow.length - 1).map(b => {
-        const finalApproval = [...b.approvalHistory].reverse().find(record => record.status === 'APPROVED');
-        return finalApproval ? (new Date(finalApproval.timestamp).getTime() - new Date(b.createdAt).getTime()) / 3600000 : null;
-      }).filter((value): value is number => value !== null && value >= 0);
-      const percent = (count: number) => items.length ? Number((count / items.length * 100).toFixed(1)) : 0;
-      return {
-        dimension, id, name,
-        bookingCount: items.length,
-        usageHours: Number((usageMinutes / 60).toFixed(1)),
-        utilization: Number(Math.min(100, usageMinutes / (days * 12 * 60 * Math.max(1, resourceCount)) * 100).toFixed(1)),
-        cancellationRate: percent(items.filter(b => b.status === 'CANCELLED' && !b.noShow).length),
-        noShowRate: percent(items.filter(b => b.noShow).length),
-        rejectionRate: percent(items.filter(b => b.status === 'REJECTED').length),
-        averageApprovalHours: approvalDurations.length ? Number((approvalDurations.reduce((a, b) => a + b, 0) / approvalDurations.length).toFixed(1)) : 0
-      };
-    };
-    const resourceRows = resources.map(resource => buildRow('RESOURCE', resource.id, resource.name, relevant.filter(b => b.resourceId === resource.id), 1));
-    const departmentRows = [...new Set<string>(users.map(u => u.department))].map(department => {
-      const userIds = new Set<string>(users.filter(u => u.department === department).map(u => u.id));
-      return buildRow('DEPARTMENT', department, department, relevant.filter(b => userIds.has(b.userId)), resources.length);
-    });
-    return { start, end, rows: [...resourceRows, ...departmentRows], overall: buildRow('OVERALL', 'ALL', '全公司', relevant, resources.length) };
-  }, [bookings, resources, users, workflow, reportRange]);
+    return generateReport(bookings, resources, users, { start, end });
+  }, [bookings, resources, users, reportRange]);
 
   const downloadReportCsv = () => {
     const escape = (value: string | number) => `"${String(value).replace(/"/g, '""')}"`;
@@ -1867,10 +2246,47 @@ const App: React.FC = () => {
   };
 
   // Filters
-  const filteredResources = resources.filter(r => 
-    r.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
-    r.location.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  const filteredResources = useMemo(() => filterResources(resources, searchQuery, {
+    type: resourceTypeFilter,
+    status: resourceStatusFilter,
+    minCapacity: resourceMinCapacity
+  }).filter(resource => resourceBuildingFilter === 'ALL' || parseBuilding(resource.location) === resourceBuildingFilter), [resources, searchQuery, resourceTypeFilter, resourceStatusFilter, resourceMinCapacity, resourceBuildingFilter]);
+  const resourceFinderResults = useMemo(() => findAvailableRooms(filteredResources, bookings, {
+    startTime: `${resourceFinderCriteria.date}T${resourceFinderCriteria.start}`,
+    endTime: `${resourceFinderCriteria.date}T${resourceFinderCriteria.end}`,
+    participants: resourceFinderCriteria.participants,
+    requiredFeatures: [
+      ...resourceFinderCriteria.requirements.video ? ['VIDEO' as const] : [],
+      ...resourceFinderCriteria.requirements.display ? ['DISPLAY' as const] : [],
+      ...resourceFinderCriteria.requirements.whiteboard ? ['WHITEBOARD' as const] : []
+    ]
+  }), [filteredResources, bookings, resourceFinderCriteria]);
+  const finderStartDate = new Date(`${resourceFinderCriteria.date}T${resourceFinderCriteria.start}`);
+  const finderEndDate = new Date(`${resourceFinderCriteria.date}T${resourceFinderCriteria.end}`);
+  const finderFeatureLabels = [
+    resourceFinderCriteria.requirements.video && '视频会议',
+    resourceFinderCriteria.requirements.display && '投屏显示器',
+    resourceFinderCriteria.requirements.whiteboard && '白板'
+  ].filter(Boolean).join('、');
+  const resourceFinderContext = `${finderEndDate > finderStartDate ? '' : '时间条件无效 · '}${resourceFinderCriteria.date} ${resourceFinderCriteria.start}–${resourceFinderCriteria.end} · ${resourceFinderCriteria.participants} 人${finderFeatureLabels ? ` · ${finderFeatureLabels}` : ''}`;
+  const resourceFinderFocus = useMemo(() => {
+    const firstMatch = resourceFinderResults[0];
+    if (!firstMatch) return null;
+    return {
+      location: firstMatch.location,
+      token: `${JSON.stringify(resourceFinderCriteria)}:${firstMatch.id}`
+    };
+  }, [resourceFinderResults, resourceFinderCriteria]);
+  const spatialResources = showResourceFinder ? resourceFinderResults : filteredResources;
+  const activeSpatialFocus = showResourceFinder ? resourceFinderFocus : spatialFocus;
+  const hasResourceFilters = !!searchQuery.trim() || resourceTypeFilter !== 'ALL' || resourceStatusFilter !== 'ALL' || resourceBuildingFilter !== 'ALL' || resourceMinCapacity > 0;
+  const resetResourceFilters = () => {
+    setSearchQuery('');
+    setResourceTypeFilter('ALL');
+    setResourceStatusFilter('ALL');
+    setResourceBuildingFilter('ALL');
+    setResourceMinCapacity(0);
+  };
 
   const filteredUsers = users.filter(u => 
     u.name.toLowerCase().includes(searchQuery.toLowerCase()) || 
@@ -1903,6 +2319,40 @@ const App: React.FC = () => {
       setExpandedBookingIds(next);
   };
 
+  const handleSaveResource = async (data: any) => {
+    if (!isOnline) throw new Error('预约服务未连接，暂时无法保存会议室配置。');
+    const resourceId = editingResource?.id || `r-${Date.now()}`;
+    const payload: Resource = { ...editingResource, ...data, id: resourceId };
+    let res: Response;
+    try {
+      res = await fetch(editingResource ? `/api/resources/${editingResource.id}` : '/api/resources', {
+        method: editingResource ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ resource: payload })
+      });
+    } catch {
+      throw new Error('无法连接预约服务，配置未保存，请稍后重试。');
+    }
+    const result = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const impactCount = Array.isArray(result.conflicts) ? result.conflicts.length : 0;
+      const messages: Record<string, string> = {
+        ACTIVE_BOOKINGS_REQUIRE_REVIEW: `当前有 ${impactCount} 条未结束的有效预约，请先取消或改期后再切换维护状态。`,
+        CAPACITY_EXCEEDED: `有 ${impactCount} 条有效预约超过新容量，请先调整相关预约。`,
+        REQUIRED_FEATURE_UNAVAILABLE: `有 ${impactCount} 条有效预约仍依赖即将移除的设备，请先调整相关预约。`,
+        INVALID_RESOURCE: '会议室配置不完整，请检查名称、容量、状态和设备信息。'
+      };
+      throw new Error(messages[result.error] || '保存失败，请刷新后重试。');
+    }
+    const saved = result.resource || payload;
+    if (result.workspace) applyWorkspace(result.workspace);
+    else setResources(prev => editingResource ? prev.map(resource => resource.id === editingResource.id ? saved : resource) : [...prev, saved]);
+    if (saved.type === 'ROOM') setSpatialFocus({ location: saved.location, token: Date.now() });
+    setShowResourceModal(false);
+    setEditingResource(null);
+    addNotification('配置已同步', saved.type === 'ROOM' ? `会议室设备、容量与服务状态已同步至预约服务，3D 视图已定位至${saved.location}。` : '资源配置已同步至预约服务。', 'SUCCESS');
+  };
+
   const saveBookingSeries = async (plan: any, occurrences: any[]) => {
     if (!currentUser || !occurrences.length) return;
     const seriesId = `series-${Date.now()}`;
@@ -1923,35 +2373,56 @@ const App: React.FC = () => {
       ...plan.extras,
       recurrence: undefined,
       seriesId,
-      recurrenceIndex: o.occurrenceIndex ?? index
+      recurrenceIndex: o.occurrenceIndex ?? index,
+      seriesKind: plan.extras.seriesKind,
+      seriesEndDate: plan.extras.seriesEndDate,
+      renewalOfSeriesId: plan.extras.renewalOfSeriesId,
+      rootSeriesId: plan.extras.rootSeriesId
     }));
-    if (isOnline) {
-      try {
-        const res = await fetch('/api/bookings/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookings: newBookings }) });
-        if (res.status === 409) {
-          const result = await res.json();
+    if (!isOnline) {
+      addNotification('预约未保存', '预约服务未连接，请恢复连接后再提交。', 'WARNING');
+      return;
+    }
+    try {
+      const res = await fetch('/api/bookings/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookings: newBookings }) });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (result.workspace) applyWorkspace(result.workspace);
+      }
+      if (!res.ok) {
+        if (result.error === 'CONFLICT') {
           const conflictsByIndex = new Map((result.conflicts || []).map((c: any) => [c.index, c.conflicts]));
           setRecurringPlan({ ...plan, occurrences: occurrences.map((o, index) => ({ ...o, conflicts: conflictsByIndex.get(index) || [] })) });
-          return;
+        } else {
+          const messages: Record<string, string> = {
+            ...BOOKING_ERROR_MESSAGES,
+            LONG_TERM_LIMIT_EXCEEDED: '单期长期预订不能超过一个日历月，请缩短截止日期。',
+            RENEWAL_EXISTS: '本期已有审批中或已核准的续期，请勿重复提交。',
+            INVALID_RENEWAL_START: '续期必须晚于当前周期，请重新发起。',
+            INVALID_RENEWAL: '续期信息已变化，请重新打开续期表单。',
+            INVALID_LONG_TERM_SERIES: '长期预订数据不完整，请重新提交。'
+          };
+          addNotification('无法提交系列预约', messages[result.error] || '预约信息未通过校验，请调整后重试。', 'WARNING');
         }
-        if (!res.ok) throw new Error(`series save failed: ${res.status}`);
-      } catch (err) {
-        console.warn('Series server save unavailable, using local save.', err);
-        addNotification('离线保存', '周期会议仅保存在本机，请在联网后核对冲突。', 'WARNING');
+        return;
       }
+    } catch {
+      addNotification('预约未保存', '无法连接预约服务，请检查网络后重试。', 'WARNING');
+      return;
     }
-    setBookings(prev => [...newBookings, ...prev]);
     setRecurringPlan(null);
     setShowBookingModal(false);
     setBookingPrefill(null);
-    addNotification('周期会议已创建', `已创建 ${newBookings.length} 次「${plan.purpose}」预约。`, 'SUCCESS');
-    (plan.extras?.attendeeIds || []).forEach((id: string) => addNotification('周期会议邀请', `${currentUser.name} 邀请您参加 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', id));
+    const isLongTerm = plan.extras.seriesKind === 'LONG_TERM';
+    const isRenewal = !!plan.extras.renewalOfSeriesId;
+    addNotification(isRenewal ? '续期申请已提交' : isLongTerm ? '长期预订已创建' : '周期会议已创建', `已创建 ${newBookings.length} 次「${plan.purpose}」预约${isLongTerm ? `，本期至 ${plan.extras.seriesEndDate}` : ''}。`, 'SUCCESS');
+    (plan.extras?.attendeeIds || []).forEach((id: string) => addNotification(isLongTerm ? '长期会议邀请' : '周期会议邀请', `${currentUser.name} 邀请您参加 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', id));
     const firstRole = workflow[0]?.approverRole;
-    if (firstRole) users.filter(u => u.role.includes(firstRole)).forEach(u => addNotification('周期会议待审批', `${currentUser.name} 提交了 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', u.id));
+    if (firstRole) users.filter(u => u.role.includes(firstRole)).forEach(u => addNotification(isRenewal ? '长期预订续期待审批' : isLongTerm ? '长期预订待审批' : '周期会议待审批', `${currentUser.name} 提交了 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', u.id));
   };
 
   const prepareRecurringBooking = (resource: Resource, purpose: string, start: Date, end: Date, participants: number | undefined, extras: any, latestBookings: Booking[]) => {
-    const intervalDays = extras.recurrence.frequency === 'BIWEEKLY' ? 14 : 7;
+    const intervalDays = extras.recurrence.frequency === 'DAILY' ? 1 : extras.recurrence.frequency === 'BIWEEKLY' ? 14 : 7;
     const occurrences = Array.from({ length: extras.recurrence.count }, (_, index) => {
       const occurrenceStart = new Date(start); occurrenceStart.setDate(start.getDate() + index * intervalDays);
       const occurrenceEnd = new Date(end); occurrenceEnd.setDate(end.getDate() + index * intervalDays);
@@ -1985,14 +2456,13 @@ const App: React.FC = () => {
       addNotification("预约失败", "结束时间必须晚于开始时间", "WARNING");
       return;
     }
+    const resourceError = validateBookingResource(resource, { startTime: start.toISOString(), endTime: end.toISOString(), participants, requiredFeatures: extras?.requiredFeatures, isVideoConference: extras?.isVideoConference });
+    if (resourceError) {
+      addNotification('无法提交预约', BOOKING_ERROR_MESSAGES[resourceError], 'WARNING');
+      return;
+    }
 
-    // 表单打开期间可能已有他人抢先预订：提交时以最新持久化数据重校验，而不是只用 React state 快照。
-    const latestBookings: Booking[] = (() => {
-      try {
-        const saved = localStorage.getItem(STORAGE_KEY);
-        return saved ? migrateBookings(JSON.parse(saved).bookings) : bookings;
-      } catch { return bookings; }
-    })().filter(b => b.id !== editingBooking?.id);
+    const latestBookings = bookings.filter(b => b.id !== editingBooking?.id);
 
     const openConflict = (errorType: 'PAST_TIME' | 'CONFLICT') => {
       const suggestion = findNextAvailableSlot(resourceId, latestBookings, requestedDuration);
@@ -2041,26 +2511,30 @@ const App: React.FC = () => {
       ...extras
     };
 
-    // 连接服务器时由服务端做原子校验，409 表示已被他人抢先预订。
-    if (isOnline) {
-      try {
-        const res = await fetch(editingBooking ? `/api/bookings/${editingBooking.id}` : '/api/bookings', {
-          method: editingBooking ? 'PUT' : 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ booking: newBooking })
-        });
-        if (res.status === 409) {
-          openConflict('CONFLICT');
-          return;
-        }
-        if (!res.ok) throw new Error(`booking save failed: ${res.status}`);
-      } catch (err) {
-        console.warn('Server-side booking check unavailable, falling back to local save.', err);
-        addNotification("离线保存", "无法连接服务器，本次预约仅保存在本机，可能存在冲突风险。", "WARNING");
+    if (!isOnline) {
+      addNotification('预约未保存', '预约服务未连接，请恢复连接后再提交。', 'WARNING');
+      return;
+    }
+    try {
+      const res = await fetch(editingBooking ? `/api/bookings/${editingBooking.id}` : '/api/bookings', {
+        method: editingBooking ? 'PUT' : 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ booking: newBooking })
+      });
+      const result = await res.json().catch(() => ({}));
+      if (res.ok) {
+        if (result.workspace) applyWorkspace(result.workspace);
       }
+      if (!res.ok) {
+        if (result.error === 'CONFLICT') openConflict('CONFLICT');
+        else addNotification('预约未保存', BOOKING_ERROR_MESSAGES[result.error] || '预约服务暂时不可用，请稍后重试。', 'WARNING');
+        return;
+      }
+    } catch {
+      addNotification('预约未保存', '无法连接预约服务，请检查网络后重试。', 'WARNING');
+      return;
     }
 
-    setBookings(prev => editingBooking ? prev.map(b => b.id === editingBooking.id ? newBooking : b) : [newBooking, ...prev]);
     setShowBookingModal(false);
     setCalendarDateForBooking(null);
     setBookingPrefill(null);
@@ -2071,171 +2545,404 @@ const App: React.FC = () => {
     if (firstRole) users.filter(u => u.id !== currentUser.id && u.role.includes(firstRole)).forEach(u => addNotification('新预约待审批', `${currentUser.name} 提交了「${purpose}」，资源：${resource.name}，时间：${toLocalDateTimeString(newBooking.startTime)}。`, 'INFO', u.id));
   };
 
-  const handleCancelBooking = (id: string) => {
-    if (confirm("确定要撤销此项预约申请吗？撤销后该时段资源将立即释放。")) {
-      setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'CANCELLED' as BookingStatus } : b));
-      addNotification("申请已撤销", "相关资源已释放，可重新进行预订。", "SUCCESS");
+  const handleRenewLongTerm = (booking: Booking) => {
+    if (!currentUser || booking.userId !== currentUser.id || booking.seriesKind !== 'LONG_TERM' || !booking.seriesId) return;
+    const resource = resources.find(item => item.id === booking.resourceId);
+    if (!resource) return;
+    if (!isResourceAcceptingBookings(resource)) {
+      addNotification('暂不能续期', '会议室当前维护或待开放，请恢复预约服务后再续期。', 'WARNING');
+      return;
     }
+    if (bookings.some(item => item.renewalOfSeriesId === booking.seriesId && isActiveBooking(item))) {
+      addNotification('续期已存在', '本期已有审批中或已核准的续期，无需重复提交。', 'INFO');
+      return;
+    }
+    const seriesBookings = bookings.filter(item => item.seriesId === booking.seriesId);
+    if (seriesBookings.some(item => item.status === 'PENDING')) {
+      addNotification('暂不能续期', '请等待当前长期预订完成审批后再申请续期。', 'WARNING');
+      return;
+    }
+    const periodEnd = booking.seriesEndDate || formatDate(new Date(Math.max(...seriesBookings.map(item => new Date(item.startTime).getTime()))));
+    const nextDate = new Date(`${periodEnd}T12:00:00`);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const originalStart = new Date(booking.startTime);
+    const originalEnd = new Date(booking.endTime);
+    const nextStart = new Date(nextDate);
+    nextStart.setHours(originalStart.getHours(), originalStart.getMinutes(), 0, 0);
+    const nextEnd = new Date(nextDate);
+    nextEnd.setHours(originalEnd.getHours(), originalEnd.getMinutes(), 0, 0);
+    const seriesEndDate = formatDate(getLongTermMaxEndDate(nextStart));
+    setEditingBooking(null);
+    setSelectedResource(resource);
+    setCalendarDateForBooking(null);
+    setBookingPrefill({
+      purpose: booking.purpose,
+      start: nextStart.toISOString(),
+      end: nextEnd.toISOString(),
+      participants: booking.participants,
+      recurrence: { frequency: 'DAILY', count: getDailyOccurrenceCount(nextStart, new Date(`${seriesEndDate}T12:00:00`)) },
+      seriesEndDate,
+      renewalOfSeriesId: booking.seriesId,
+      rootSeriesId: booking.rootSeriesId || booking.seriesId,
+      extras: {
+        hasLeader: booking.hasLeader,
+        leaderDetails: booking.leaderDetails,
+        isVideoConference: booking.isVideoConference,
+        needsTeaService: booking.needsTeaService,
+        requiredFeatures: booking.requiredFeatures || [],
+        attendeeIds: booking.attendeeIds || []
+      }
+    });
+    setShowBookingModal(true);
   };
 
-  const handleCheckIn = (id: string) => {
-    const booking = bookings.find(b => b.id === id);
-    const now = Date.now();
-    const isParticipant = booking && (booking.userId === currentUser?.id || booking.attendeeIds?.includes(currentUser?.id || ''));
-    if (!booking || !isParticipant || booking.status !== 'APPROVED' || now < new Date(booking.startTime).getTime() - 15 * 60000 || now >= new Date(booking.endTime).getTime()) {
-      addNotification('暂时无法签到', '请在会议开始前 15 分钟至会议结束前完成签到。', 'WARNING');
+  const handleCancelBooking = async (id: string) => {
+    if (!confirm("确定要撤销此项预约申请吗？撤销后该时段资源将立即释放。")) return;
+    try {
+      await handleAgentAction({ type: 'PROPOSE_CANCEL', bookingId: id, summary: '取消预约' });
+    } catch {}
+  };
+
+  const handleCheckIn = async (id: string) => {
+    try {
+      await handleAgentAction({ type: 'PROPOSE_CHECK_IN', bookingId: id, summary: '会议签到' });
+      return true;
+    } catch {
       return false;
     }
-    const checkedInAt = new Date(now).toISOString();
-    setBookings(prev => prev.map(b => b.id === id ? { ...b, checkedInAt, noShow: false } : b));
-    addNotification('签到成功', `「${booking.purpose}」已签到，时间：${toLocalTimeString(checkedInAt)}。`, 'SUCCESS');
-    return true;
   };
 
-  const handleEndEarly = (id: string) => {
-    const booking = bookings.find(b => b.id === id);
-    const now = Date.now();
-    if (!booking || booking.userId !== currentUser?.id || booking.status !== 'APPROVED' || !booking.checkedInAt || now < new Date(booking.startTime).getTime() || now >= new Date(booking.endTime).getTime()) return;
-    const endedEarlyAt = new Date(now).toISOString();
-    setBookings(prev => prev.map(b => b.id === id ? { ...b, status: 'COMPLETED' as BookingStatus, endedEarlyAt } : b));
-    [...new Set([booking.userId, ...(booking.attendeeIds || [])])].forEach(userId => addNotification('会议已提前结束', `「${booking.purpose}」已于 ${toLocalTimeString(endedEarlyAt)} 结束，剩余时段已释放。`, 'SUCCESS', userId));
-  };
-
-  const handleCompleteWorkOrder = (id: string) => {
-    const order = workOrders.find(item => item.id === id);
-    if (!order || order.status === 'DONE') return;
-    const completedAt = new Date().toISOString();
-    setWorkOrders(prev => prev.map(item => item.id === id ? { ...item, status: 'DONE', completedAt } : item));
-    const booking = bookings.find(b => b.id === order.bookingId);
-    if (booking) addNotification('服务需求已处理', `${order.title}已完成。`, 'SUCCESS', booking.userId);
-  };
-
-  // ... existing handlers
-  const handleApprove = (booking: Booking, comment?: string) => {
-    const isLast = isLastApprovalNode(booking, workflow);
-    setBookings(prev => prev.map(b => b.id === booking.id ? approveBooking(b, workflow, currentUser?.name || '未知', comment) : b));
-    addNotification(isLast ? "预约已核准" : "审批节点已通过", isLast ? `您的「${booking.purpose}」已通过最终核准。` : `您的「${booking.purpose}」已通过本环节预审。`, "SUCCESS", booking.userId);
-    if (isLast) (booking.attendeeIds || []).forEach(id => addNotification('受邀会议已核准', `「${booking.purpose}」已核准，可下载 ICS 添加到日历。`, 'SUCCESS', id));
-    if (!isLast) {
-      const nextRole = workflow[booking.currentNodeIndex + 1]?.approverRole;
-      users.filter(u => u.role.includes(nextRole)).forEach(u => addNotification('新预约待审批', `「${booking.purpose}」已进入您负责的审批节点。`, 'INFO', u.id));
+  const handleEndEarly = async (id: string) => {
+    try {
+      const res = await fetch(`/api/bookings/${encodeURIComponent(id)}/complete`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || '当前不可提前结束');
+      if (result.workspace) applyWorkspace(result.workspace);
+      addNotification('会议已提前结束', result.message || '剩余时段已释放。', 'SUCCESS');
+    } catch (err: any) {
+      addNotification('操作未完成', err?.message || '请刷新后重试。', 'WARNING');
     }
+  };
+
+  const handleCompleteWorkOrder = async (id: string) => {
+    try {
+      await handleAgentAction({ type: 'PROPOSE_WORK_ORDER', workOrderId: id, summary: '完成服务工单' });
+    } catch {}
+  };
+
+  const runApprovalAction = async (key: string, booking: Booking, targets: Booking[], decision: 'APPROVE' | 'REJECT', comment?: string) => {
+    if (approvalActionLocks.current.size > 0) return;
+    approvalActionLocks.current.add(key);
+    setPendingApprovalActions(prev => ({ ...prev, [key]: true }));
+    setApprovalActionErrors(prev => {
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    try {
+      await handleAgentAction({
+        type: 'PROPOSE_APPROVAL',
+        bookingId: booking.id,
+        bookingIds: targets.map(item => item.id),
+        decision,
+        comment,
+        summary: `${decision === 'REJECT' ? '驳回' : '通过'}「${booking.purpose}」`
+      });
+      setSelectedApprovalIds(prev => key === 'BULK' ? [] : prev.filter(id => id !== booking.id));
+    } catch (err: any) {
+      setApprovalActionErrors(prev => ({ ...prev, [key]: err?.message || '审批未完成，请刷新后重试。' }));
+    } finally {
+      approvalActionLocks.current.delete(key);
+      setPendingApprovalActions(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    }
+  };
+
+  const handleApprove = (booking: Booking, comment?: string) => {
+    const targets = booking.seriesKind === 'LONG_TERM' && booking.seriesId
+      ? bookings.filter(item => item.seriesId === booking.seriesId && item.status === 'PENDING' && item.currentNodeIndex === booking.currentNodeIndex)
+      : [booking];
+    return runApprovalAction(booking.id, booking, targets, 'APPROVE', comment);
   };
 
   const handleBulkApprove = () => {
-    const selected = approvableBookings.filter(b => selectedApprovalIds.includes(b.id));
+    const selected = approvalGroups.filter(group => selectedApprovalIds.includes(group.booking.id));
     if (!selected.length) return;
-    const selectedIds = new Set(selected.map(b => b.id));
-    setBookings(prev => prev.map(b => selectedIds.has(b.id) ? approveBooking(b, workflow, currentUser?.name || '未知', '批量通过') : b));
-    selected.forEach(b => {
-      const isLast = isLastApprovalNode(b, workflow);
-      addNotification(isLast ? '预约已核准' : '审批节点已通过', `您的「${b.purpose}」已通过当前审批节点。`, 'SUCCESS', b.userId);
-      if (!isLast) {
-        const nextRole = workflow[b.currentNodeIndex + 1]?.approverRole;
-        users.filter(u => u.role.includes(nextRole)).forEach(u => addNotification('新预约待审批', `「${b.purpose}」已进入您负责的审批节点。`, 'INFO', u.id));
-      }
-    });
-    setSelectedApprovalIds([]);
-    addNotification('批量审批完成', `已通过 ${selected.length} 项申请。`, 'SUCCESS');
+    const targets = selected.flatMap(group => group.seriesBookings);
+    return runApprovalAction('BULK', selected[0].booking, targets, 'APPROVE', '批量通过');
   };
 
   const handleReject = (booking: Booking, comment: string) => {
-    setBookings(prev => prev.map(b => b.id === booking.id ? rejectBooking(b, workflow, currentUser?.name || '未知', comment) : b));
-    addNotification("预约已驳回", `您的「${booking.purpose}」被驳回：${comment}`, "WARNING", booking.userId);
+    const targets = booking.seriesKind === 'LONG_TERM' && booking.seriesId
+      ? bookings.filter(item => item.seriesId === booking.seriesId && item.status === 'PENDING' && item.currentNodeIndex === booking.currentNodeIndex)
+      : [booking];
+    return runApprovalAction(booking.id, booking, targets, 'REJECT', comment);
   };
 
-  // --- Department Handlers ---
-  const handleSaveDepartment = (data: { name: string, parentId?: string }) => {
-    if (editingDepartment) {
-       // Update department name
-       const oldName = editingDepartment.name;
-       const newName = data.name;
-       
-       setDepartments(prev => prev.map(d => d.id === editingDepartment.id ? { ...d, name: newName } : d));
-       
-       // Update users associated with this department (simple cascade)
-       if (oldName !== newName) {
-          setUsers(prev => prev.map(u => u.department === oldName ? { ...u, department: newName } : u));
-       }
-       addNotification("部门更新成功", `部门名称已更改为 ${newName}`, "SUCCESS");
-    } else {
-       const newDept = { id: `dpt-${Date.now()}`, name: data.name, parentId: data.parentId };
-       setDepartments(prev => [...prev, newDept]);
-       addNotification("部门创建成功", `已添加新部门 ${data.name}`, "SUCCESS");
+  // --- Agent Actions ---
+  const handleAgentAction = async (action: AgentAction) => {
+    if (action.type === 'PROPOSE_BOOKING' && action.draft?.resourceId) {
+      const resource = resources.find(r => r.id === action.draft!.resourceId);
+      if (!resource) {
+        const message = '提案中的资源已不存在，请重新发起预订。';
+        addNotification('资源已变更', message, 'WARNING');
+        throw new Error(message);
+      }
+      const draftError = validateBookingDraft(action.draft, resources, bookings);
+      if (draftError) {
+        addNotification('草案需要修订', draftError, 'WARNING');
+        throw new Error(draftError);
+      }
+      setEditingBooking(null);
+      setCalendarDateForBooking(null);
+      setSelectedResource(resource);
+      setBookingPrefill({
+        purpose: action.draft.purpose,
+        start: action.draft.startTime,
+        end: action.draft.endTime,
+        participants: action.draft.participants,
+        recurrence: action.draft.recurrence,
+        extras: {
+          hasLeader: Boolean(action.draft.hasLeader),
+          leaderDetails: action.draft.leaderDetails || '',
+          isVideoConference: Boolean(action.draft.isVideoConference),
+          requiredFeatures: action.draft.requiredFeatures || [],
+          needsTeaService: Boolean(action.draft.needsTeaService),
+          attendeeIds: action.draft.attendeeIds || []
+        }
+      });
+      setShowBookingModal(true);
+      return;
     }
-    setShowDepartmentModal(false);
-    setEditingDepartment(null);
-    setDepartmentParentId(null);
+
+    if (action.type === 'NAVIGATE' && action.view) {
+      setView(action.view as any);
+      return;
+    }
+
+    if (['PROPOSE_CANCEL', 'PROPOSE_APPROVAL', 'PROPOSE_CHECK_IN', 'PROPOSE_WORK_ORDER'].includes(action.type)) {
+      try {
+        const res = await fetch('/api/agent/action', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action })
+        });
+        const result = await res.json();
+        if (!res.ok) throw new Error(result.detail || result.error || '操作失败');
+        if (result.workspace) applyWorkspace(result.workspace);
+        if (result.notifications) setNotifications(result.notifications);
+        addNotification('操作成功', result.message || '待办已处理。', 'SUCCESS');
+      } catch (err: any) {
+        addNotification('操作未完成', err?.message || '请刷新后重试。', 'WARNING');
+        throw err;
+      }
+    }
   };
 
-  const handleDeleteDepartment = (id: string) => {
-     // Check for children
-     const hasChildren = departments.some(d => d.parentId === id);
-     if (hasChildren) {
-        addNotification("无法删除", "该部门下包含子部门，请先删除子部门。", "WARNING");
-        return;
-     }
-     // Check for users (Warning only)
-     const deptName = departments.find(d => d.id === id)?.name;
-     const hasUsers = users.some(u => u.department === deptName); 
-     
-     if (hasUsers && !confirm(`该部门 (${deptName}) 下仍有员工，删除后这些员工的部门信息将失效。确定继续吗？`)) {
-        return;
-     }
-     
-     if (confirm("确定要删除该部门吗？此操作无法撤销。")) {
-        setDepartments(prev => prev.filter(d => d.id !== id));
-        addNotification("删除成功", "部门已移除。", "SUCCESS");
-     }
+  const adminError = (error: any) => {
+    const code = error?.message || '';
+    const messages: Record<string, string> = {
+      DEPARTMENT_HAS_CHILDREN: '请先删除或移动子部门。',
+      DEPARTMENT_HAS_USERS: '该部门仍有成员，请先调整成员部门。',
+      USER_HAS_ACTIVE_BOOKINGS: '该成员仍有有效预约，请先取消或改期。',
+      CANNOT_DELETE_SELF: '不能注销当前登录成员。',
+      USER_HAS_DELEGATIONS: '该成员仍有关联代理，请先撤销代理关系。',
+      DEPARTMENT_USED_BY_WORKFLOW: '该部门仍被当前或历史审批流程引用，不能删除。',
+      DELEGATION_OVERLAP: '同一委托人的代理时间段不能重叠。',
+      DUPLICATE_EMAIL: '电子邮箱已存在，请检查后重试。',
+      DEPARTMENT_NOT_FOUND: '所选部门不存在，请刷新后重试。',
+      INVALID_USER_ROLE: '请选择有效角色。'
+    };
+    addNotification('操作未完成', messages[code] || code || '请刷新后重试。', 'WARNING');
   };
 
-  if (!currentUser) return <LoginView users={users} onLogin={setCurrentUser} theme={theme} />;
+  const handleSaveDepartment = async (data: { name: string, parentId?: string }) => {
+    try {
+      const department = { ...editingDepartment, ...data, parentId: editingDepartment ? editingDepartment.parentId : data.parentId, id: editingDepartment?.id || `dpt-${Date.now()}` };
+      await apiRequest(editingDepartment ? `/api/departments/${editingDepartment.id}` : '/api/departments', editingDepartment ? 'PUT' : 'POST', { department });
+      addNotification(editingDepartment ? '部门更新成功' : '部门创建成功', `已保存部门 ${data.name}。`, 'SUCCESS');
+      setShowDepartmentModal(false);
+      setEditingDepartment(null);
+      setDepartmentParentId(null);
+    } catch (error) { adminError(error); }
+  };
+
+  const handleDeleteDepartment = async (id: string) => {
+    if (!confirm('确定要删除该部门吗？此操作无法撤销。')) return;
+    try {
+      await apiRequest(`/api/departments/${id}`, 'DELETE');
+      addNotification('删除成功', '部门已移除。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleSaveUser = async (data: any) => {
+    try {
+      const user = { ...editingUser, ...data, id: editingUser?.id || `u-${Date.now()}` };
+      await apiRequest(editingUser ? `/api/users/${editingUser.id}` : '/api/users', editingUser ? 'PUT' : 'POST', { user });
+      setShowUserModal(false);
+      setEditingUser(null);
+      addNotification('操作成功', '成员信息已更新。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    if (!confirm('确定注销该成员吗？')) return;
+    try {
+      await apiRequest(`/api/users/${id}`, 'DELETE');
+      addNotification('成员已注销', '成员信息已从组织目录移除。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleSaveRole = async (data: any) => {
+    try {
+      const role = { ...editingRole, ...data, id: editingRole?.id || `rl-${Date.now()}` };
+      await apiRequest(editingRole ? `/api/roles/${editingRole.id}` : '/api/roles', editingRole ? 'PUT' : 'POST', { role });
+      setShowRoleModal(false);
+      setEditingRole(null);
+      addNotification('操作成功', '角色集已更新。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleSaveWorkflow = async (next: ApprovalNode[], successMessage = '审批链路配置已生效。') => {
+    try {
+      await apiRequest('/api/workflow', 'PUT', { workflow: next });
+      setShowWorkflowModal(false);
+      setEditingWorkflowNode(null);
+      addNotification('流程已更新', successMessage, 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleSaveDelegate = async (delegate: Partial<ApprovalDelegate>) => {
+    await apiRequest('/api/approval-delegates', 'POST', { delegate });
+    setShowDelegateModal(false);
+    addNotification('代理已创建', '代理人可在有效期内处理委托人权限范围内的申请。', 'SUCCESS');
+  };
+
+  const handleDeleteDelegate = async (id: string) => {
+    if (!confirm('确定撤销这条代理关系吗？撤销后立即失效。')) return;
+    try {
+      await apiRequest(`/api/approval-delegates/${id}`, 'DELETE');
+      addNotification('代理已撤销', '对应审批权限已立即收回。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const loadAuditEvents = async () => {
+    setAuditLoading(true);
+    setAuditError('');
+    try {
+      const res = await fetch('/api/audit?limit=200');
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || '审计记录读取失败');
+      setAuditEvents(result.events || []);
+    } catch (error: any) {
+      setAuditError(error?.message || '审计记录读取失败，请稍后重试。');
+    } finally {
+      setAuditLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      const res = await fetch('/api/auth/logout', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      setShowMobileMenu(false);
+      setShowAgent(false);
+      setWorkspaceLoaded(false);
+      setPreferencesLoaded(false);
+      setNotifications([]);
+      setCurrentUser(null);
+    } catch {
+      addNotification('退出失败', '会话撤销请求未送达，请检查连接后重试。', 'WARNING');
+    }
+  };
+
+  useEffect(() => {
+    if (view === 'DATA_CENTER' && currentUser?.role.includes('SYSTEM_ADMIN')) void loadAuditEvents();
+  }, [view, currentUser?.id]);
+
+  if (authLoading) return <div className="min-h-screen grid place-items-center bg-gray-50 text-sm font-bold text-gray-500">正在验证企业会话…</div>;
+  if (!currentUser) return <LoginView onLogin={setCurrentUser} />;
+
+  const normalizedAuditQuery = auditQuery.trim().toLowerCase();
+  const filteredAuditEvents = auditEvents.filter(event => !normalizedAuditQuery || [
+    event.action, event.entityType, event.entityId, event.actorId,
+    users.find(user => user.id === event.actorId)?.name
+  ].some(value => String(value || '').toLowerCase().includes(normalizedAuditQuery)));
+
+  const workflowNavItems: NavItem[] = [
+    ...(canAccessApproval ? [{ id: 'APPROVAL_CENTER', label: '审批工作台', shortLabel: '审批', icon: ShieldCheck, badge: pendingCount } as NavItem] : []),
+    ...(canAccessWorkOrders ? [{ id: 'WORK_ORDERS', label: '服务工单', shortLabel: '工单', icon: Coffee, badge: openWorkOrderCount } as NavItem] : [])
+  ];
+  const adminNavItems: NavItem[] = currentUser.role.includes('SYSTEM_ADMIN') ? [
+    { id: 'WORKFLOW_CONFIG', label: '流程配置', shortLabel: '流程', icon: GitMerge },
+    { id: 'DEPARTMENTS', label: '部门管理', shortLabel: '部门', icon: Building2 },
+    { id: 'ROLES', label: '角色管理', shortLabel: '角色', icon: Shield },
+    { id: 'USERS', label: '成员中心', shortLabel: '成员', icon: Users },
+    { id: 'REPORTS', label: '运营报表', shortLabel: '报表', icon: PieChart },
+    { id: 'DATA_CENTER', label: '数据中心', shortLabel: '数据', icon: Database }
+  ] : [];
+  const primaryWorkflowItem = canAccessApproval ? workflowNavItems.find(item => item.id === 'APPROVAL_CENTER') : workflowNavItems.find(item => item.id === 'WORK_ORDERS');
+  const mobilePrimaryItems: NavItem[] = [
+    { id: 'DASHBOARD', label: '数据全景看板', shortLabel: '看板', icon: LayoutDashboard },
+    { id: 'RESOURCES', label: '空间资源库', shortLabel: '资源', icon: MapPin },
+    { id: 'BOOKINGS', label: '我的申请', shortLabel: '申请', icon: Calendar },
+    ...(primaryWorkflowItem ? [primaryWorkflowItem] : [])
+  ];
+  const mobileMoreItems = [
+    ...workflowNavItems.filter(item => !mobilePrimaryItems.some(primary => primary.id === item.id)),
+    ...adminNavItems
+  ];
+  const isMoreView = mobileMoreItems.some(item => item.id === view);
+  const isAdminView = adminNavItems.some(item => item.id === view);
 
   return (
-    <div className="min-h-screen flex bg-gray-50 overflow-hidden font-sans">
+    <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-sidebar={sidebarCollapsed ? 'collapsed' : 'expanded'}>
       {/* Toast Notifications */}
       <div className="fixed top-6 right-6 z-[1000] space-y-3 pointer-events-none">
         {myNotifications.filter(n => !n.isRead).slice(0, 3).map(n => (
-          <div key={n.id} className="w-80 p-4 bg-white/95 backdrop-blur-md rounded-2xl shadow-2xl border border-gray-100 flex items-start space-x-3 animate-in slide-in-from-right-8 fade-in pointer-events-auto">
-            <div className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${n.type === 'SUCCESS' ? 'bg-emerald-50 text-emerald-600' : n.type === 'WARNING' ? 'bg-amber-50 text-amber-600' : 'bg-indigo-50 text-indigo-600'}`}>
-              {n.type === 'SUCCESS' ? <CheckCircle size={18}/> : n.type === 'WARNING' ? <AlertTriangle size={18}/> : <Info size={18}/>}
-            </div>
-            <div className="flex-1">
-              <h5 className="text-sm font-black text-gray-800">{n.title}</h5>
-              <p className="text-xs text-gray-500 font-medium mt-0.5">{n.content}</p>
-            </div>
-            <button onClick={() => markNotificationRead(n.id)} className="text-gray-500 hover:text-gray-500"><X size={14}/></button>
-          </div>
+          <React.Fragment key={n.id}><ToastNotification notification={n} onClose={() => markNotificationRead(n.id)} /></React.Fragment>
         ))}
       </div>
 
-      <aside className="w-64 bg-white border-r hidden lg:flex flex-col p-6 h-screen sticky top-0 shrink-0">
-        {/* ... Sidebar content ... */}
-        <div className="flex items-center space-x-3 mb-10 px-2 shrink-0">
-          <div className={`w-8 h-8 bg-${theme}-600 rounded-lg flex items-center justify-center text-white shadow-lg`}><Cpu size={18}/></div>
-          <span className="text-lg font-black tracking-tight italic">SmartOffice</span>
+      <aside className="studio-sidebar w-[268px] hidden lg:flex flex-col p-6 shrink-0">
+        <div className="studio-brand shrink-0">
+          <div className="studio-brand-mark"><Cpu size={21} strokeWidth={1.5}/></div>
+          <div><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">THE OFFICE JOURNAL</div></div>
+          <button
+            type="button"
+            className="studio-sidebar-toggle"
+            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-expanded={!sidebarCollapsed}
+            aria-controls="studio-sidebar-navigation"
+            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            onClick={() => setSidebarCollapsed(value => !value)}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
         </div>
-        <nav className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">
-          <SidebarItem icon={LayoutDashboard} label="数据全景看板" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} theme={theme} />
-          <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} theme={theme} />
-          <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} theme={theme} />
-          <div className="pt-6 pb-2 px-4 text-[11px] font-black text-gray-500 uppercase tracking-widest">流程与中心</div>
-          {canAccessApproval && <SidebarItem icon={ShieldCheck} label="审批工作台" id="APPROVAL_CENTER" active={view === 'APPROVAL_CENTER'} onClick={setView} theme={theme} badge={pendingCount} />}
-          {canAccessWorkOrders && <SidebarItem icon={Coffee} label="服务工单" id="WORK_ORDERS" active={view === 'WORK_ORDERS'} onClick={setView} theme={theme} badge={openWorkOrderCount} />}
-          {currentUser.role.includes('SYSTEM_ADMIN') && (
-            <>
-              <div className="pt-6 pb-2 px-4 text-[11px] font-black text-gray-500 uppercase tracking-widest">系统管理</div>
-              <SidebarItem icon={GitMerge} label="流程配置" id="WORKFLOW_CONFIG" active={view === 'WORKFLOW_CONFIG'} onClick={setView} theme={theme} />
-              <SidebarItem icon={Building2} label="部门管理" id="DEPARTMENTS" active={view === 'DEPARTMENTS'} onClick={setView} theme={theme} />
-              <SidebarItem icon={Shield} label="角色管理" id="ROLES" active={view === 'ROLES'} onClick={setView} theme={theme} />
-              <SidebarItem icon={Users} label="成员中心" id="USERS" active={view === 'USERS'} onClick={setView} theme={theme} />
-              <SidebarItem icon={PieChart} label="运营报表" id="REPORTS" active={view === 'REPORTS'} onClick={setView} theme={theme} />
-              <SidebarItem icon={Database} label="数据中心" id="DATA_CENTER" active={view === 'DATA_CENTER'} onClick={setView} theme={theme} />
-            </>
+        <nav id="studio-sidebar-navigation" aria-label="桌面主导航" className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">
+          <SidebarItem icon={LayoutDashboard} label="数据全景看板" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
+          <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} />
+          <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} />
+          {(workflowNavItems.length > 0 || adminNavItems.length > 0) && <div className="studio-nav-label">流程与中心</div>}
+          {workflowNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={setView} badge={item.badge} />)}
+          {adminNavItems.length > 0 && (
+            <div className="studio-nav-group">
+              <button type="button" className="studio-nav-item studio-nav-group-toggle" data-active={isAdminView} aria-label="系统管理" title="系统管理" aria-expanded={showAdminMenu} aria-controls="desktop-admin-menu" onClick={() => setShowAdminMenu(value => !value)}>
+                <FolderTree size={17} strokeWidth={1.7} /><span>系统管理</span><ChevronDown size={14} className={showAdminMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
+              </button>
+              {showAdminMenu && <div id="desktop-admin-menu" className="studio-nav-children">{adminNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={setView} />)}</div>}
+            </div>
           )}
         </nav>
 
-        <div className="mt-4 pt-4 border-t shrink-0">
+        <div className="studio-sidebar-themes mt-4 pt-4 border-t shrink-0">
           <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-3 px-2">系统主题风格</p>
           <div className="flex items-center justify-around px-2">
             {THEMES.map(t => (
@@ -2244,12 +2951,12 @@ const App: React.FC = () => {
           </div>
         </div>
 
-        <div className="mt-6 pt-6 border-t shrink-0">
+        <div className="studio-sidebar-account mt-6 pt-6 border-t shrink-0">
           <div className={`flex items-center justify-between px-2 py-2 rounded-xl bg-gray-50 mb-4 ${!isOnline ? 'bg-rose-50' : ''}`}>
              <div className="flex items-center space-x-2">
                {isOnline ? <Cloud size={14} className="text-emerald-500"/> : <CloudOff size={14} className="text-rose-500"/>}
                <span className={`text-[11px] font-bold ${isOnline ? 'text-emerald-600' : 'text-rose-600'}`}>
-                 {saveStatus === 'saving' ? '正在同步...' : (isOnline ? '已同步至服务器' : '仅保存在本机')}
+                 {saveStatus === 'saving' ? '正在同步...' : (isOnline && saveStatus !== 'error' ? '已同步至 MySQL' : '连接异常，更改未保存')}
                </span>
              </div>
              {saveStatus === 'saving' && <RefreshCw size={12} className="text-gray-500 animate-spin"/>}
@@ -2257,36 +2964,32 @@ const App: React.FC = () => {
 
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2 truncate">
-              <div className={`w-8 h-8 bg-${theme}-600 rounded-full flex items-center justify-center text-white font-bold text-xs shadow-inner`}>{currentUser.name[0]}</div>
+              <div className="studio-user-avatar">{currentUser.name[0]}</div>
               <p className="text-xs font-bold truncate">{currentUser.name}</p>
             </div>
-            <button onClick={() => setCurrentUser(null)} aria-label="退出登录" title="退出登录" className="text-gray-500 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
+            <button onClick={handleLogout} aria-label="退出登录" title="退出登录" className="text-gray-500 hover:text-rose-500 transition-colors"><LogOut size={16}/></button>
           </div>
         </div>
       </aside>
 
-      <nav aria-label="移动端主导航" className="lg:hidden fixed bottom-3 left-3 right-3 z-[80] bg-white/95 backdrop-blur-lg border border-gray-200 rounded-2xl shadow-2xl flex overflow-x-auto p-2 gap-1">
-        {([
-          { id: 'DASHBOARD', label: '看板', icon: LayoutDashboard },
-          { id: 'RESOURCES', label: '资源', icon: MapPin },
-          { id: 'BOOKINGS', label: '申请', icon: Calendar },
-          ...(canAccessApproval ? [{ id: 'APPROVAL_CENTER', label: '审批', icon: ShieldCheck }] : []),
-          ...(canAccessWorkOrders ? [{ id: 'WORK_ORDERS', label: '工单', icon: Coffee }] : []),
-          ...(currentUser.role.includes('SYSTEM_ADMIN') ? [
-            { id: 'WORKFLOW_CONFIG', label: '流程', icon: GitMerge },
-            { id: 'DEPARTMENTS', label: '部门', icon: Building2 },
-            { id: 'ROLES', label: '角色', icon: Shield },
-            { id: 'USERS', label: '成员', icon: Users },
-            { id: 'REPORTS', label: '报表', icon: PieChart },
-            { id: 'DATA_CENTER', label: '数据', icon: Database }
-          ] : [])
-        ] as const).map(item => <button key={item.id} onClick={() => setView(item.id)} aria-current={view === item.id ? 'page' : undefined} className={`min-w-16 flex-1 flex flex-col items-center gap-1 px-3 py-2 rounded-xl text-[11px] font-bold ${view === item.id ? `bg-${theme}-600 text-white` : 'text-gray-500'}`}><item.icon size={17}/><span>{item.label}</span></button>)}
+      <nav aria-label="移动端主导航" className="studio-mobile-nav lg:hidden fixed bottom-3 left-3 right-3 z-[80] backdrop-blur-lg">
+        {mobilePrimaryItems.map(item => (
+          <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? 'page' : undefined}>
+            <item.icon size={18} strokeWidth={1.7} /><span>{item.shortLabel}</span>
+            {(item.badge || 0) > 0 && <strong className="studio-mobile-badge">{item.badge}</strong>}
+          </button>
+        ))}
+        <button type="button" data-active={isMoreView} aria-expanded={showMobileMenu} aria-controls="mobile-more-menu" onClick={() => setShowMobileMenu(true)}>
+          <MoreHorizontal size={19} strokeWidth={1.7} /><span>更多</span>
+        </button>
       </nav>
 
-      <main className="flex-1 min-w-0 overflow-auto relative bg-gray-50 pb-32">
-        <header className="min-h-16 bg-white/80 backdrop-blur-md border-b px-4 md:px-8 py-2 flex items-center justify-between gap-3 sticky top-0 z-40">
-          <div className="flex items-center space-x-6 flex-1 max-w-2xl">
-            <h2 className="text-lg font-bold shrink-0">
+      {showMobileMenu && <div id="mobile-more-menu"><MobileMoreSheet items={mobileMoreItems} currentView={view} onSelect={id => { setView(id); setShowMobileMenu(false); }} onClose={() => setShowMobileMenu(false)} theme={theme} onThemeChange={setTheme} currentUser={currentUser} isOnline={isOnline} saveStatus={saveStatus} onLogout={handleLogout} /></div>}
+
+      <main className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
+        <header className="studio-topbar backdrop-blur-md flex items-center justify-between gap-3 sticky top-0 z-40">
+          <div className="flex items-center gap-6 flex-1 max-w-2xl">
+            <div className="shrink-0"><span className="studio-page-kicker">SMARTOFFICE / WORKSPACE</span><h2 className="studio-page-title">
               {view === 'DASHBOARD' && '数据全景看板'}
               {view === 'RESOURCES' && '空间资源库'}
               {view === 'USERS' && '成员中心'}
@@ -2298,38 +3001,41 @@ const App: React.FC = () => {
               {view === 'ROLES' && '角色权限集'}
               {view === 'REPORTS' && '运营报表'}
               {view === 'DATA_CENTER' && '数据维护中心'}
-            </h2>
+            </h2></div>
             {(view === 'RESOURCES' || view === 'USERS') && (
               <div className="relative flex-1 group">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 group-focus-within:text-indigo-500 transition-colors" size={16}/>
                 <input 
-                  type="text" 
+                  type="search"
+                  aria-label={view === 'RESOURCES' ? '搜索空间资源' : '搜索成员'}
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder={view === 'RESOURCES' ? "搜索资源名称或位置..." : "搜索姓名、邮箱或部门..."} 
-                  className="w-full pl-10 pr-4 py-2 bg-gray-100/50 border border-transparent rounded-xl outline-none text-sm focus:bg-white focus:border-indigo-100 transition-all font-medium" 
+                  placeholder={view === 'RESOURCES' ? "搜索名称、楼栋楼层、设备、容量或状态..." : "搜索姓名、邮箱或部门..."}
+                  className="studio-search w-full pl-10 pr-10 py-2 outline-none text-sm transition-all font-medium"
                 />
+                {searchQuery && <button type="button" aria-label="清空搜索" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-700"><X size={15}/></button>}
               </div>
             )}
           </div>
           <div className="flex items-center space-x-4">
-             <button className={`bg-${theme}-50 text-${theme}-600 px-4 py-2 rounded-xl font-black text-[11px] flex items-center space-x-2 hover:bg-${theme}-100 transition-all shadow-sm border border-${theme}-100`} onClick={() => setShowQRScanner(true)}>
+             <button className="studio-secondary !min-h-9 !px-3" onClick={() => setShowQRScanner(true)}>
                <QrCode size={14}/>
                <span>扫码签到</span>
              </button>
              <div className="relative">
-               <button onClick={() => setShowNotificationPanel(v => !v)} className="relative p-2 text-gray-500 hover:text-indigo-600 transition-colors" aria-label="通知中心">
+               <button onClick={() => setShowNotificationPanel(v => !v)} className="studio-icon-button" aria-label="通知中心" aria-expanded={showNotificationPanel}>
                  <Bell size={20}/>
                  {unreadCount > 0 && (
                    <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 px-1 bg-rose-500 text-white text-[10px] font-bold rounded-full flex items-center justify-center">{unreadCount > 99 ? '99+' : unreadCount}</span>
                  )}
                </button>
                {showNotificationPanel && (
-                 <div className="absolute right-0 top-12 w-96 max-w-[90vw] bg-white rounded-2xl shadow-2xl border border-gray-100 z-50 overflow-hidden">
+                 <div className="studio-notification-panel absolute right-0 top-12 w-96 max-w-[90vw] z-50 overflow-hidden">
                    <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100">
                      <h4 className="font-black text-sm text-gray-800">通知中心</h4>
-                     <button onClick={() => setNotifications(prev => prev.map(n => ({ ...n, isRead: true })))} className="text-[11px] font-bold text-indigo-500 hover:text-indigo-700">全部已读</button>
+                     <button disabled={!unreadCount || isMarkingAllRead} onClick={() => void markAllNotificationsRead()} className="text-[11px] font-bold text-indigo-500 hover:text-indigo-700 disabled:cursor-not-allowed disabled:opacity-40">{isMarkingAllRead ? '保存中…' : '全部已读'}</button>
                    </div>
+                   {notificationActionError && <p role="alert" className="border-b border-rose-100 bg-rose-50 px-5 py-2 text-[11px] font-bold text-rose-600">{notificationActionError}</p>}
                    <div className="max-h-96 overflow-y-auto custom-scrollbar">
                      {myNotifications.length === 0 && <p className="text-center text-xs text-gray-500 font-bold py-10">暂无通知</p>}
                      {myNotifications.slice(0, 20).map(n => (
@@ -2349,128 +3055,114 @@ const App: React.FC = () => {
           </div>
         </header>
 
-        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+        <div className="studio-content">
           {view === 'DASHBOARD' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className={`flex items-center justify-between p-5 bg-${theme}-600 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]`}>
-                  <div className="flex items-center space-x-4 relative z-10">
-                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
-                      <Monitor size={24} />
-                    </div>
-                    <div className="text-left">
-                      <h3 className="font-black text-lg leading-tight">预订会议室</h3>
-                      <p className="text-[11px] text-white/70 font-bold uppercase mt-1">当前可用: <span className="text-white">{stats.availableRooms}</span></p>
-                    </div>
+              <section className="agenda-hero" aria-label="今日办公议程">
+                <div className="agenda-date">
+                  <span className="agenda-date-year">{new Date().getFullYear()} / {pad2(new Date().getMonth() + 1)}</span>
+                  <span className="agenda-date-day">{pad2(new Date().getDate())}</span>
+                  <span className="agenda-date-week">{new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}<br/>TODAY'S EDITION</span>
+                </div>
+                <div className="agenda-intro">
+                  <p className="agenda-eyebrow">YOUR DAY, BEAUTIFULLY ORGANIZED.</p>
+                  <h1>{currentUser.name}，<br/>今天也<em>从容相见。</em></h1>
+                  <p>空间已经就绪，时间各有归处。从这里安排会议、协调资源，让每一次协作都有清晰的开场。</p>
+                  <div className="agenda-actions">
+                    <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-primary"><Monitor size={16}/> 预订会议室 <ArrowUpRight size={15}/></button>
+                    <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-secondary"><Coffee size={16}/> 申请工位</button>
                   </div>
-                  <ArrowRightCircle className="relative z-10 text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all" size={24} />
-                  <Monitor className="absolute -right-4 -bottom-4 text-white/10 opacity-50 group-hover:scale-125 transition-all pointer-events-none" size={100} />
+                </div>
+                <button className="agenda-next text-left" onClick={() => nextBooking ? setDayDetail({ resource: nextBookingResource, date: new Date(nextBooking.startTime), bookings: [nextBooking] }) : setView('BOOKINGS')}>
+                  <span className="agenda-next-label">NEXT UP / 下一场</span>
+                  <span className="agenda-next-time">{nextBooking ? `${toLocalTimeString(nextBooking.startTime)} — ${toLocalTimeString(nextBooking.endTime)}` : '— : —'}</span>
+                  <span className="agenda-next-title">{nextBooking?.purpose || '议程留白，专注当下'}</span>
+                  <span className="agenda-next-meta">{nextBooking ? <>{nextBookingResource?.name || '会议空间'}<br/>{nextBookingResource?.location}</> : '暂无已核准的后续会议'}</span>
+                  <span className="agenda-next-foot">{nextBooking ? 'VIEW DETAILS →' : `${stats.availableRooms} 间会议室 · ${stats.availableDesks} 个工位可用`}</span>
                 </button>
+              </section>
 
-                <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className={`flex items-center justify-between p-5 bg-${theme}-500 rounded-[2rem] text-white shadow-lg hover:translate-y-[-2px] transition-all group overflow-hidden relative active:scale-[0.98]`}>
-                  <div className="flex items-center space-x-4 relative z-10">
-                    <div className="w-12 h-12 bg-white/20 rounded-2xl flex items-center justify-center backdrop-blur-md group-hover:scale-110 transition-transform">
-                      <Coffee size={24} />
-                    </div>
-                    <div className="text-left">
-                      <h3 className="font-black text-lg leading-tight">申请工位</h3>
-                      <p className="text-[11px] text-white/70 font-bold uppercase mt-1">当前可用: <span className="text-white">{stats.availableDesks}</span></p>
-                    </div>
-                  </div>
-                  <ArrowRightCircle className="relative z-10 text-white/50 group-hover:text-white group-hover:translate-x-1 transition-all" size={24} />
-                  <Coffee className="absolute -right-4 -bottom-4 text-white/10 opacity-50 group-hover:scale-125 transition-all pointer-events-none" size={100} />
-                </button>
+              <div className="studio-stat-grid">
+                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend={`${stats.availableRooms + stats.availableDesks} 个空间可用`} color={theme} onClick={() => setView('RESOURCES')} />
+                <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="空间预约 · 实时统计" color="emerald" onClick={() => setView('BOOKINGS')} />
+                {canAccessApproval ? <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} trend={pendingCount ? '等待你的处理' : '今日任务已清零'} color="amber" onClick={() => setView('APPROVAL_CENTER')} /> : <StatCard title="我的进行中申请" value={bookings.filter(b => b.userId === currentUser.id && b.status === 'PENDING').length} icon={Activity} trend="个人申请 · 流程跟进" color="amber" onClick={() => setView('BOOKINGS')} />}
               </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend="+2" color={theme} onClick={() => setView('RESOURCES')} />
-                <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="+12%" color="emerald" onClick={() => setView('BOOKINGS')} />
-                {canAccessApproval ? <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} color="amber" onClick={() => setView('APPROVAL_CENTER')} /> : <StatCard title="我的进行中申请" value={bookings.filter(b => b.userId === currentUser.id && b.status === 'PENDING').length} icon={Activity} color="amber" onClick={() => setView('BOOKINGS')} />}
-              </div>
-
-              <TodayResourceUsage 
-                resources={resources} 
-                bookings={bookings} 
-                users={users} 
-                theme={theme}
-                onBookingClick={(detail: any) => setDayDetail(detail)}
-              />
-              
-              {/* Weekly View */}
-              <ResourceUsageGrid 
-                title="本周资源申请情况 (7天)" 
-                days={weekDays} 
-                resources={resources} 
-                bookings={bookings} 
-                users={users} 
-                theme={theme} 
-                onDayClick={(resId: string | null, date: Date) => { 
-                  const dayStart = new Date(date); dayStart.setHours(0,0,0,0);
-                  const dayEnd = new Date(date); dayEnd.setHours(23,59,59,999);
-                  
-                  const targetResource = resId ? resources.find(r => r.id === resId) : { name: '全公司资源概览' };
-                  
-                  const dayBookings = bookings.filter(b => {
-                    if (b.status !== 'APPROVED') return false;
-                    if (resId && b.resourceId !== resId) return false;
-                    const bStart = new Date(b.startTime);
-                    const bEnd = new Date(b.endTime);
-                    return bStart < dayEnd && bEnd > dayStart;
-                  });
-                  
-                  setDayDetail({ 
-                    resource: targetResource, 
-                    date, 
-                    bookings: dayBookings 
-                  }); 
-                }} 
-              />
-              
-              {/* Monthly View */}
-              <ResourceUsageGrid 
-                title="未来30天资源申请情况" 
-                days={monthDays} 
-                resources={resources} 
-                bookings={bookings} 
-                users={users} 
-                theme={theme} 
-                onDayClick={(resId: string | null, date: Date) => { 
-                  const dayStart = new Date(date); dayStart.setHours(0,0,0,0);
-                  const dayEnd = new Date(date); dayEnd.setHours(23,59,59,999);
-                  
-                  const targetResource = resId ? resources.find(r => r.id === resId) : { name: '全公司资源概览' };
-                  
-                  const dayBookings = bookings.filter(b => {
-                    if (b.status !== 'APPROVED') return false;
-                    if (resId && b.resourceId !== resId) return false;
-                    const bStart = new Date(b.startTime);
-                    const bEnd = new Date(b.endTime);
-                    return bStart < dayEnd && bEnd > dayStart;
-                  });
-                  
-                  setDayDetail({ 
-                    resource: targetResource, 
-                    date, 
-                    bookings: dayBookings 
-                  }); 
-                }} 
-              />
+              <section className="studio-panel studio-schedule-card" aria-label="资源占用日程">
+                <div className="studio-schedule-head">
+                  <div>
+                    <span className="studio-panel-kicker">RESOURCE SCHEDULE / {activeSchedule.code}</span>
+                    <h3 className="studio-panel-title">资源占用日程</h3>
+                    <p>{activeSchedule.description}</p>
+                  </div>
+                  <div className="studio-schedule-tabs" role="tablist" aria-label="切换资源日程范围" onKeyDown={handleScheduleTabKeyDown}>
+                    {SCHEDULE_RANGES.map(range => (
+                      <button
+                        key={range.id}
+                        id={`schedule-tab-${range.id}`}
+                        role="tab"
+                        aria-selected={scheduleRange === range.id}
+                        aria-controls="schedule-panel"
+                        tabIndex={scheduleRange === range.id ? 0 : -1}
+                        className="studio-schedule-tab"
+                        onClick={() => setScheduleRange(range.id)}
+                      >
+                        <span>{range.label}</span><small>{range.code}</small>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div key={scheduleRange} id="schedule-panel" className="studio-schedule-panel" role="tabpanel" aria-labelledby={`schedule-tab-${scheduleRange}`}>
+                  {scheduleRange === 'TODAY' ? (
+                    <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} onBookingClick={(detail: any) => setDayDetail(detail)} />
+                  ) : (
+                    <ResourceUsageGrid days={scheduleRange === 'WEEK' ? weekDays : monthDays} resources={resources} bookings={bookings} theme={theme} onDayClick={openScheduleDay} />
+                  )}
+                </div>
+                <div className="studio-schedule-foot"><span>{resources.length} SPACES · REALTIME</span><span>ONLY ONE VIEW, THE FULL PICTURE.</span></div>
+              </section>
             </div>
           )}
 
           {/* ... existing views ... */}
           {view === 'RESOURCES' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-end mb-6">
-                <div><h3 className="text-2xl font-black">空间资产</h3><p className="text-sm text-gray-500 mt-1">查看及预约全公司物理空间资源。</p></div>
-                <div className="flex items-center space-x-3">
-                  <button onClick={() => setShowResourceFinder(prev => !prev)} aria-expanded={showResourceFinder} className={`px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 transition-all ${showResourceFinder ? `bg-${theme}-50 text-${theme}-600 border border-${theme}-200` : 'bg-white border border-gray-200 text-gray-600 hover:bg-gray-50'}`}><Search size={18}/> <span>按条件找会议室</span></button>
-                  {currentUser.role.includes('SYSTEM_ADMIN') && <><button onClick={() => setShowImportModal('RESOURCES')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50 transition-all"><Upload size={18}/> <span>批量导入</span></button>
-                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2 hover:shadow-xl transition-all`}><Plus size={18}/> <span>新增资源</span></button></>}
+              <div className="studio-page-head">
+                <div><span className="studio-page-kicker">SPACE DIRECTORY / 资源目录</span><h3>空间资产</h3><p>查看及预约全公司物理空间资源。</p></div>
+                <div className="studio-page-actions">
+                  <button onClick={() => setShowResourceFinder(prev => !prev)} aria-expanded={showResourceFinder} className="studio-secondary"><Search size={16}/> <span>按条件找会议室</span></button>
+                  {currentUser.role.includes('SYSTEM_ADMIN') && <><button onClick={() => setShowImportModal('RESOURCES')} className="studio-secondary"><Upload size={16}/> <span>批量导入</span></button>
+                  <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className="studio-primary"><Plus size={16}/> <span>新增资源</span></button></>}
                 </div>
               </div>
-              {showResourceFinder && <ResourceFinder resources={resources} bookings={bookings} theme={theme} onBook={(resource: Resource, prefill: any) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(prefill); setCalendarDateForBooking(null); setShowBookingModal(true); }} />}
-              <div className="bg-white rounded-3xl border border-gray-100 overflow-x-auto shadow-sm">
+              <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3" aria-label="资源组合筛选">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="flex items-center gap-2 text-xs font-black text-gray-600"><Filter size={14}/>组合筛选</span>
+                  <span role="status" className="text-[11px] font-bold text-gray-500">显示 {filteredResources.length} / {resources.length} 个资源</span>
+                </div>
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
+                  <select aria-label="筛选楼栋" value={resourceBuildingFilter} onChange={e => setResourceBuildingFilter(e.target.value as any)} className="p-2.5 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="ALL">全部楼栋</option>{Object.values(BUILDINGS).map(item => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select>
+                  <select aria-label="筛选资源类型" value={resourceTypeFilter} onChange={e => setResourceTypeFilter(e.target.value as any)} className="p-2.5 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="ALL">全部类型</option><option value="ROOM">会议室</option><option value="DESK">工位</option></select>
+                  <select aria-label="筛选资源状态" value={resourceStatusFilter} onChange={e => setResourceStatusFilter(e.target.value as any)} className="p-2.5 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="ALL">全部状态</option><option value="AVAILABLE">空闲</option><option value="OCCUPIED">占用</option><option value="MAINTENANCE">维护中</option></select>
+                  <select aria-label="筛选最少容量" value={resourceMinCapacity} onChange={e => setResourceMinCapacity(Number(e.target.value))} className="p-2.5 bg-gray-50 rounded-xl text-xs font-bold outline-none">{[0, 2, 4, 8, 12, 20].map(value => <option key={value} value={value}>{value ? `至少 ${value} 人` : '不限人数'}</option>)}</select>
+                  <button type="button" onClick={resetResourceFilters} disabled={!hasResourceFilters} className="p-2.5 rounded-xl border border-gray-100 text-xs font-bold text-gray-500 hover:bg-gray-50 disabled:opacity-40">重置筛选</button>
+                </div>
+              </section>
+              {showResourceFinder && <ResourceFinder matches={resourceFinderResults} criteria={resourceFinderCriteria} onCriteriaChange={setResourceFinderCriteria} theme={theme} onBook={(resource: Resource, prefill: any) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(prefill); setCalendarDateForBooking(null); setShowBookingModal(true); }} />}
+              <BuildingExplorer
+                resources={spatialResources}
+                bookings={bookings}
+                focusLocation={activeSpatialFocus}
+                resultContext={showResourceFinder ? {
+                  label: resourceFinderContext,
+                  matchCount: resourceFinderResults.length,
+                  totalRoomCount: filteredResources.filter(resource => resource.type === 'ROOM').length
+                } : null}
+                onDetails={(resource) => setViewDetail({ type: 'RESOURCE', data: resource })}
+                onCalendar={setShowResourceCalendar}
+                onBook={(resource) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }}
+              />
+              <div className="studio-table-shell">
                 <table className="w-full min-w-[720px] text-left">
                   <thead>
                     <tr className="bg-gray-50 border-b">
@@ -2494,15 +3186,15 @@ const App: React.FC = () => {
                             {selectedResourceIds.includes(r.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
                           </button>
                         </td>
-                        <td className="px-6 py-4 font-bold text-gray-800">{r.name}</td>
-                        <td className="px-6 py-4 text-xs font-medium text-gray-500">{r.location}</td>
+                        <td className="px-6 py-4 font-bold text-gray-800"><p>{r.name}</p>{r.type === 'ROOM' && <p className="mt-1 max-w-56 truncate text-[10px] font-medium text-gray-500">{r.features.join(' · ') || '未配置特殊设备'}</p>}</td>
+                        <td className="px-6 py-4 text-xs font-medium text-gray-500"><p>{r.location}</p>{r.campus && <p className="mt-1 text-[10px] font-bold text-indigo-500">{r.campus}</p>}</td>
                         <td className="px-6 py-4 text-xs text-gray-500 font-bold">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
                         <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
                         <td className="px-6 py-4 text-right space-x-1">
                           <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors" title="详情"><Info size={16}/></button>
                           <button onClick={() => setShowResourceCalendar(r)} className="p-2 text-gray-500 hover:text-emerald-600 transition-colors" title="排期日历" aria-label={`查看${r.name}排期`}><CalendarDays size={16}/></button>
-                          <button onClick={() => { setSelectedResource(r); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[11px] font-black shadow-md hover:translate-y-[-1px] transition-all`}>预约</button>
-                          {currentUser.role.includes('SYSTEM_ADMIN') && <button onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>}
+                          <button disabled={!isResourceAcceptingBookings(r)} title={!isResourceAcceptingBookings(r) ? '当前状态暂停新预约' : undefined} onClick={() => { setSelectedResource(r); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[11px] font-black shadow-md hover:translate-y-[-1px] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0`}>{isResourceAcceptingBookings(r) ? '预约' : r.status === 'MAINTENANCE' ? '维护中' : '待开放'}</button>
+                          {currentUser.role.includes('SYSTEM_ADMIN') && <button aria-label={`编辑${r.name}`} title="编辑资源" onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>}
                         </td>
                       </tr>
                     ))}
@@ -2520,14 +3212,14 @@ const App: React.FC = () => {
 
           {view === 'USERS' && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="flex justify-between items-end mb-6">
-                <div><h3 className="text-2xl font-black">成员名录</h3><p className="text-sm text-gray-500 mt-1">管理企业员工信息及其系统角色。</p></div>
-                <div className="flex items-center space-x-3">
-                  <button onClick={() => setShowImportModal('USERS')} className="bg-white border border-gray-200 text-gray-600 px-5 py-2.5 rounded-xl font-bold shadow-sm flex items-center space-x-2 hover:bg-gray-50 transition-all"><Upload size={18}/> <span>批量导入</span></button>
-                  <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2 hover:shadow-xl transition-all`}><UserPlus size={18}/> <span>录入成员</span></button>
+              <div className="studio-page-head">
+                <div><span className="studio-page-kicker">PEOPLE DIRECTORY / 成员目录</span><h3>成员名录</h3><p>管理企业员工信息及其系统角色。</p></div>
+                <div className="studio-page-actions">
+                  <button onClick={() => setShowImportModal('USERS')} className="studio-secondary"><Upload size={16}/> <span>批量导入</span></button>
+                  <button onClick={() => { setEditingUser(null); setShowUserModal(true); }} className="studio-primary"><UserPlus size={16}/> <span>录入成员</span></button>
                 </div>
               </div>
-              <div className="bg-white rounded-3xl border border-gray-100 overflow-hidden shadow-sm">
+              <div className="studio-table-shell">
                 <table className="w-full text-left">
                   <thead>
                     <tr className="bg-gray-50 border-b">
@@ -2563,7 +3255,7 @@ const App: React.FC = () => {
                         <td className="px-6 py-4 text-right">
                           <button onClick={() => setViewDetail({ type: 'USER', data: u })} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors"><Info size={16}/></button>
                           <button onClick={() => { setEditingUser(u); setShowUserModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>
-                          <button onClick={() => { if(confirm("确定注销该成员吗？")) setUsers(users.filter(user => user.id !== u.id)); }} className="p-2 text-gray-200 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
+                          <button onClick={() => void handleDeleteUser(u.id)} className="p-2 text-gray-200 hover:text-rose-500 transition-colors"><Trash2 size={16}/></button>
                         </td>
                       </tr>
                     ))}
@@ -2581,24 +3273,40 @@ const App: React.FC = () => {
 
           {view === 'APPROVAL_CENTER' && canAccessApproval && (
             <div className="space-y-6 animate-in fade-in">
-              <div className="mb-8 flex items-center justify-between">
+              <div className="studio-page-head">
                 <div>
-                  <h3 className="text-3xl font-black text-gray-800 tracking-tight">审批工作台</h3>
+                  <span className="studio-page-kicker">APPROVAL DESK / 流程处理</span><h3>审批工作台</h3>
                   <p className="text-sm text-gray-500 mt-2 flex items-center space-x-2">
                     <ShieldCheck size={14} className={`text-${theme}-600`}/>
                     <span>当前共 <strong className={`text-${theme}-600`}>{pendingCount}</strong> 项待处理申请</span>
                   </p>
                 </div>
-                <div className="flex items-center gap-3">
-                  <button onClick={() => setSelectedApprovalIds(selectedApprovalIds.length === approvableBookings.length ? [] : approvableBookings.map(b => b.id))} className="bg-white border border-gray-200 text-gray-600 px-4 py-2.5 rounded-xl text-xs font-bold">{selectedApprovalIds.length === approvableBookings.length && approvableBookings.length ? '取消全选' : '全选'}</button>
-                  <button onClick={handleBulkApprove} disabled={!selectedApprovalIds.length} className={`bg-${theme}-600 text-white px-4 py-2.5 rounded-xl text-xs font-bold disabled:opacity-40`}>批量通过{selectedApprovalIds.length ? ` (${selectedApprovalIds.length})` : ''}</button>
+                <div className="studio-page-actions">
+                  <button disabled={isApprovalActionPending || !approvalGroups.length} onClick={() => setSelectedApprovalIds(selectedApprovalIds.length === approvalGroups.length ? [] : approvalGroups.map(group => group.booking.id))} className="studio-secondary disabled:cursor-not-allowed disabled:opacity-40">{selectedApprovalIds.length === approvalGroups.length && approvalGroups.length ? '取消全选' : '全选'}</button>
+                  <button onClick={handleBulkApprove} disabled={!selectedApprovalIds.length || isApprovalActionPending} className="studio-primary disabled:cursor-not-allowed disabled:opacity-40">{pendingApprovalActions.BULK ? '批量处理中…' : `批量通过${selectedApprovalIds.length ? ` (${selectedApprovalIds.length})` : ''}`}</button>
                 </div>
               </div>
+              {approvalActionErrors.BULK && <p role="alert" className="mb-4 rounded-xl bg-rose-50 px-4 py-3 text-xs font-bold text-rose-600">{approvalActionErrors.BULK}</p>}
               <div className="grid grid-cols-1 gap-6">
-                {approvableBookings.map(b => (
-                  <ApprovalTaskCard key={b.id} booking={b} workflow={workflow} users={users} resources={resources} theme={theme} selected={selectedApprovalIds.includes(b.id)} onToggleSelect={() => setSelectedApprovalIds(prev => prev.includes(b.id) ? prev.filter(id => id !== b.id) : [...prev, b.id])} onApprove={(comment?: string) => handleApprove(b, comment)} onReject={(c: string) => handleReject(b, c)} />
+                {approvalGroups.map(({ booking, seriesBookings }) => (
+                  <ApprovalTaskCard
+                    key={booking.id}
+                    booking={booking}
+                    seriesBookings={seriesBookings}
+                    workflow={workflow}
+                    users={users}
+                    resources={resources}
+                    theme={theme}
+                    selected={selectedApprovalIds.includes(booking.id)}
+                    busy={Boolean(pendingApprovalActions[booking.id] || pendingApprovalActions.BULK)}
+                    disabled={isApprovalActionPending}
+                    actionError={approvalActionErrors[booking.id]}
+                    onToggleSelect={() => setSelectedApprovalIds(prev => prev.includes(booking.id) ? prev.filter(id => id !== booking.id) : [...prev, booking.id])}
+                    onApprove={(comment?: string) => handleApprove(booking, comment)}
+                    onReject={(c: string) => handleReject(booking, c)}
+                  />
                 ))}
-                {approvableBookings.length === 0 && (
+                {approvalGroups.length === 0 && (
                   <div className="text-center py-32 bg-white rounded-[3rem] border border-dashed border-gray-200">
                     <div className="w-20 h-20 bg-gray-50 rounded-full flex items-center justify-center mx-auto mb-6 text-gray-200">
                       <CheckCircle size={40}/>
@@ -2612,9 +3320,9 @@ const App: React.FC = () => {
           
           {view === 'BOOKINGS' && (
              <div className="space-y-6 animate-in fade-in">
-                 <div className="flex justify-between items-center mb-4">
-                     <h3 className="text-2xl font-black">我的申请动态</h3>
-                     <span className="text-xs font-bold text-gray-500 bg-white px-3 py-1 rounded-full shadow-sm border border-gray-100">
+                 <div className="studio-page-head">
+                     <div><span className="studio-page-kicker">MY REQUESTS / 申请档案</span><h3>我的申请动态</h3></div>
+                     <span className="studio-secondary !cursor-default">
                          共 {myBookings.length} 条记录
                      </span>
                  </div>
@@ -2630,6 +3338,8 @@ const App: React.FC = () => {
                            {currentPageBookings.map(b => {
                                const isExpanded = expandedBookingIds.has(b.id);
                                const resource = resources.find(r => r.id === b.resourceId);
+                               const longTermSeries = b.seriesKind === 'LONG_TERM' && b.seriesId ? bookings.filter(item => item.seriesId === b.seriesId) : [];
+                               const activeRenewal = b.seriesId && bookings.some(item => item.renewalOfSeriesId === b.seriesId && isActiveBooking(item));
                                return (
                                    <div key={b.id} className={`bg-white rounded-[2rem] border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg border-indigo-100' : 'shadow-sm border-gray-100 hover:border-gray-200'}`}>
                                        {/* Header - Click to Toggle */}
@@ -2646,7 +3356,7 @@ const App: React.FC = () => {
                                                    <div className="flex items-center space-x-2 mt-1">
                                                        <span className="text-[11px] font-bold text-gray-500 uppercase tracking-wide bg-gray-50 px-1.5 py-0.5 rounded">{resource?.name || '未知资源'}</span>
                                                        <span className="text-[11px] font-medium text-gray-500">·</span>
-                                                       <span className="text-[11px] font-medium text-gray-500">{toLocalDateString(b.startTime)}</span>
+                                                       <span className="text-[11px] font-medium text-gray-500">{b.seriesKind === 'LONG_TERM' && b.seriesEndDate ? `${toLocalDateString(b.startTime)} 至 ${b.seriesEndDate}` : toLocalDateString(b.startTime)}</span>
                                                    </div>
                                                </div>
                                            </div>
@@ -2655,6 +3365,7 @@ const App: React.FC = () => {
                                                {b.userId !== currentUser.id && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">受邀会议</span>}
                                                {b.checkedInAt && <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">已签到 {toLocalTimeString(b.checkedInAt)}</span>}
                                                {b.noShow && <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">未签到</span>}
+                                               {b.seriesKind === 'LONG_TERM' && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">{b.renewalOfSeriesId ? '续期' : '长期预订'} · {longTermSeries.length} 天</span>}
                                                <StatusBadge status={b.status} theme={theme} />
                                                <div className={`p-2 rounded-full transition-transform duration-300 ${isExpanded ? 'rotate-180 bg-gray-100 text-gray-600' : 'text-gray-500'}`}>
                                                    <ChevronDown size={16}/>
@@ -2665,6 +3376,7 @@ const App: React.FC = () => {
                                        {/* Expanded Content */}
                                        {isExpanded && (
                                            <div className="px-6 pb-8 pt-2 border-t border-gray-50 animate-in slide-in-from-top-2 fade-in">
+                                               {b.seriesKind === 'LONG_TERM' && <div className="mb-5 p-4 rounded-2xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700"><strong>{b.renewalOfSeriesId ? '续期申请' : '长期预订'} · 每天 {toLocalTimeString(b.startTime)} - {toLocalTimeString(b.endTime)}</strong><p className="mt-1">本期至 {b.seriesEndDate}，共 {longTermSeries.length} 个有效会议日。续期审批只影响新周期，当前周期保持不变。</p></div>}
                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 text-xs text-gray-500">
                                                    <div className="space-y-1">
                                                        <p className="font-black text-gray-500 uppercase tracking-widest text-[11px]">时间段</p>
@@ -2695,11 +3407,12 @@ const App: React.FC = () => {
                                                {b.approvalHistory?.length > 0 && <div className="mt-5 space-y-2">{b.approvalHistory.map((record, index) => <div key={`${record.timestamp}-${index}`} className={`p-3 rounded-xl text-xs ${record.status === 'REJECTED' ? 'bg-rose-50 text-rose-700 border border-rose-100' : 'bg-gray-50 text-gray-600'}`}><span className="font-black">{record.nodeName} · {record.approverName} · {record.status === 'REJECTED' ? '驳回原因' : '审批附言'}</span><p className="mt-1">{record.comment || (record.status === 'REJECTED' ? '未填写' : '无附言')}</p></div>)}</div>}
 
                                                <div className="mt-8 flex justify-end gap-3 flex-wrap">
-                                                 <button onClick={() => resource && downloadBookingIcs(b, resource, users)} className="flex items-center space-x-2 text-xs font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-5 py-2.5 rounded-xl border border-emerald-100"><Download size={14}/><span>下载 ICS 日历</span></button>
+                                                 {b.seriesKind === 'LONG_TERM' && b.recurrenceIndex === 0 && b.status === 'APPROVED' && b.userId === currentUser.id && <button onClick={() => handleRenewLongTerm(b)} disabled={!!activeRenewal} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl border border-indigo-100 disabled:opacity-50"><RefreshCw size={14}/><span>{activeRenewal ? '续期已提交' : '申请续期'}</span></button>}
+                                                 {(b.status === 'APPROVED' || b.status === 'CANCELLED') && resource && <button onClick={() => downloadBookingIcs(b, resource, users)} className="flex items-center space-x-2 text-xs font-bold text-emerald-600 bg-emerald-50 hover:bg-emerald-100 px-5 py-2.5 rounded-xl border border-emerald-100"><Download size={14}/><span>下载 ICS 日历</span></button>}
                                                  {checkableBookings.some(item => item.id === b.id) && <button onClick={() => setShowQRScanner(true)} className={`flex items-center space-x-2 text-xs font-bold text-${theme}-600 bg-${theme}-50 hover:bg-${theme}-100 px-5 py-2.5 rounded-xl border border-${theme}-100`}><CheckCircle size={14}/><span>会议签到</span></button>}
                                                  {b.status === 'APPROVED' && b.checkedInAt && b.userId === currentUser.id && Date.now() >= new Date(b.startTime).getTime() && Date.now() < new Date(b.endTime).getTime() && <button onClick={() => handleEndEarly(b.id)} className="flex items-center space-x-2 text-xs font-bold text-amber-600 bg-amber-50 hover:bg-amber-100 px-5 py-2.5 rounded-xl border border-amber-100"><LogOut size={14}/><span>提前结束并释放</span></button>}
                                                  {['PENDING', 'APPROVED'].includes(b.status) && b.userId === currentUser.id && <>
-                                                        <button onClick={(e) => { e.stopPropagation(); if (!resource) return; setEditingBooking(b); setSelectedResource(resource); setCalendarDateForBooking(null); setBookingPrefill({ id: b.id, purpose: b.purpose, start: b.startTime, end: b.endTime, participants: b.participants, extras: { hasLeader: b.hasLeader, leaderDetails: b.leaderDetails, isVideoConference: b.isVideoConference, needsTeaService: b.needsTeaService, attendeeIds: b.attendeeIds || [] } }); setShowBookingModal(true); }} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl transition-all border border-indigo-100"><Edit2 size={14}/><span>修改预约</span></button>
+                                                        <button onClick={(e) => { e.stopPropagation(); if (!resource) return; setEditingBooking(b); setSelectedResource(resource); setCalendarDateForBooking(null); setBookingPrefill({ id: b.id, purpose: b.purpose, start: b.startTime, end: b.endTime, participants: b.participants, extras: { hasLeader: b.hasLeader, leaderDetails: b.leaderDetails, isVideoConference: b.isVideoConference, needsTeaService: b.needsTeaService, requiredFeatures: b.requiredFeatures || [], attendeeIds: b.attendeeIds || [] } }); setShowBookingModal(true); }} className="flex items-center space-x-2 text-xs font-bold text-indigo-600 bg-indigo-50 hover:bg-indigo-100 px-5 py-2.5 rounded-xl transition-all border border-indigo-100"><Edit2 size={14}/><span>修改预约</span></button>
                                                         <button
                                                            onClick={(e) => { e.stopPropagation(); handleCancelBooking(b.id); }}
                                                            className="flex items-center space-x-2 text-xs font-bold text-rose-500 bg-rose-50 hover:bg-rose-100 px-5 py-2.5 rounded-xl transition-all border border-rose-100"
@@ -2744,25 +3457,41 @@ const App: React.FC = () => {
           )}
 
           {view === 'WORKFLOW_CONFIG' && (
-             <div className="space-y-6 animate-in fade-in max-w-4xl">
-               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">审批流程引擎</h3><p className="text-sm text-gray-500 mt-1">编排资源申请的流转节点及负责人。</p></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增节点</span></button></div>
+             <div className="space-y-8 animate-in fade-in max-w-5xl">
+               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">审批流程引擎</h3><p className="text-sm text-gray-500 mt-1">每次保存发布新版本；在途申请仍按提交时冻结的流程审批。</p></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增节点</span></button></div>
                <div className="space-y-4">
                  {workflow.map((node, index) => (
                    <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all">
                      <div className="flex items-center space-x-6">
                        <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center font-black text-${theme}-600 border border-gray-100 shadow-inner`}>{index + 1}</div>
-                       <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-500 mt-1 font-medium">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p></div>
+                       <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-500 mt-1 font-medium">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p><p className="mt-1 text-[11px] font-medium text-gray-500">部门：{node.departmentIds?.length ? node.departmentIds.map(id => departments.find(department => department.id === id)?.name || id).join('、') : '全部'} · 园区：{node.campuses?.length ? node.campuses.join('、') : '全部'}</p></div>
                      </div>
                      <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-all">
-                       <button onClick={() => { const nw = [...workflow]; if(index > 0) { [nw[index], nw[index-1]] = [nw[index-1], nw[index]]; setWorkflow(nw); } }} disabled={index === 0} className="p-2 text-gray-500 hover:text-indigo-600 disabled:opacity-30"><ChevronUp size={16}/></button>
-                       <button onClick={() => { const nw = [...workflow]; if(index < nw.length-1) { [nw[index], nw[index+1]] = [nw[index+1], nw[index]]; setWorkflow(nw); } }} disabled={index === workflow.length-1} className="p-2 text-gray-500 hover:text-indigo-600 disabled:opacity-30"><ChevronDown size={16}/></button>
+                       <button onClick={() => { const nw = [...workflow]; if(index > 0) { [nw[index], nw[index-1]] = [nw[index-1], nw[index]]; void handleSaveWorkflow(nw); } }} disabled={index === 0} className="p-2 text-gray-500 hover:text-indigo-600 disabled:opacity-30"><ChevronUp size={16}/></button>
+                       <button onClick={() => { const nw = [...workflow]; if(index < nw.length-1) { [nw[index], nw[index+1]] = [nw[index+1], nw[index]]; void handleSaveWorkflow(nw); } }} disabled={index === workflow.length-1} className="p-2 text-gray-500 hover:text-indigo-600 disabled:opacity-30"><ChevronDown size={16}/></button>
                        <button onClick={() => { setEditingWorkflowNode(node); setShowWorkflowModal(true); }} className="p-2 text-gray-500 hover:text-indigo-600"><Edit2 size={16}/></button>
-                       <button onClick={() => setWorkflow(workflow.filter(n => n.id !== node.id))} className="p-2 text-gray-500 hover:text-rose-500"><Trash2 size={16}/></button>
+                       <button onClick={() => void handleSaveWorkflow(workflow.filter(n => n.id !== node.id), '审批节点已删除。')} className="p-2 text-gray-500 hover:text-rose-500"><Trash2 size={16}/></button>
                      </div>
                    </div>
                  ))}
                  {workflow.length === 0 && <div className="p-20 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold">暂无审批节点，流程将默认免审通过。</div>}
                </div>
+               <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="delegation-title">
+                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                   <div><h4 id="delegation-title" className="font-black text-gray-800">代理审批</h4><p className="mt-1 text-xs text-gray-500">代理继承委托人在当前节点的角色与范围，过期后自动失效，自审限制始终有效。</p></div>
+                   <button onClick={() => setShowDelegateModal(true)} className="studio-secondary shrink-0"><Plus size={15}/>新增代理</button>
+                 </div>
+                 <div className="mt-5 space-y-3">
+                   {approvalDelegates.map(delegate => {
+                     const active = Date.parse(delegate.startsAt) <= Date.now() && Date.now() < Date.parse(delegate.endsAt);
+                     return <div key={delegate.id} className="flex flex-col md:flex-row md:items-center justify-between gap-3 rounded-2xl bg-gray-50 p-4">
+                       <div><p className="text-sm font-black text-gray-800">{users.find(user => user.id === delegate.delegatorId)?.name || delegate.delegatorId} <span className="mx-1 text-gray-500">→</span> {users.find(user => user.id === delegate.delegateId)?.name || delegate.delegateId}</p><p className="mt-1 text-[11px] text-gray-500">{toLocalDateTimeString(delegate.startsAt)} 至 {toLocalDateTimeString(delegate.endsAt)}</p></div>
+                       <div className="flex items-center gap-3"><span className={`px-2 py-1 rounded-lg text-[11px] font-bold ${active ? 'bg-emerald-50 text-emerald-600' : 'bg-gray-100 text-gray-500'}`}>{active ? '生效中' : '未生效 / 已过期'}</span><button onClick={() => void handleDeleteDelegate(delegate.id)} className="p-2 text-gray-500 hover:text-rose-500" aria-label={`撤销${users.find(user => user.id === delegate.delegateId)?.name || '成员'}的代理`}><Trash2 size={15}/></button></div>
+                     </div>;
+                   })}
+                   {approvalDelegates.length === 0 && <p className="rounded-2xl border border-dashed border-gray-200 py-8 text-center text-xs font-bold text-gray-500">暂无代理审批关系</p>}
+                 </div>
+               </section>
              </div>
           )}
 
@@ -2831,7 +3560,7 @@ const App: React.FC = () => {
               <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-3">
                 {[['预约数', reportData.overall.bookingCount, '单'], ['使用时长', reportData.overall.usageHours, '小时'], ['使用率', reportData.overall.utilization, '%'], ['取消率', reportData.overall.cancellationRate, '%'], ['No-show 率', reportData.overall.noShowRate, '%'], ['平均审批', reportData.overall.averageApprovalHours, '小时']].map(([label, value, unit]) => <div key={String(label)} className="bg-white p-5 rounded-3xl border border-gray-100"><p className="text-[11px] font-black text-gray-500">{label}</p><p className="text-2xl font-black text-gray-800 mt-2">{value}<span className="text-xs text-gray-500 ml-1">{unit}</span></p></div>)}
               </div>
-              <div className="bg-white rounded-3xl border border-gray-100 overflow-x-auto">
+              <div className="studio-table-shell">
                 <table className="w-full text-left min-w-[900px]">
                   <thead><tr className="bg-gray-50 text-[11px] font-black text-gray-500 uppercase">{['维度', '名称', '预约数', '使用小时', '使用率', '取消率', 'No-show率', '驳回率', '平均审批'].map(label => <th key={label} className="px-5 py-4">{label}</th>)}</tr></thead>
                   <tbody className="divide-y divide-gray-50">{reportData.rows.map(row => <tr key={`${row.dimension}-${row.id}`} className="text-xs text-gray-600"><td className="px-5 py-4"><span className={`px-2 py-1 rounded-lg font-bold ${row.dimension === 'RESOURCE' ? 'bg-indigo-50 text-indigo-600' : 'bg-emerald-50 text-emerald-600'}`}>{row.dimension === 'RESOURCE' ? '资源' : '部门'}</span></td><td className="px-5 py-4 font-black text-gray-800">{row.name}</td><td className="px-5 py-4">{row.bookingCount}</td><td className="px-5 py-4">{row.usageHours}</td><td className="px-5 py-4 font-bold">{row.utilization}%</td><td className="px-5 py-4">{row.cancellationRate}%</td><td className="px-5 py-4">{row.noShowRate}%</td><td className="px-5 py-4">{row.rejectionRate}%</td><td className="px-5 py-4">{row.averageApprovalHours} 小时</td></tr>)}</tbody>
@@ -2842,21 +3571,28 @@ const App: React.FC = () => {
 
           {view === 'DATA_CENTER' && (
              <div className="space-y-6 animate-in fade-in">
-               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">数据中心</h3><p className="text-sm text-gray-500 mt-1">系统数据的备份、恢复与重置。</p></div></div>
+               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">数据中心</h3><p className="text-sm text-gray-500 mt-1">系统数据的备份、恢复与操作审计。</p></div></div>
                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                  <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col items-center text-center hover:border-gray-200 transition-all">
                     <div className="w-16 h-16 bg-indigo-50 rounded-full flex items-center justify-center text-indigo-600 mb-6"><Download size={32}/></div>
                     <h4 className="font-black text-xl text-gray-800">全量备份</h4>
                     <p className="text-gray-500 text-xs mt-2 mb-8 px-4 h-8">导出包含用户、资源、预约记录在内的所有数据为 JSON 文件。</p>
-                    <button onClick={() => {
-                      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify({ users, resources, bookings, departments, roles, workflow }));
-                      const downloadAnchorNode = document.createElement('a');
-                      downloadAnchorNode.setAttribute("href", dataStr);
-                      downloadAnchorNode.setAttribute("download", "smart_office_backup.json");
-                      document.body.appendChild(downloadAnchorNode);
-                      downloadAnchorNode.click();
-                      downloadAnchorNode.remove();
-                      addNotification("备份成功", "数据已导出至本地。", "SUCCESS");
+                    <button onClick={async () => {
+                      try {
+                        const res = await fetch('/api/backup');
+                        const backup = await res.json();
+                        if (!res.ok) throw new Error(backup.error || '备份失败');
+                        const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+                        const url = URL.createObjectURL(blob);
+                        const link = document.createElement('a');
+                        link.href = url;
+                        link.download = `smart-office-backup-${formatDate(new Date())}.json`;
+                        document.body.appendChild(link);
+                        link.click();
+                        link.remove();
+                        URL.revokeObjectURL(url);
+                        addNotification('备份成功', '服务端一致性备份已导出，包含服务工单。', 'SUCCESS');
+                      } catch (error: any) { addNotification('备份失败', error?.message || '请稍后重试。', 'WARNING'); }
                     }} className="w-full py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg hover:translate-y-[-2px] transition-all">立即导出</button>
                  </div>
 
@@ -2871,17 +3607,13 @@ const App: React.FC = () => {
                        input.onchange = (e: any) => {
                          const file = e.target.files[0];
                          const reader = new FileReader();
-                         reader.onload = (event) => {
+                         reader.onload = async (event) => {
                            try {
-                             const data = JSON.parse(event.target?.result as string);
-                             if(data.users) setUsers(data.users);
-                             if(data.resources) setResources(data.resources);
-                             if(data.bookings) setBookings(migrateBookings(data.bookings));
-                             if(data.departments) setDepartments(data.departments);
-                             if(data.roles) setRoles(data.roles);
-                             if(data.workflow) setWorkflow(data.workflow);
-                             addNotification("恢复成功", "系统数据已重置为备份状态。", "SUCCESS");
-                           } catch(err) { alert("文件格式错误"); }
+                             const imported = JSON.parse(event.target?.result as string);
+                             if (!confirm('恢复将替换当前组织、资源、预约和工单数据，确定继续吗？')) return;
+                             await apiRequest('/api/backup/restore', 'POST', imported);
+                             addNotification('恢复成功', '备份已通过服务端一致性校验并替换写入 MySQL。', 'SUCCESS');
+                           } catch(err: any) { alert(err?.message || "文件格式错误或保存失败"); }
                          };
                          reader.readAsText(file);
                        };
@@ -2891,16 +3623,25 @@ const App: React.FC = () => {
 
                  <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm flex flex-col items-center text-center hover:border-gray-200 transition-all">
                     <div className="w-16 h-16 bg-rose-50 rounded-full flex items-center justify-center text-rose-600 mb-6"><Trash2 size={32}/></div>
-                    <h4 className="font-black text-xl text-gray-800">重置系统</h4>
-                    <p className="text-gray-500 text-xs mt-2 mb-8 px-4 h-8">清空所有业务数据，恢复至出厂默认设置。</p>
-                    <button onClick={() => {
-                       if(confirm("警告：此操作不可逆！将清空所有用户产生的预约和配置，确定继续？")) {
-                          localStorage.removeItem(STORAGE_KEY);
-                          window.location.reload();
-                       }
-                    }} className="w-full py-3 bg-rose-50 text-rose-600 rounded-xl font-bold hover:bg-rose-100 transition-all">恢复出厂设置</button>
+                    <h4 className="font-black text-xl text-gray-800">重新加载</h4>
+                    <p className="text-gray-500 text-xs mt-2 mb-8 px-4 h-8">放弃页面内存状态，从 MySQL 重新读取。</p>
+                    <button onClick={() => window.location.reload()} className="w-full py-3 bg-rose-50 text-rose-600 rounded-xl font-bold hover:bg-rose-100 transition-all">从 MySQL 重新加载</button>
                  </div>
                </div>
+               <section className="studio-panel p-6" aria-labelledby="audit-title">
+                 <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                   <div><h4 id="audit-title" className="font-black text-gray-800">操作审计</h4><p className="mt-1 text-xs text-gray-500">关键写入与业务操作同事务记录；最多查询最近 200 条。</p></div>
+                   <div className="flex gap-2"><input aria-label="筛选审计记录" type="search" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} placeholder="操作、对象或操作人" className="studio-search min-w-0 px-3 py-2 text-xs"/><button onClick={() => void loadAuditEvents()} disabled={auditLoading} className="studio-secondary shrink-0"><RefreshCw size={14} className={auditLoading ? 'animate-spin' : ''}/>刷新</button></div>
+                 </div>
+                 {auditError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{auditError}</p>}
+                 <div className="studio-table-shell mt-5">
+                   <table className="w-full min-w-[820px] text-left">
+                     <thead><tr className="bg-gray-50 text-[11px] font-black text-gray-500">{['时间', '操作', '对象', '操作人', '摘要'].map(label => <th key={label} className="px-4 py-3">{label}</th>)}</tr></thead>
+                     <tbody className="divide-y divide-gray-50">{filteredAuditEvents.map(event => <tr key={event.id} className="text-xs text-gray-600"><td className="px-4 py-3 whitespace-nowrap">{toLocalDateTimeString(event.createdAt)}</td><td className="px-4 py-3 font-black text-gray-800">{event.action}</td><td className="px-4 py-3">{event.entityType} / {event.entityId}</td><td className="px-4 py-3">{users.find(user => user.id === event.actorId)?.name || event.actorId || '系统'}</td><td className="max-w-72 px-4 py-3"><code className="break-all text-[10px] text-gray-500">{Object.keys(event.details || {}).length ? JSON.stringify(event.details) : '—'}</code></td></tr>)}</tbody>
+                   </table>
+                   {!auditLoading && filteredAuditEvents.length === 0 && <p className="py-12 text-center text-xs font-bold text-gray-500">{auditQuery ? '没有匹配的审计记录' : '暂无审计记录'}</p>}
+                 </div>
+               </section>
              </div>
           )}
         </div>
@@ -2938,30 +3679,50 @@ const App: React.FC = () => {
           existingDepartments={departments} 
           roles={roles}
           onClose={() => setShowImportModal(null)} 
-          onImport={(data: any) => {
-            if (showImportModal === 'USERS') setUsers(prev => [...prev, ...data]);
-            else if (showImportModal === 'RESOURCES') setResources(prev => [...prev, ...data]);
-            else if (showImportModal === 'DEPARTMENTS') setDepartments(prev => [...prev, ...data]);
-            addNotification("导入成功", `已成功导入 ${data.length} 条数据。`, "SUCCESS");
-            setShowImportModal(null);
+          onImport={async (data: any) => {
+            try {
+              if (!Array.isArray(data) || !data.length) throw new Error('未解析到有效数据。');
+              await apiRequest(`/api/imports/${showImportModal}`, 'POST', { items: data });
+              addNotification('导入成功', `已成功导入 ${data.length} 条数据并写入 MySQL。`, 'SUCCESS');
+              setShowImportModal(null);
+            } catch (err: any) {
+              addNotification('导入失败', err?.message || '请刷新后重试。', 'WARNING');
+            }
           }} 
         />
       )}
 
       {showResourceCalendar && (
-        <ResourceCalendarModal resource={showResourceCalendar} bookings={bookings} users={users} theme={theme} onClose={() => setShowResourceCalendar(null)} onSelectDate={(date: string) => { setCalendarDateForBooking(date); setEditingBooking(null); setBookingPrefill(null); setSelectedResource(showResourceCalendar); setShowResourceCalendar(null); setShowBookingModal(true); }} />
+        <ResourceCalendarModal resource={showResourceCalendar} bookings={bookings} users={users} theme={theme} onClose={() => setShowResourceCalendar(null)} onSelectDate={(date: string) => {
+          if (!isResourceAcceptingBookings(showResourceCalendar)) {
+            addNotification('暂不可预约', '会议室当前维护或待开放，请选择其他会议室。', 'WARNING');
+            return;
+          }
+          setCalendarDateForBooking(date);
+          setEditingBooking(null);
+          setBookingPrefill(null);
+          setSelectedResource(showResourceCalendar);
+          setShowResourceCalendar(null);
+          setShowBookingModal(true);
+        }} />
       )}
 
       {viewDetail && (
         <DetailViewModal viewDetail={viewDetail} theme={theme} roles={roles} users={users} bookings={bookings} onClose={() => setViewDetail(null)} />
       )}
 
-      {showUserModal && <UserModal user={editingUser} departments={departments} roles={roles} onClose={() => setShowUserModal(false)} onSave={(data: any) => { if(editingUser) setUsers(users.map(u => u.id === editingUser.id ? {...u, ...data} : u)); else setUsers([...users, { id: 'u-'+Date.now(), ...data }]); setShowUserModal(false); addNotification("操作成功", "成员信息已更新。", "SUCCESS"); }} theme={theme} />}
-      {showResourceModal && <ResourceModal resource={editingResource} onClose={() => setShowResourceModal(false)} onSave={(data: any) => { if(editingResource) setResources(resources.map(r => r.id === editingResource.id ? {...r, ...data} : r)); else setResources([...resources, { id: 'r-'+Date.now(), status: 'AVAILABLE', features: [], ...data }]); setShowResourceModal(false); addNotification("操作成功", "资源配置已保存。", "SUCCESS"); }} theme={theme} />}
-      {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={(data: any) => { if(editingRole) setRoles(roles.map(r => r.id === editingRole.id ? {...r, ...data} : r)); else setRoles([...roles, { id: 'rl-'+Date.now(), ...data }]); setShowRoleModal(false); addNotification("操作成功", "角色集已更新。", "SUCCESS"); }} theme={theme} />}
-      {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => { if(editingWorkflowNode) setWorkflow(workflow.map(n => n.id === editingWorkflowNode.id ? {...n, ...data} : n)); else setWorkflow([...workflow, { id: 'wf-'+Date.now(), ...data }]); setShowWorkflowModal(false); addNotification("流程已更新", "审批链路配置已生效。", "SUCCESS"); }} theme={theme} />}
+      {showUserModal && <UserModal user={editingUser} departments={departments} roles={roles} onClose={() => setShowUserModal(false)} onSave={handleSaveUser} theme={theme} />}
+      {showResourceModal && <ResourceModal resource={editingResource} onClose={() => setShowResourceModal(false)} onSave={handleSaveResource} theme={theme} />}
+      {showRoleModal && <RoleModal role={editingRole} onClose={() => setShowRoleModal(false)} onSave={handleSaveRole} theme={theme} />}
+      {showWorkflowModal && <WorkflowModal node={editingWorkflowNode} roles={roles} departments={departments} onClose={() => setShowWorkflowModal(false)} onSave={(data: any) => {
+        const next = editingWorkflowNode
+          ? workflow.map(node => node.id === editingWorkflowNode.id ? { ...node, ...data } : node)
+          : [...workflow, { id: `wf-${Date.now()}`, ...data }];
+        void handleSaveWorkflow(next);
+      }} theme={theme} />}
+      {showDelegateModal && <ApprovalDelegateModal users={users} onClose={() => setShowDelegateModal(false)} onSave={handleSaveDelegate} theme={theme} />}
       
-      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} initialValues={bookingPrefill} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); setBookingPrefill(null); setEditingBooking(null); }} onConfirm={handleBooking} onResourceChange={setSelectedResource} availableResources={resources.filter(r => r.status === 'AVAILABLE')} availableUsers={users} currentUserId={currentUser.id} bookings={bookings} />)}
+      {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} initialValues={bookingPrefill} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); setBookingPrefill(null); setEditingBooking(null); }} onConfirm={handleBooking} availableUsers={users} currentUserId={currentUser.id} bookings={bookings} />)}
 
       {bookingConflict && (
         <BookingConflictModal 
@@ -2986,6 +3747,28 @@ const App: React.FC = () => {
         onCreate={(occurrences: any[]) => saveBookingSeries(recurringPlan, occurrences)}
         onClose={() => setRecurringPlan(null)}
       />}
+
+      {!showMobileMenu && <button
+        onClick={() => setShowAgent(true)}
+        aria-label="打开智能助手"
+        className="studio-agent-launcher fixed right-4 bottom-24 lg:bottom-6 z-[90] flex items-center gap-3 p-3 lg:px-4 lg:py-3 transition-all active:scale-[0.97]"
+      >
+        <MessageSquare size={18} />
+        <span className="hidden lg:block text-left"><span className="block text-[12.5px] font-semibold">智办助手</span><small className="block mt-0.5">ASK YOUR OFFICE</small></span>
+      </button>}
+
+      <ChatDock
+        open={showAgent}
+        onClose={() => setShowAgent(false)}
+        userId={currentUser.id}
+        userName={currentUser.name}
+        theme={theme}
+        resources={resources}
+        bookings={bookings}
+        users={users}
+        onAction={handleAgentAction}
+        onNavigate={(view) => setView(view as any)}
+      />
     </div>
   );
 };

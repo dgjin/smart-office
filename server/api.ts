@@ -1,176 +1,260 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { readDb, writeDb } from './db.ts';
-import { readBody, send } from './http.ts';
+import { databaseHealth, DbError, readDb, saveBookings, saveResource } from './db.ts';
+import { HttpError, readJson, send, setSecurityHeaders, validateWriteRequest } from './http.ts';
 import { handleAgentChat, handleAgentStatus } from './agent.ts';
+import { listNotifications, markNotificationsRead } from './notifications.ts';
+import { buildTodos } from './tools.ts';
+import { completeBookingEarly, executeAgentAction } from './actions.ts';
+import { actorFromRequest } from './auth/sessions.ts';
+import { handleAuthRequest } from './auth/routes.ts';
+import { getPreferences, updatePreferences } from './preferences.ts';
+import { getChatConversation, saveChatConversation } from './chatConversations.ts';
+import { getWorkspace } from './workspace.ts';
+import {
+  createBackup, deleteApprovalDelegate, deleteDepartment, deleteUser, importRecords, restoreBackup,
+  saveApprovalDelegate, saveDepartment, saveRole, saveUser, saveWorkflow
+} from './admin.ts';
+import { listAuditEvents, recordAudit } from './audit.ts';
+import type { User } from '../types.ts';
+import { logEvent, observeRequest, requestIdFor } from './observability.ts';
 
-const overlaps = (aStart: Date, aEnd: Date, bStart: Date, bEnd: Date) => aStart < bEnd && aEnd > bStart;
+const requireAdmin = (actor: User) => {
+  if (!actor.role.includes('SYSTEM_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
+};
 
-let proxyConfigured = false;
-// Node 原生 fetch 不读代理环境变量；本机访问 DeepSeek 需要走本地代理。
-async function ensureProxy() {
-  if (proxyConfigured) return;
-  proxyConfigured = true;
-  const raw = process.env.HTTPS_PROXY || process.env.https_proxy || process.env.ALL_PROXY || process.env.all_proxy;
-  if (!raw) return;
+export async function handleApiRequest(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
+  if (!url.pathname.startsWith('/api/')) return false;
+  setSecurityHeaders(res);
+  observeRequest(req, res, url.pathname);
   try {
-    const { ProxyAgent, setGlobalDispatcher } = await import('undici');
-    setGlobalDispatcher(new ProxyAgent(raw.replace(/^socks5h:/, 'socks5:')));
-  } catch (err) {
-    console.warn('[api] proxy setup failed, using direct connection', err);
-  }
-}
+    validateWriteRequest(req);
+    if (await handleAuthRequest(req, res, url)) return true;
 
-async function handleAiRecommend(req: IncomingMessage, res: ServerResponse) {
-  const apiKey = process.env.DEEPSEEK_API_KEY;
-  if (!apiKey) return send(res, 503, { error: 'AI_NOT_CONFIGURED' });
-  await ensureProxy();
-
-  const body = JSON.parse(await readBody(req) || '{}');
-  const { purpose, participants, resources = [], bookings = [], startTime, endTime, requirements = {}, resourceType } = body;
-  try {
-    const response = await fetch('https://api.deepseek.com/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'deepseek-chat',
-        messages: [
-          {
-            role: 'system',
-            content: '你是办公资源推荐助手。只能从候选资源中选择，不得编造资源 ID。结合用途、人数、时段、设备和位置选择最合适的一项，用一句中文说明理由。只输出 JSON 对象：{"resourceId":"候选资源ID","reason":"推荐理由"}'
-          },
-          {
-            role: 'user',
-            content: JSON.stringify({ purpose, participants, startTime, endTime, requirements, resourceType, resources, bookings })
-          }
-        ],
-        response_format: { type: 'json_object' },
-        temperature: 0.2,
-        stream: false
-      })
-    });
-    if (!response.ok) throw new Error(`DeepSeek request failed with status ${response.status}`);
-    const result = await response.json();
-    const content = result.choices?.[0]?.message?.content || '{}';
-    const parsed = JSON.parse(content.replace(/^```(?:json)?\s*|\s*```$/g, ''));
-    if (!resources.some((resource: any) => resource.id === parsed.resourceId) || typeof parsed.reason !== 'string') {
-      return send(res, 502, { error: 'AI_INVALID_RESPONSE' });
+    const actor = await actorFromRequest(req);
+    if (!actor) {
+      send(res, 401, { error: 'UNAUTHENTICATED' });
+      return true;
     }
-    return send(res, 200, { resourceId: parsed.resourceId, reason: parsed.reason });
+
+    if (url.pathname === '/api/health/database' && req.method === 'GET') {
+      send(res, 200, await databaseHealth());
+      return true;
+    }
+    if (url.pathname === '/api/workspace' && req.method === 'GET') {
+      send(res, 200, await getWorkspace(actor));
+      return true;
+    }
+    if (url.pathname === '/api/users' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { user } = await readJson(req);
+      send(res, 201, { user: await saveUser(user, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const userMatch = url.pathname.match(/^\/api\/users\/([^/]+)$/);
+    if (userMatch && ['PUT', 'DELETE'].includes(req.method || '')) {
+      requireAdmin(actor);
+      const id = decodeURIComponent(userMatch[1]);
+      const result = req.method === 'PUT'
+        ? { user: await saveUser((await readJson(req)).user, actor.id, id) }
+        : await deleteUser(id, actor.id);
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/roles' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { role } = await readJson(req);
+      send(res, 201, { role: await saveRole(role, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const roleMatch = url.pathname.match(/^\/api\/roles\/([^/]+)$/);
+    if (roleMatch && req.method === 'PUT') {
+      requireAdmin(actor);
+      const { role } = await readJson(req);
+      send(res, 200, { role: await saveRole(role, actor.id, decodeURIComponent(roleMatch[1])), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/departments' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { department } = await readJson(req);
+      send(res, 201, { department: await saveDepartment(department, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const departmentMatch = url.pathname.match(/^\/api\/departments\/([^/]+)$/);
+    if (departmentMatch && ['PUT', 'DELETE'].includes(req.method || '')) {
+      requireAdmin(actor);
+      const id = decodeURIComponent(departmentMatch[1]);
+      const result = req.method === 'PUT'
+        ? { department: await saveDepartment((await readJson(req)).department, actor.id, id) }
+        : await deleteDepartment(id, actor.id);
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/workflow' && req.method === 'PUT') {
+      requireAdmin(actor);
+      const { workflow } = await readJson(req);
+      send(res, 200, { workflow: await saveWorkflow(workflow, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/approval-delegates' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { delegate } = await readJson(req);
+      send(res, 201, { delegate: await saveApprovalDelegate(delegate, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const delegateMatch = url.pathname.match(/^\/api\/approval-delegates\/([^/]+)$/);
+    if (delegateMatch && req.method === 'DELETE') {
+      requireAdmin(actor);
+      const result = await deleteApprovalDelegate(decodeURIComponent(delegateMatch[1]), actor.id);
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/audit' && req.method === 'GET') {
+      requireAdmin(actor);
+      send(res, 200, { events: await listAuditEvents(Number(url.searchParams.get('limit')) || 200) });
+      return true;
+    }
+    const importMatch = url.pathname.match(/^\/api\/imports\/(USERS|RESOURCES|DEPARTMENTS)$/);
+    if (importMatch && req.method === 'POST') {
+      requireAdmin(actor);
+      const { items } = await readJson(req, 2 * 1024 * 1024);
+      send(res, 201, { items: await importRecords(importMatch[1], items, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/backup' && req.method === 'GET') {
+      requireAdmin(actor);
+      const backup = await createBackup();
+      await recordAudit({ actorId: actor.id, action: 'BACKUP_EXPORT', entityType: 'BACKUP', entityId: String(backup.revision) });
+      send(res, 200, backup);
+      return true;
+    }
+    if (url.pathname === '/api/backup/restore' && req.method === 'POST') {
+      requireAdmin(actor);
+      const result = await restoreBackup(await readJson(req, 5 * 1024 * 1024), actor.id);
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/preferences' && req.method === 'GET') {
+      send(res, 200, await getPreferences(actor.id));
+      return true;
+    }
+    if (url.pathname === '/api/preferences' && req.method === 'PUT') {
+      send(res, 200, await updatePreferences(actor.id, await readJson(req)));
+      return true;
+    }
+    if (url.pathname === '/api/resources' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { resource } = await readJson(req);
+      if (!resource?.id) throw new HttpError(400, 'INVALID_RESOURCE');
+      const saved = await saveResource(resource, actor.id);
+      send(res, 201, { resource: saved, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const resourceEditMatch = url.pathname.match(/^\/api\/resources\/([^/]+)$/);
+    if (resourceEditMatch && req.method === 'PUT') {
+      requireAdmin(actor);
+      const { resource } = await readJson(req);
+      if (!resource) throw new HttpError(400, 'INVALID_RESOURCE');
+      const id = decodeURIComponent(resourceEditMatch[1]);
+      const saved = await saveResource(resource, actor.id, id);
+      send(res, 200, { resource: saved, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/bookings' && req.method === 'POST') {
+      const { booking } = await readJson(req);
+      if (!booking?.resourceId || !booking?.startTime || !booking?.endTime) throw new HttpError(400, 'INVALID_BOOKING');
+      const saved = await saveBookings([booking], actor);
+      send(res, 201, { booking: saved[0], workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/bookings/batch' && req.method === 'POST') {
+      const { bookings } = await readJson(req);
+      if (!Array.isArray(bookings) || bookings.length === 0 || bookings.some((booking: any) => !booking?.resourceId || !booking?.startTime || !booking?.endTime)) {
+        throw new HttpError(400, 'INVALID_BOOKINGS');
+      }
+      const saved = await saveBookings(bookings, actor);
+      send(res, 201, { bookings: saved, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const completeMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/complete$/);
+    if (completeMatch && req.method === 'POST') {
+      await readJson(req);
+      const result = await completeBookingEarly(actor.id, decodeURIComponent(completeMatch[1]));
+      send(res, 200, { ...result, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const editMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)$/);
+    if (editMatch && req.method === 'PUT') {
+      const { booking } = await readJson(req);
+      const id = decodeURIComponent(editMatch[1]);
+      if (!booking?.resourceId || !booking?.startTime || !booking?.endTime) throw new HttpError(400, 'INVALID_BOOKING');
+      const saved = await saveBookings([booking], actor, id);
+      send(res, 200, { booking: saved[0], workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/agent/conversation' && req.method === 'GET') {
+      send(res, 200, await getChatConversation(actor.id));
+      return true;
+    }
+    if (url.pathname === '/api/agent/conversation' && req.method === 'PUT') {
+      send(res, 200, await saveChatConversation(actor.id, await readJson(req, 512 * 1024)));
+      return true;
+    }
+    if (url.pathname === '/api/agent/status' && req.method === 'GET') {
+      handleAgentStatus(req, res);
+      return true;
+    }
+    if (url.pathname === '/api/agent/chat' && req.method === 'POST') {
+      await handleAgentChat(req, res, actor);
+      return true;
+    }
+    if (url.pathname === '/api/notifications' && req.method === 'GET') {
+      send(res, 200, { notifications: await listNotifications(actor.id) });
+      return true;
+    }
+    if (url.pathname === '/api/notifications' && req.method === 'PATCH') {
+      const body = await readJson(req);
+      if (!Array.isArray(body.ids) || body.ids.some((id: any) => typeof id !== 'string')) throw new HttpError(400, 'INVALID_REQUEST');
+      send(res, 200, { changed: await markNotificationsRead(actor.id, body.ids) });
+      return true;
+    }
+    if (url.pathname === '/api/todos' && req.method === 'GET') {
+      const db = await readDb();
+      const todos = buildTodos(db, actor.id);
+      send(res, 200, { total: todos.length, todos });
+      return true;
+    }
+    if (url.pathname === '/api/agent/action' && req.method === 'POST') {
+      const { action } = await readJson(req);
+      if (!action?.type) throw new HttpError(400, 'INVALID_REQUEST');
+      const result = await executeAgentAction(actor.id, action);
+      send(res, 200, {
+        ...result,
+        notifications: await listNotifications(actor.id),
+        workspace: await getWorkspace(actor)
+      });
+      return true;
+    }
+    send(res, 404, { error: 'NOT_FOUND' });
+    return true;
   } catch (err: any) {
-    return send(res, 502, { error: 'AI_UPSTREAM_ERROR', detail: String(err?.message || err) });
+    if (res.writableEnded) return true;
+    if (err instanceof DbError) {
+      send(res, err.status, { error: err.message, conflicts: err.details });
+      return true;
+    }
+    const status = err instanceof HttpError ? err.status : Number(err?.status) || 500;
+    if (status >= 500) logEvent('error', 'api.failed', { requestId: requestIdFor(req), pathname: url.pathname, status, errorName: err?.name, code: err?.code });
+    send(res, status, {
+      error: err instanceof HttpError ? err.code : status === 500 ? 'INTERNAL' : err?.message || 'ACTION_FAILED',
+      detail: status >= 400 && status < 500 ? String(err?.message || err) : undefined
+    });
+    return true;
   }
 }
 
 export function registerApi(middlewares: any) {
   middlewares.use(async (req: IncomingMessage, res: ServerResponse, next: () => void) => {
-    const url = req.url || '';
-    if (!url.startsWith('/api/')) return next();
-
-    try {
-      if (url === '/api/db' && req.method === 'GET') {
-        return send(res, 200, readDb() || {});
-      }
-
-      if (url === '/api/db' && req.method === 'POST') {
-        const raw = await readBody(req);
-        writeDb(JSON.parse(raw || '{}'));
-        return send(res, 200, { ok: true });
-      }
-
-      // 服务端原子校验：Node 单线程串行处理，读写之间不会插入其它请求，防止双人同订。
-      if (url === '/api/bookings' && req.method === 'POST') {
-        const { booking } = JSON.parse(await readBody(req) || '{}');
-        if (!booking?.resourceId || !booking?.startTime || !booking?.endTime) {
-          return send(res, 400, { error: 'INVALID_BOOKING' });
-        }
-        const db = readDb() || {};
-        const list = db.bookings || [];
-        const start = new Date(booking.startTime);
-        const end = new Date(booking.endTime);
-        const conflicts = list.filter((b: any) =>
-          b.resourceId === booking.resourceId
-          && (b.status === 'APPROVED' || b.status === 'PENDING')
-          && overlaps(start, end, new Date(b.startTime), new Date(b.endTime))
-        );
-        if (conflicts.length > 0) {
-          return send(res, 409, { error: 'CONFLICT', conflicts });
-        }
-        db.bookings = [booking, ...list];
-        writeDb(db);
-        return send(res, 201, { booking });
-      }
-
-      if (url === '/api/bookings/batch' && req.method === 'POST') {
-        const { bookings } = JSON.parse(await readBody(req) || '{}');
-        if (!Array.isArray(bookings) || bookings.length === 0 || bookings.some((b: any) => !b?.resourceId || !b?.startTime || !b?.endTime)) {
-          return send(res, 400, { error: 'INVALID_BOOKINGS' });
-        }
-        const db = readDb() || {};
-        const list = db.bookings || [];
-        const accepted: any[] = [];
-        const conflicts: any[] = [];
-        bookings.forEach((booking: any, index: number) => {
-          const start = new Date(booking.startTime);
-          const end = new Date(booking.endTime);
-          const overlapping = [...list, ...accepted].filter((b: any) =>
-            b.resourceId === booking.resourceId
-            && (b.status === 'APPROVED' || b.status === 'PENDING')
-            && overlaps(start, end, new Date(b.startTime), new Date(b.endTime))
-          );
-          if (overlapping.length > 0) conflicts.push({ index, conflicts: overlapping });
-          else accepted.push(booking);
-        });
-        if (conflicts.length > 0) return send(res, 409, { error: 'CONFLICT', conflicts });
-        db.bookings = [...bookings, ...list];
-        writeDb(db);
-        return send(res, 201, { bookings });
-      }
-
-      const editMatch = url.match(/^\/api\/bookings\/([^/]+)$/);
-      if (editMatch && req.method === 'PUT') {
-        const { booking } = JSON.parse(await readBody(req) || '{}');
-        const id = decodeURIComponent(editMatch[1]);
-        if (!booking?.resourceId || !booking?.startTime || !booking?.endTime) {
-          return send(res, 400, { error: 'INVALID_BOOKING' });
-        }
-        const db = readDb() || {};
-        const list = db.bookings || [];
-        if (!list.some((b: any) => b.id === id)) return send(res, 404, { error: 'BOOKING_NOT_FOUND' });
-        const start = new Date(booking.startTime);
-        const end = new Date(booking.endTime);
-        const conflicts = list.filter((b: any) => b.id !== id
-          && b.resourceId === booking.resourceId
-          && (b.status === 'APPROVED' || b.status === 'PENDING')
-          && overlaps(start, end, new Date(b.startTime), new Date(b.endTime))
-        );
-        if (conflicts.length > 0) return send(res, 409, { error: 'CONFLICT', conflicts });
-        db.bookings = list.map((b: any) => b.id === id ? { ...booking, id } : b);
-        writeDb(db);
-        return send(res, 200, { booking: { ...booking, id } });
-      }
-
-      if (url === '/api/ai/status' && req.method === 'GET') {
-        return send(res, 200, { enabled: Boolean(process.env.DEEPSEEK_API_KEY), provider: 'deepseek' });
-      }
-
-      if (url === '/api/ai/recommend' && req.method === 'POST') {
-        return await handleAiRecommend(req, res);
-      }
-
-      if (url === '/api/agent/status' && req.method === 'GET') {
-        return handleAgentStatus(req, res);
-      }
-
-      if (url === '/api/agent/chat' && req.method === 'POST') {
-        return await handleAgentChat(req, res);
-      }
-
-      return send(res, 404, { error: 'NOT_FOUND' });
-    } catch (err: any) {
-      return send(res, 500, { error: 'INTERNAL', detail: String(err?.message || err) });
-    }
+    const handled = await handleApiRequest(req, res, new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`));
+    if (!handled) next();
   });
 }

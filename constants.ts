@@ -1,5 +1,5 @@
 
-import { User, Resource, ApprovalNode, Department, RoleDefinition } from './types';
+import type { User, Resource, ApprovalNode, Department, RoleDefinition } from './types.ts';
 
 export const INITIAL_ROLES: RoleDefinition[] = [
   { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '拥有全系统最高管理权限', color: 'indigo' },

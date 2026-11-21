@@ -1,6 +1,6 @@
-import type { Booking, Resource, User, ApprovalNode, WorkOrder, RoleDefinition, Department } from '../types.ts';
-import { findBookingConflicts, isActiveBooking, findNextAvailableSlot } from '../utils/bookingRules.ts';
-import { approveBooking, canApproveBooking, rejectBooking } from '../utils/approval.ts';
+import type { ApprovalDelegate, Booking, Resource, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion } from '../types.ts';
+import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, validateBookingResource } from '../utils/bookingRules.ts';
+import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
 
 export interface OfficeDb {
   roles?: RoleDefinition[];
@@ -9,7 +9,10 @@ export interface OfficeDb {
   bookings?: Booking[];
   departments?: Department[];
   workflow?: ApprovalNode[];
+  workflowVersions?: WorkflowVersion[];
+  approvalDelegates?: ApprovalDelegate[];
   workOrders?: WorkOrder[];
+  notifications?: Notification[];
 }
 
 export interface AgentContext {
@@ -21,9 +24,25 @@ export type AgentAction =
   | { type: 'NAVIGATE'; view: string }
   | { type: 'PROPOSE_BOOKING'; draft: Partial<Booking> ; summary: string }
   | { type: 'PROPOSE_CANCEL'; bookingId: string; summary: string }
-  | { type: 'PROPOSE_APPROVAL'; bookingId: string; decision: 'APPROVE' | 'REJECT'; comment?: string; summary: string }
+  | { type: 'PROPOSE_APPROVAL'; bookingId: string; bookingIds?: string[]; decision: 'APPROVE' | 'REJECT'; comment?: string; summary: string }
   | { type: 'PROPOSE_CHECK_IN'; bookingId: string; summary: string }
+  | { type: 'PROPOSE_WORK_ORDER'; workOrderId: string; summary: string }
   | { type: 'REFRESH' };
+
+export type TodoKind = 'APPROVAL' | 'REJECTED' | 'CHECK_IN' | 'UPCOMING' | 'WORK_ORDER';
+export type TodoAction = AgentAction & { label: string };
+
+export interface TodoItem {
+  id: string;
+  kind: TodoKind;
+  bookingId?: string;
+  workOrderId?: string;
+  title: string;
+  detail: string;
+  urgency: 'high' | 'normal' | 'low';
+  dueAt?: string;
+  actions: TodoAction[];
+}
 
 export interface ToolResult {
   ok: boolean;
@@ -32,6 +51,8 @@ export interface ToolResult {
   error?: string;
   candidates?: any[];
   hint?: string;
+  /** 工具执行后需要推送给其他用户的通知，由调用方落库。 */
+  notifications?: Notification[];
 }
 
 const DAY_MS = 86400000;
@@ -132,6 +153,80 @@ const bookingBrief = (b: Booking, resources: Resource[], users: User[]) => {
   };
 };
 
+export const buildTodos = (db: OfficeDb, userId: string, now = new Date()): TodoItem[] => {
+  const me = (db.users || []).find(u => u.id === userId);
+  if (!me) return [];
+  const resources = db.resources || [];
+  const users = db.users || [];
+  const workflow = db.workflow || [];
+  const approvalContext = {
+    users,
+    resources,
+    departments: db.departments || [],
+    delegates: db.approvalDelegates || [],
+    now
+  };
+  const todos: TodoItem[] = [];
+  const resourceName = (id: string) => resources.find(r => r.id === id)?.name || id;
+
+  for (const group of getApprovalGroups(db.bookings || [], workflow, me, approvalContext)) {
+    const b = group.booking;
+    const bookingWorkflow = getBookingWorkflow(b, workflow);
+    const brief = `${resourceName(b.resourceId)} · ${fmtRange(new Date(b.startTime), new Date(b.endTime))}`;
+    const seriesSuffix = group.seriesBookings.length > 1 ? ` · 共 ${group.seriesBookings.length} 个会议日` : '';
+    todos.push({
+      id: `approval-${b.id}`, kind: 'APPROVAL', bookingId: b.id, title: `审批「${b.purpose}」`,
+      detail: `${users.find(u => u.id === b.userId)?.name || b.userId} · ${brief} · ${bookingWorkflow[b.currentNodeIndex]?.name || '待审批'}${seriesSuffix}`,
+      urgency: +new Date(b.startTime) - now.getTime() < DAY_MS ? 'high' : 'normal', dueAt: b.startTime,
+      actions: [{ type: 'PROPOSE_APPROVAL', bookingId: b.id, bookingIds: group.seriesBookings.map(item => item.id), decision: 'APPROVE', label: group.seriesBookings.length > 1 ? `通过 ${group.seriesBookings.length} 个会议日` : '通过审批', summary: `通过「${b.purpose}」的当前审批节点${seriesSuffix}` }]
+    });
+  }
+
+  for (const b of db.bookings || []) {
+    const brief = `${resourceName(b.resourceId)} · ${fmtRange(new Date(b.startTime), new Date(b.endTime))}`;
+    if (b.userId === userId && b.status === 'REJECTED') {
+      const last = b.approvalHistory?.[b.approvalHistory.length - 1];
+      todos.push({
+        id: `rejected-${b.id}`, kind: 'REJECTED', bookingId: b.id, title: `「${b.purpose}」被驳回`,
+        detail: last?.comment ? `审批意见：${last.comment}` : brief, urgency: 'normal',
+        actions: [{ type: 'NAVIGATE', view: 'BOOKINGS', label: '查看并重新预订' }]
+      });
+    }
+    const participant = b.userId === userId || b.attendeeIds?.includes(userId);
+    if (participant && b.status === 'APPROVED') {
+      const start = +new Date(b.startTime);
+      const end = +new Date(b.endTime);
+      const current = now.getTime();
+      if (!b.checkedInAt && current >= start - 15 * 60000 && current < end) {
+        todos.push({
+          id: `checkin-${b.id}`, kind: 'CHECK_IN', bookingId: b.id, title: `签到「${b.purpose}」`,
+          detail: brief, urgency: 'high', dueAt: b.startTime,
+          actions: [{ type: 'PROPOSE_CHECK_IN', bookingId: b.id, label: '立即签到', summary: `${b.purpose} · ${brief}` }]
+        });
+      } else if (start > current) {
+        todos.push({
+          id: `upcoming-${b.id}`, kind: 'UPCOMING', bookingId: b.id, title: `即将开始「${b.purpose}」`,
+          detail: brief, urgency: start - current < DAY_MS ? 'normal' : 'low', dueAt: b.startTime,
+          actions: [{ type: 'NAVIGATE', view: 'BOOKINGS', label: '查看安排' }]
+        });
+      }
+    }
+  }
+
+  for (const order of db.workOrders || []) {
+    if (order.status !== 'TODO' || (!me.role.includes('SYSTEM_ADMIN') && !me.role.includes(order.assigneeRole))) continue;
+    const booking = (db.bookings || []).find(b => b.id === order.bookingId);
+    todos.push({
+      id: `workorder-${order.id}`, kind: 'WORK_ORDER', workOrderId: order.id, bookingId: order.bookingId,
+      title: order.title, detail: booking ? `${resourceName(booking.resourceId)} · ${fmtRange(new Date(booking.startTime), new Date(booking.endTime))}` : '服务工单待处理',
+      urgency: 'normal', dueAt: booking?.startTime,
+      actions: [{ type: 'PROPOSE_WORK_ORDER', workOrderId: order.id, label: '完成工单', summary: `完成${order.title}` }]
+    });
+  }
+  const weight = { high: 0, normal: 1, low: 2 };
+  return todos.sort((a, b) => weight[a.urgency] - weight[b.urgency] || +(a.dueAt ? new Date(a.dueAt) : new Date(8640000000000000)) - +(b.dueAt ? new Date(b.dueAt) : new Date(8640000000000000))).slice(0, 30);
+};
+
 export const TOOLS = [
   {
     type: 'function' as const,
@@ -226,6 +321,26 @@ export const TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'get_my_todos',
+      description: '查询当前用户的审批、签到、驳回、即将开始会议和服务工单待办，并返回可执行动作。',
+      parameters: { type: 'object', properties: {} }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'propose_complete_work_order',
+      description: '为当前用户负责的服务工单生成完成提案，需用户确认后执行。',
+      parameters: {
+        type: 'object',
+        properties: { workOrderId: { type: 'string', description: '待办或工单查询结果中的工单 ID' } },
+        required: ['workOrderId']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'propose_booking',
       description: '生成一条预订提案（不会直接落库），返回冲突检测结果和待确认的草稿。用户确认后由前端提交。',
       parameters: {
@@ -238,7 +353,11 @@ export const TOOLS = [
           participants: { type: 'number' },
           needsTea: { type: 'boolean', description: '是否需要茶水服务' },
           needsVideo: { type: 'boolean', description: '是否需要视频会议支持' },
-          attendeeNames: { type: 'array', items: { type: 'string' }, description: '参会人姓名' }
+          attendeeNames: { type: 'array', items: { type: 'string' }, description: '参会人姓名' },
+          hasLeader: { type: 'boolean', description: '是否有领导参会' },
+          leaderDetails: { type: 'string', description: '参会领导姓名或职位' },
+          repeatFrequency: { type: 'string', enum: ['NONE', 'WEEKLY', 'BIWEEKLY'], description: '重复频率，默认 NONE' },
+          repeatCount: { type: 'number', description: '含首次在内的总次数，2、3、4、6、8 或 12' }
         },
         required: ['resourceName', 'startTime', 'endTime', 'purpose']
       }
@@ -292,12 +411,13 @@ export const TOOLS = [
 
 const APPROVER_TOOLS = new Set(['get_pending_approvals', 'propose_approval']);
 const ADMIN_TOOLS = new Set(['get_usage_stats']);
+const SERVICE_TOOLS = new Set(['get_work_orders', 'propose_complete_work_order']);
 
 /** 按角色裁剪工具集：员工看不到审批类工具，服务端不依赖模型自觉。 */
-export const toolsForRoles = (roles: string[] = []) => TOOLS.filter(tool => {
+export const toolsForRoles = (roles: string[] = [], workflow: ApprovalNode[] = []) => TOOLS.filter(tool => {
   const name = tool.function.name;
-  if (APPROVER_TOOLS.has(name)) return roles.includes('APPROVAL_ADMIN') || roles.includes('SYSTEM_ADMIN');
-  if (ADMIN_TOOLS.has(name)) return roles.includes('SYSTEM_ADMIN') || roles.includes('APPROVAL_ADMIN');
+  if (APPROVER_TOOLS.has(name)) return roles.includes('APPROVAL_ADMIN') || roles.includes('SYSTEM_ADMIN') || workflow.some(node => roles.includes(node.approverRole));
+  if (ADMIN_TOOLS.has(name) || SERVICE_TOOLS.has(name)) return roles.includes('SYSTEM_ADMIN') || roles.includes('APPROVAL_ADMIN');
   return true;
 });
 
@@ -310,6 +430,13 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
   const workOrders = db.workOrders || [];
   const me = users.find(u => u.id === ctx.userId);
   const myRoles = me?.role || [];
+  const approvalContext = {
+    users,
+    resources,
+    departments: db.departments || [],
+    delegates: db.approvalDelegates || [],
+    now
+  };
 
   const needUser = (): ToolResult | null =>
     me ? null : { ok: false, error: '无法识别当前用户身份，请重新登录后再试。' };
@@ -337,7 +464,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       const participants = Number(args?.participants) || 1;
 
       const eligible = resources.filter(r => {
-        if (r.status !== 'AVAILABLE') return false;
+        if (!isResourceAcceptingBookings(r)) return false;
         if (args?.type && r.type !== args.type) return false;
         if ((r.capacity || 1) < participants) return false;
         if (wants.some(w => !matchFeature(r, w))) return false;
@@ -348,7 +475,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
 
       if (eligible.length === 0) {
         const relaxed = resources
-          .filter(r => r.status === 'AVAILABLE' && (r.capacity || 1) >= participants)
+          .filter(r => isResourceAcceptingBookings(r) && (r.capacity || 1) >= participants)
           .map(r => {
             const slot = findNextAvailableSlot(r.id, bookings, Math.round((end.getTime() - start.getTime()) / 60000), start);
             return { name: r.name, capacity: r.capacity, nextFree: fmtRange(slot.start, slot.end) };
@@ -400,6 +527,13 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       return { ok: true, data: { resource: resource.name, capacity: resource.capacity, days: result } };
     },
 
+    get_my_todos: () => {
+      const deny = needUser();
+      if (deny) return deny;
+      const todos = buildTodos(db, ctx.userId, now);
+      return { ok: true, data: { total: todos.length, todos } };
+    },
+
     list_my_bookings: (args) => {
       const deny = needUser();
       if (deny) return deny;
@@ -415,18 +549,19 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
     get_pending_approvals: () => {
       const deny = needUser();
       if (deny) return deny;
-      const list = bookings
-        .filter(b => canApproveBooking(b, workflow, myRoles))
-        .sort((a, b) => +new Date(a.startTime) - +new Date(b.startTime))
-        .slice(0, 20)
-        .map(b => ({
-          ...bookingBrief(b, resources, users),
-          node: workflow[b.currentNodeIndex]?.name,
-          participants: b.participants,
-          needsTea: Boolean(b.needsTeaService),
-          needsVideo: Boolean(b.isVideoConference)
-        }));
-      return { ok: true, data: { total: list.length, pending: list } };
+      const groups = getApprovalGroups(bookings, workflow, me!, approvalContext)
+        .sort((a, b) => +new Date(a.booking.startTime) - +new Date(b.booking.startTime));
+      const list = groups.slice(0, 20).map(({ booking: b, seriesBookings }) => ({
+        ...bookingBrief(b, resources, users),
+        bookingIds: seriesBookings.map(item => item.id),
+        occurrenceCount: seriesBookings.length,
+        seriesEndDate: b.seriesEndDate,
+        node: getBookingWorkflow(b, workflow)[b.currentNodeIndex]?.name,
+        participants: b.participants,
+        needsTea: Boolean(b.needsTeaService),
+        needsVideo: Boolean(b.isVideoConference)
+      }));
+      return { ok: true, data: { total: groups.length, pending: list } };
     },
 
     get_usage_stats: (args) => {
@@ -474,7 +609,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
 
     get_work_orders: (args) => {
       const list = workOrders
-        .filter(w => !args?.status || w.status === args.status)
+        .filter(w => (myRoles.includes('SYSTEM_ADMIN') || myRoles.includes(w.assigneeRole)) && (!args?.status || w.status === args.status))
         .slice(0, 20)
         .map(w => ({
           id: w.id, type: w.type === 'TEA' ? '茶水服务' : '视频支持',
@@ -482,6 +617,19 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
           createdAt: fmtRange(new Date(w.createdAt), new Date(w.createdAt))
         }));
       return { ok: true, data: { total: list.length, workOrders: list } };
+    },
+
+    propose_complete_work_order: (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      const order = workOrders.find(o => o.id === args?.workOrderId && o.status === 'TODO'
+        && (myRoles.includes('SYSTEM_ADMIN') || myRoles.includes(o.assigneeRole)));
+      if (!order) return { ok: false, error: '没有找到你负责的待处理工单。' };
+      return {
+        ok: true,
+        data: { id: order.id, title: order.title, status: order.status },
+        action: { type: 'PROPOSE_WORK_ORDER', workOrderId: order.id, summary: `完成${order.title}` }
+      };
     },
 
     propose_booking: (args) => {
@@ -505,13 +653,24 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
           candidates: (candidates || []).map(r => ({ name: r.name, capacity: r.capacity, location: r.location }))
         };
       }
-      if (resource.status !== 'AVAILABLE') {
+      const participants = Number(args?.participants) || 1;
+      const requiredFeatures = args?.needsVideo ? ['VIDEO' as const] : [];
+      const resourceError = validateBookingResource(resource, {
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        participants,
+        requiredFeatures
+      });
+      if (resourceError === 'RESOURCE_MAINTENANCE' || resourceError === 'RESOURCE_UNAVAILABLE') {
         return { ok: false, error: `${resource.name} 当前状态为 ${resource.status}，不可预订。` };
       }
-      const participants = Number(args?.participants) || 1;
-      if ((resource.capacity || 1) < participants) {
+      if (resourceError === 'CAPACITY_EXCEEDED') {
         return { ok: false, error: `${resource.name} 只能容纳 ${resource.capacity || 1} 人，无法满足 ${participants} 人。` };
       }
+      if (resourceError === 'REQUIRED_FEATURE_UNAVAILABLE') {
+        return { ok: false, error: `${resource.name} 未配置视频会议系统，请选择支持视频会议的会议室。` };
+      }
+      if (resourceError) return { ok: false, error: '预约时间、人数或资源信息无效，请调整后重试。' };
 
       const conflicts = findBookingConflicts(bookings, {
         resourceId: resource.id, startTime: start.toISOString(), endTime: end.toISOString()
@@ -545,7 +704,13 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         approvalHistory: [],
         needsTeaService: Boolean(args?.needsTea),
         isVideoConference: Boolean(args?.needsVideo),
-        attendeeIds: attendeeIds.length ? attendeeIds : undefined
+        requiredFeatures,
+        attendeeIds: attendeeIds.length ? attendeeIds : undefined,
+        hasLeader: Boolean(args?.hasLeader),
+        leaderDetails: args?.hasLeader ? String(args?.leaderDetails || '') : undefined,
+        recurrence: args?.repeatFrequency === 'WEEKLY' || args?.repeatFrequency === 'BIWEEKLY'
+          ? { frequency: args.repeatFrequency, count: [2, 3, 4, 6, 8, 12].includes(Number(args?.repeatCount)) ? Number(args.repeatCount) : 4 }
+          : undefined
       };
 
       const summary = [
@@ -593,8 +758,8 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       const deny = needUser();
       if (deny) return deny;
       if (!args?.bookingKeyword) return { ok: false, error: '需要告诉我要审批哪一条申请。' };
-      const pendingList = bookings.filter(b => canApproveBooking(b, workflow, myRoles));
-      const { booking, candidates } = resolveBooking(pendingList, resources, users, args.bookingKeyword);
+      const groups = getApprovalGroups(bookings, workflow, me!, approvalContext);
+      const { booking, candidates } = resolveBooking(groups.map(group => group.booking), resources, users, args.bookingKeyword);
       if (!booking) {
         return {
           ok: false,
@@ -606,25 +771,31 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       if (decision === 'REJECT' && !String(args?.comment || '').trim()) {
         return { ok: false, error: '驳回必须填写审批意见。' };
       }
+      const group = groups.find(item => item.booking.id === booking.id)!;
       const approverName = me!.name;
+      const bookingWorkflow = getBookingWorkflow(booking, workflow);
       const next = decision === 'APPROVE'
         ? approveBooking(booking, workflow, approverName, args?.comment)
         : rejectBooking(booking, workflow, approverName, String(args.comment || ''));
       const brief = bookingBrief(booking, resources, users);
+      const seriesSuffix = group.seriesBookings.length > 1 ? ` · 共 ${group.seriesBookings.length} 个会议日` : '';
       return {
         ok: true,
         data: {
           ...brief,
+          bookingIds: group.seriesBookings.map(item => item.id),
+          occurrenceCount: group.seriesBookings.length,
           decision: decision === 'APPROVE' ? '通过' : '驳回',
           resultStatus: next.status,
-          nextNode: next.status === 'PENDING' ? workflow[next.currentNodeIndex]?.name : null
+          nextNode: next.status === 'PENDING' ? bookingWorkflow[next.currentNodeIndex]?.name : null
         },
         action: {
           type: 'PROPOSE_APPROVAL',
           bookingId: booking.id,
+          bookingIds: group.seriesBookings.map(item => item.id),
           decision,
           comment: args?.comment,
-          summary: `${decision === 'APPROVE' ? '通过' : '驳回'} · ${brief.user} · ${brief.resource} · ${brief.start}`
+          summary: `${decision === 'APPROVE' ? '通过' : '驳回'} · ${brief.user} · ${brief.resource} · ${brief.start}${seriesSuffix}`
         }
       };
     },
@@ -645,7 +816,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       const start = new Date(booking.startTime);
       const diffMinutes = (now.getTime() - start.getTime()) / 60000;
       if (diffMinutes < -30) {
-        return { ok: false, error: `还没到签到时间，预订 ${fmtRange(start, new Date(booking.endTime))} 开始前 30 分钟才能签到。` };
+        return { ok: false, error: `还没到签到时间，预订 ${fmtRange(start, new Date(booking.endTime))} 开始前 15 分钟才能签到。` };
       }
       const brief = bookingBrief(booking, resources, users);
       return {

@@ -1,0 +1,304 @@
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Building2, CalendarDays, MapPin, Users } from 'lucide-react';
+import type { Booking, Resource, ResourceStatus } from '../types';
+import { isResourceAcceptingBookings } from '../utils/bookingRules';
+
+export type BuildingId = 'MAIN' | 'ANNEX';
+type BuildingConfig = {
+  id: BuildingId;
+  code: string;
+  name: string;
+  kind: string;
+  totalFloors: number;
+  shape: 'RECTANGULAR' | 'L';
+};
+
+export const BUILDINGS: Record<BuildingId, BuildingConfig> = {
+  MAIN: { id: 'MAIN', code: '01', name: '1号楼', kind: '主楼', totalFloors: 20, shape: 'RECTANGULAR' },
+  ANNEX: { id: 'ANNEX', code: '02', name: '2号楼', kind: '配楼', totalFloors: 4, shape: 'L' }
+};
+
+export const getFloorNumbers = (totalFloors: number) => Array.from({ length: totalFloors }, (_, index) => totalFloors - index);
+
+type DisplayStatus = Extract<ResourceStatus, 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE'>;
+type RoomWithStatus = {
+  resource: Resource;
+  status: DisplayStatus;
+  currentBooking?: Booking;
+};
+
+type BuildingExplorerProps = {
+  resources: Resource[];
+  bookings: Booking[];
+  focusLocation?: { location: string; token: number | string } | null;
+  onDetails: (resource: Resource) => void;
+  onCalendar: (resource: Resource) => void;
+  onBook: (resource: Resource) => void;
+  resultContext?: { label: string; matchCount: number; totalRoomCount: number } | null;
+};
+
+const STATUS_LABELS: Record<DisplayStatus, string> = {
+  AVAILABLE: '当前空闲',
+  OCCUPIED: '会议中',
+  MAINTENANCE: '暂停预约'
+};
+
+export const parseBuilding = (location: string): BuildingId => {
+  if (/(?:2|二)\s*号楼|配楼/i.test(location)) return 'ANNEX';
+  return 'MAIN';
+};
+
+export const parseFloor = (location: string, totalFloors: number) => {
+  const match = location.match(/(\d{1,2})\s*(?:层|F\b)/i);
+  if (!match) return null;
+  const floor = Number(match[1]);
+  return floor >= 1 && floor <= totalFloors ? floor : null;
+};
+
+const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, resultContext }: BuildingExplorerProps) => {
+  const explorerRef = useRef<HTMLElement>(null);
+  const [selectedBuildingId, setSelectedBuildingId] = useState<BuildingId>('MAIN');
+  const [selectedFloorState, setSelectedFloorState] = useState<Record<BuildingId, number | null>>({ MAIN: null, ANNEX: null });
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 60000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useLayoutEffect(() => {
+    if (!focusLocation) return;
+    const buildingId = parseBuilding(focusLocation.location);
+    const floor = parseFloor(focusLocation.location, BUILDINGS[buildingId].totalFloors);
+    if (!floor) return;
+    setSelectedBuildingId(buildingId);
+    setSelectedFloorState(current => ({ ...current, [buildingId]: floor }));
+    const frame = window.requestAnimationFrame(() => explorerRef.current?.scrollIntoView({
+      behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+      block: 'start'
+    }));
+    return () => window.cancelAnimationFrame(frame);
+  }, [focusLocation]);
+
+  const rooms = useMemo(() => resources.filter(resource => resource.type === 'ROOM').map(resource => {
+    const currentBooking = bookings.find(booking =>
+      booking.resourceId === resource.id
+      && booking.status === 'APPROVED'
+      && !booking.endedEarlyAt
+      && new Date(booking.startTime).getTime() <= now
+      && new Date(booking.endTime).getTime() > now
+    );
+    const status: DisplayStatus = resource.status === 'MAINTENANCE' || resource.status === 'PENDING'
+      ? 'MAINTENANCE'
+      : resource.status === 'OCCUPIED' || currentBooking
+        ? 'OCCUPIED'
+        : 'AVAILABLE';
+    return { resource, status, currentBooking };
+  }), [resources, bookings, now]);
+
+  const building = BUILDINGS[selectedBuildingId];
+  const floorNumbers = getFloorNumbers(building.totalFloors);
+  const buildingRooms = useMemo(() => rooms.filter(room => parseBuilding(room.resource.location) === selectedBuildingId), [rooms, selectedBuildingId]);
+  const floors = useMemo(() => new Map(floorNumbers.map(floor => [
+    floor,
+    buildingRooms.filter(room => parseFloor(room.resource.location, building.totalFloors) === floor)
+  ])), [buildingRooms, building.totalFloors]);
+
+  const firstOccupiedFloor = floorNumbers.find(floor => (floors.get(floor)?.length || 0) > 0);
+  const selectedFloor = selectedFloorState[selectedBuildingId] ?? firstOccupiedFloor ?? building.totalFloors;
+  const selectedRooms = floors.get(selectedFloor) || [];
+  const unmappedRooms = buildingRooms.filter(room => parseFloor(room.resource.location, building.totalFloors) === null);
+  const availableCount = buildingRooms.filter(room => room.status === 'AVAILABLE').length;
+  const selectedAvailable = selectedRooms.filter(room => room.status === 'AVAILABLE').length;
+
+  const floorStatus = (floorRooms: RoomWithStatus[]): DisplayStatus | 'EMPTY' => {
+    if (!floorRooms.length) return 'EMPTY';
+    if (floorRooms.some(room => room.status === 'OCCUPIED')) return 'OCCUPIED';
+    if (floorRooms.some(room => room.status === 'AVAILABLE')) return 'AVAILABLE';
+    return 'MAINTENANCE';
+  };
+
+  const selectFloor = (floor: number) => setSelectedFloorState(current => ({ ...current, [selectedBuildingId]: floor }));
+  const isAnnex = building.shape === 'L';
+  const emptyFloorLabel = resultContext ? '当前条件无匹配会议室' : '暂未录入会议室';
+
+  return (
+    <section ref={explorerRef} className="building-explorer" aria-labelledby="building-explorer-title">
+      <header className="building-explorer-head">
+        <div>
+          <span className="studio-page-kicker">SPATIAL MAP / TOWER {building.code}</span>
+          <h4 id="building-explorer-title">{building.totalFloors} 层{isAnnex ? ' L 型' : ''}空间导航</h4>
+          <p>从整栋楼到一间会议室，点击楼层即可定位真实空间与当前状态。</p>
+        </div>
+        <div className="building-switch" role="group" aria-label="切换楼栋">
+          {Object.values(BUILDINGS).map(item => (
+            <button
+              key={item.id}
+              type="button"
+              aria-pressed={selectedBuildingId === item.id}
+              aria-label={`切换到${item.name}${item.kind}`}
+              onClick={() => setSelectedBuildingId(item.id)}
+            >
+              <strong>{item.name}</strong>
+              <span>{item.kind} · {item.totalFloors} 层</span>
+            </button>
+          ))}
+        </div>
+        <div className="building-summary" aria-label={`${building.name}空间概况`}>
+          <div><strong>{building.totalFloors}</strong><span>总楼层</span></div>
+          <div><strong>{buildingRooms.length}</strong><span>{resultContext ? '符合条件' : '会议室'}</span></div>
+          <div><strong>{availableCount}</strong><span>当前空闲</span></div>
+        </div>
+      </header>
+
+      {resultContext && <div className="building-filter-context" role="status" aria-live="polite">
+        <strong>条件查找已联动</strong>
+        <span>{resultContext.label} · 全部楼栋匹配 {resultContext.matchCount} / {resultContext.totalRoomCount} 间；当前楼栋 {buildingRooms.length} 间，当前楼层 {selectedRooms.length} 间。占用标识仍表示当前实时状态。</span>
+      </div>}
+
+      <div className="building-workspace">
+        <div className="building-scene" data-floor-count={String(building.totalFloors).padStart(2, '0')}>
+          <div className="building-scene-top">
+            <div><span>SMARTOFFICE {isAnnex ? 'L-SHAPED ANNEX' : 'TOWER'}</span><strong>{building.name} · {isAnnex ? 'L 型配楼' : '立体楼层索引'}</strong></div>
+            <label>
+              <span>快速定位</span>
+              <select aria-label={`快速选择${building.name}楼层`} value={selectedFloor} onChange={event => selectFloor(Number(event.target.value))}>
+                {floorNumbers.map(floor => <option key={floor} value={floor}>{floor} 层{ floors.get(floor)?.length ? ` · ${floors.get(floor)?.length} 间` : ''}</option>)}
+              </select>
+            </label>
+          </div>
+
+          <svg className="building-model" data-building={selectedBuildingId} viewBox="0 0 560 680" role="group" aria-label={`${building.name}${building.totalFloors}层${isAnnex ? 'L 型' : ''}三维楼层图`}>
+            <defs>
+              <pattern id="building-ground-grid" width="28" height="28" patternUnits="userSpaceOnUse" patternTransform="skewY(-16)">
+                <path d="M 28 0 L 0 0 0 28" fill="none" stroke="rgba(248,242,231,.08)" strokeWidth="1" />
+              </pattern>
+            </defs>
+            <ellipse cx="270" cy="625" rx="225" ry="36" fill="rgba(0,0,0,.18)" />
+            <path d="M24 596 L270 454 L526 588 L280 730 Z" fill="url(#building-ground-grid)" opacity=".8" />
+            <g className="building-brand-sign">
+              <path className="building-brand-support" d={`M188 66V${isAnnex ? 120 : 76} M312 66V${isAnnex ? 120 : 76}`} />
+              <rect className="building-brand-plate" x="150" y="0" width="200" height="66" />
+              <path className="building-brand-accent" d="M150 1.5H350" />
+              <text className="building-brand-wordmark" x="250" y="40" textAnchor="middle">中国东方</text>
+            </g>
+            {floorNumbers.map((floor, index) => {
+              const floorRooms = floors.get(floor) || [];
+              const status = floorStatus(floorRooms);
+              const selected = floor === selectedFloor;
+              const y = (isAnnex ? 170 : 116) + index * (isAnnex ? 84 : 23);
+              const available = floorRooms.filter(room => room.status === 'AVAILABLE').length;
+              return (
+                <g
+                  key={floor}
+                  className="building-floor"
+                  data-floor={floor}
+                  data-selected={selected}
+                  data-has-rooms={floorRooms.length > 0}
+                  data-status={status}
+                  role="button"
+                  tabIndex={0}
+                  aria-pressed={selected}
+                  aria-label={`${floor} 层，${floorRooms.length ? `${floorRooms.length} 间会议室，${available} 间当前空闲` : emptyFloorLabel}`}
+                  onClick={() => selectFloor(floor)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      selectFloor(floor);
+                    }
+                  }}
+                >
+                  <title>{`${floor} 层 · ${floorRooms.length ? `${floorRooms.length} 间会议室` : emptyFloorLabel}`}</title>
+                  {isAnnex ? (
+                    <>
+                      <polygon className="building-floor-right" points={`426,${y} 338,${y + 26} 338,${y + 38} 426,${y + 12}`} />
+                      <polygon className="building-floor-left" points={`250,${y} 338,${y + 26} 338,${y + 38} 250,${y + 12}`} />
+                      <polygon className="building-floor-right" points={`250,${y} 162,${y + 26} 162,${y + 38} 250,${y + 12}`} />
+                      <polygon className="building-floor-left" points={`162,${y + 26} 74,${y} 74,${y + 12} 162,${y + 38}`} />
+                      <polygon className="building-floor-top" points={`250,${y - 52} 426,${y} 338,${y + 26} 250,${y} 162,${y + 26} 74,${y}`} />
+                    </>
+                  ) : (
+                    <>
+                      <polygon className="building-floor-left" points={`74,${y} 250,${y + 52} 250,${y + 64} 74,${y + 12}`} />
+                      <polygon className="building-floor-right" points={`250,${y + 52} 426,${y} 426,${y + 12} 250,${y + 64}`} />
+                      <polygon className="building-floor-top" points={`74,${y} 250,${y - 52} 426,${y} 250,${y + 52}`} />
+                    </>
+                  )}
+                  {floorRooms.slice(0, 6).map((room, roomIndex) => (
+                    <circle key={room.resource.id} className="building-room-marker" data-status={room.status} cx={isAnnex ? 118 + roomIndex * 18 : 218 + roomIndex * 20} cy={isAnnex ? y + 10 : y + 14} r="5" />
+                  ))}
+                  <text className="building-floor-label" x="455" y={y + 7}>{String(floor).padStart(2, '0')}F</text>
+                  {floorRooms.length > 0 && <text className="building-floor-count" x="60" y={y + 7} textAnchor="end">{floorRooms.length} 间</text>}
+                </g>
+              );
+            })}
+            <path d="M52 632 H488" stroke="rgba(248,242,231,.18)" />
+            <text x="54" y="652" fill="rgba(248,242,231,.44)" fontSize="10" fontFamily="var(--font-mono)" letterSpacing="2">{building.totalFloors} LEVELS / {isAnnex ? 'L-SHAPED ANNEX' : 'LIVE SPACE INDEX'}</text>
+          </svg>
+
+          <div className="building-legend" aria-label="会议室状态图例">
+            <span data-status="AVAILABLE"><i />当前空闲</span>
+            <span data-status="OCCUPIED"><i />会议中</span>
+            <span data-status="MAINTENANCE"><i />维护中</span>
+            <span data-status="EMPTY"><i />{resultContext ? '无匹配' : '未录入'}</span>
+          </div>
+        </div>
+
+        <div className="building-floor-panel">
+          <header className="building-floor-head" aria-live="polite">
+            <div className="building-floor-number">{String(selectedFloor).padStart(2, '0')}<small>F</small></div>
+            <div>
+              <span>FLOOR DIRECTORY / 楼层名录</span>
+              <h4>{selectedFloor} 层</h4>
+              <p>{selectedRooms.length ? `${selectedRooms.length} 间会议室 · ${selectedAvailable} 间当前空闲` : resultContext ? '本层无匹配会议室' : '本层暂未录入会议室'}</p>
+            </div>
+          </header>
+
+          {selectedRooms.length > 0 ? (
+            <div className="building-plan">
+              <div className="building-plan-meta"><span>ROOM INDEX / 房间分布示意</span><span>{selectedFloor}F · {selectedRooms.length} SPACES</span></div>
+              <div className="building-room-grid">
+                {selectedRooms.map((room, index) => (
+                  <article key={room.resource.id} className="building-room" data-status={room.status}>
+                    <button type="button" className="building-room-main" onClick={() => onDetails(room.resource)} aria-label={`查看${room.resource.name}详情`}>
+                      <span className="building-room-topline">
+                        <span className="building-room-index">ROOM {String(index + 1).padStart(2, '0')}</span>
+                        <span className="building-room-status"><i />{STATUS_LABELS[room.status]}</span>
+                      </span>
+                      <strong>{room.resource.name}</strong>
+                      <span className="building-room-capacity"><Users size={13} />{room.resource.capacity || 0} 人<span>·</span><MapPin size={13} />{room.resource.location}</span>
+                      <span className="building-room-features">{room.resource.features.slice(0, 3).join(' · ') || '基础会议空间'}</span>
+                      {room.currentBooking && <span className="building-room-current">当前会议 · {room.currentBooking.purpose}</span>}
+                    </button>
+                    <footer>
+                      <button type="button" onClick={() => onCalendar(room.resource)} aria-label={`查看${room.resource.name}排期`}><CalendarDays size={14} />排期</button>
+                      <button type="button" onClick={() => onBook(room.resource)} disabled={!isResourceAcceptingBookings(room.resource)}>预约<ArrowUpRight size={14} /></button>
+                    </footer>
+                  </article>
+                ))}
+              </div>
+              <p className="building-plan-note">房间按资源名录顺序排列，状态来自资源信息与已通过的实时会议。</p>
+            </div>
+          ) : (
+            <div className="building-empty">
+              <Building2 size={32} strokeWidth={1.3} />
+              <h5>{resultContext ? '当前楼层没有符合条件的会议室' : '本层暂无会议室数据'}</h5>
+              <p>{resultContext ? '空间导航仅保留符合当前时间、人数和设备条件的会议室，请调整条件或切换楼栋楼层。' : `新增资源时将位置填写为“${building.name} ${selectedFloor}层”，会议室会自动出现在这一层。`}</p>
+              {buildingRooms.length > 0 && <button type="button" onClick={() => firstOccupiedFloor && selectFloor(firstOccupiedFloor)}>定位到 {firstOccupiedFloor} 层<ArrowUpRight size={14} /></button>}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {unmappedRooms.length > 0 && (
+        <div className="building-unmapped">
+          <MapPin size={16} />
+          <span>{unmappedRooms.length} 间会议室未识别楼层，请将位置维护为“{building.name} {building.totalFloors > 4 ? 10 : 2}层”格式：</span>
+          <div>{unmappedRooms.map(room => <button key={room.resource.id} type="button" onClick={() => onDetails(room.resource)}>{room.resource.name}</button>)}</div>
+        </div>
+      )}
+    </section>
+  );
+};
+
+export default BuildingExplorer;
