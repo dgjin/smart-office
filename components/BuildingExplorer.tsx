@@ -1,5 +1,5 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Building2, CalendarDays, Edit2, MapPin, Trash2, Users } from 'lucide-react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { ArrowUpRight, Building2, CalendarDays, Edit2, Lock, LockOpen, MapPin, Trash2, Users } from 'lucide-react';
 import type { Booking, Resource, ResourceStatus } from '../types';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { BUILDING_FLOORS, getResourceBuilding, getResourceFloor, parseResourceBuilding, parseResourceFloor } from '../utils/resourceDomain';
@@ -23,11 +23,6 @@ export const BUILDINGS: Record<BuildingId, BuildingConfig> = {
 export const getFloorNumbers = (totalFloors: number) => Array.from({ length: totalFloors }, (_, index) => totalFloors - index);
 
 type DisplayStatus = Extract<ResourceStatus, 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE'>;
-type RoomWithStatus = {
-  resource: Resource;
-  status: DisplayStatus;
-  currentBooking?: Booking;
-};
 
 type BuildingExplorerProps = {
   resources: Resource[];
@@ -37,6 +32,8 @@ type BuildingExplorerProps = {
   onCalendar: (resource: Resource) => void;
   onBook: (resource: Resource) => void;
   canManage?: boolean;
+  isResourceLocked: (resourceId: string) => boolean;
+  onToggleResourceLock: (resourceId: string) => void;
   onEdit: (resource: Resource) => void;
   onDelete: (resource: Resource) => void;
   resultContext?: { label: string; matchCount: number; totalRoomCount: number } | null;
@@ -51,8 +48,10 @@ const STATUS_LABELS: Record<DisplayStatus, string> = {
 export const parseBuilding = parseResourceBuilding;
 export const parseFloor = parseResourceFloor;
 
-const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, canManage = false, onEdit, onDelete, resultContext }: BuildingExplorerProps) => {
+const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, canManage = false, isResourceLocked, onToggleResourceLock, onEdit, onDelete, resultContext }: BuildingExplorerProps) => {
   const explorerRef = useRef<HTMLElement>(null);
+  const sceneRef = useRef<HTMLIFrameElement>(null);
+  const [sceneReady, setSceneReady] = useState(false);
   const [selectedBuildingId, setSelectedBuildingId] = useState<BuildingId>('MAIN');
   const [selectedFloorState, setSelectedFloorState] = useState<Record<BuildingId, number | null>>({ MAIN: null, ANNEX: null });
   const [now, setNow] = useState(() => Date.now());
@@ -107,16 +106,38 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
   const availableCount = buildingRooms.filter(room => room.status === 'AVAILABLE').length;
   const selectedAvailable = selectedRooms.filter(room => room.status === 'AVAILABLE').length;
 
-  const floorStatus = (floorRooms: RoomWithStatus[]): DisplayStatus | 'EMPTY' => {
-    if (!floorRooms.length) return 'EMPTY';
-    if (floorRooms.some(room => room.status === 'OCCUPIED')) return 'OCCUPIED';
-    if (floorRooms.some(room => room.status === 'AVAILABLE')) return 'AVAILABLE';
-    return 'MAINTENANCE';
-  };
-
   const selectFloor = (floor: number) => setSelectedFloorState(current => ({ ...current, [selectedBuildingId]: floor }));
   const isAnnex = building.shape === 'L';
-  const emptyFloorLabel = resultContext ? '当前条件无匹配会议室' : '暂未录入会议室';
+
+  const syncScene = useCallback(() => {
+    if (!sceneReady || !sceneRef.current?.contentWindow) return;
+    sceneRef.current.contentWindow.postMessage({
+      type: 'smart-office:spatial-state',
+      building: selectedBuildingId,
+      floor: selectedFloor,
+      resources: rooms.map(room => ({ id: room.resource.id, status: room.status }))
+    }, window.location.origin);
+  }, [sceneReady, selectedBuildingId, selectedFloor, rooms]);
+
+  useEffect(() => { syncScene(); }, [syncScene]);
+
+  useEffect(() => {
+    const onSceneMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin || event.source !== sceneRef.current?.contentWindow) return;
+      if (event.data?.type === 'smart-office:hq3d-ready') {
+        setSceneReady(true);
+        return;
+      }
+      if (event.data?.type !== 'smart-office:spatial-floor') return;
+      const buildingId = event.data.building as BuildingId;
+      const floor = Number(event.data.floor);
+      if (!BUILDINGS[buildingId] || !Number.isInteger(floor) || floor < 1 || floor > BUILDINGS[buildingId].totalFloors) return;
+      setSelectedBuildingId(buildingId);
+      setSelectedFloorState(current => ({ ...current, [buildingId]: floor }));
+    };
+    window.addEventListener('message', onSceneMessage);
+    return () => window.removeEventListener('message', onSceneMessage);
+  }, []);
 
   return (
     <section ref={explorerRef} className="building-explorer" aria-labelledby="building-explorer-title">
@@ -164,73 +185,13 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
             </label>
           </div>
 
-          <svg className="building-model" data-building={selectedBuildingId} viewBox="0 0 560 680" role="group" aria-label={`${building.name}${building.totalFloors}层${isAnnex ? 'L 型' : ''}三维楼层图`}>
-            <defs>
-              <pattern id="building-ground-grid" width="28" height="28" patternUnits="userSpaceOnUse" patternTransform="skewY(-16)">
-                <path d="M 28 0 L 0 0 0 28" fill="none" stroke="rgba(248,242,231,.08)" strokeWidth="1" />
-              </pattern>
-            </defs>
-            <ellipse cx="270" cy="625" rx="225" ry="36" fill="rgba(0,0,0,.18)" />
-            <path d="M24 596 L270 454 L526 588 L280 730 Z" fill="url(#building-ground-grid)" opacity=".8" />
-            <g className="building-brand-sign">
-              <path className="building-brand-support" d={`M188 66V${isAnnex ? 120 : 76} M312 66V${isAnnex ? 120 : 76}`} />
-              <rect className="building-brand-plate" x="150" y="0" width="200" height="66" />
-              <path className="building-brand-accent" d="M150 1.5H350" />
-              <text className="building-brand-wordmark" x="250" y="40" textAnchor="middle">中国东方</text>
-            </g>
-            {floorNumbers.map((floor, index) => {
-              const floorRooms = floors.get(floor) || [];
-              const status = floorStatus(floorRooms);
-              const selected = floor === selectedFloor;
-              const y = (isAnnex ? 170 : 116) + index * (isAnnex ? 84 : 23);
-              const available = floorRooms.filter(room => room.status === 'AVAILABLE').length;
-              return (
-                <g
-                  key={floor}
-                  className="building-floor"
-                  data-floor={floor}
-                  data-selected={selected}
-                  data-has-rooms={floorRooms.length > 0}
-                  data-status={status}
-                  role="button"
-                  tabIndex={0}
-                  aria-pressed={selected}
-                  aria-label={`${floor} 层，${floorRooms.length ? `${floorRooms.length} 间会议室，${available} 间当前空闲` : emptyFloorLabel}`}
-                  onClick={() => selectFloor(floor)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' || event.key === ' ') {
-                      event.preventDefault();
-                      selectFloor(floor);
-                    }
-                  }}
-                >
-                  <title>{`${floor} 层 · ${floorRooms.length ? `${floorRooms.length} 间会议室` : emptyFloorLabel}`}</title>
-                  {isAnnex ? (
-                    <>
-                      <polygon className="building-floor-right" points={`426,${y} 338,${y + 26} 338,${y + 38} 426,${y + 12}`} />
-                      <polygon className="building-floor-left" points={`250,${y} 338,${y + 26} 338,${y + 38} 250,${y + 12}`} />
-                      <polygon className="building-floor-right" points={`250,${y} 162,${y + 26} 162,${y + 38} 250,${y + 12}`} />
-                      <polygon className="building-floor-left" points={`162,${y + 26} 74,${y} 74,${y + 12} 162,${y + 38}`} />
-                      <polygon className="building-floor-top" points={`250,${y - 52} 426,${y} 338,${y + 26} 250,${y} 162,${y + 26} 74,${y}`} />
-                    </>
-                  ) : (
-                    <>
-                      <polygon className="building-floor-left" points={`74,${y} 250,${y + 52} 250,${y + 64} 74,${y + 12}`} />
-                      <polygon className="building-floor-right" points={`250,${y + 52} 426,${y} 426,${y + 12} 250,${y + 64}`} />
-                      <polygon className="building-floor-top" points={`74,${y} 250,${y - 52} 426,${y} 250,${y + 52}`} />
-                    </>
-                  )}
-                  {floorRooms.slice(0, 6).map((room, roomIndex) => (
-                    <circle key={room.resource.id} className="building-room-marker" data-status={room.status} cx={isAnnex ? 118 + roomIndex * 18 : 218 + roomIndex * 20} cy={isAnnex ? y + 10 : y + 14} r="5" />
-                  ))}
-                  <text className="building-floor-label" x="455" y={y + 7}>{String(floor).padStart(2, '0')}F</text>
-                  {floorRooms.length > 0 && <text className="building-floor-count" x="60" y={y + 7} textAnchor="end">{floorRooms.length} 间</text>}
-                </g>
-              );
-            })}
-            <path d="M52 632 H488" stroke="rgba(248,242,231,.18)" />
-            <text x="54" y="652" fill="rgba(248,242,231,.44)" fontSize="10" fontFamily="var(--font-mono)" letterSpacing="2">{building.totalFloors} LEVELS / {isAnnex ? 'L-SHAPED ANNEX' : 'LIVE SPACE INDEX'}</text>
-          </svg>
+          <iframe
+            ref={sceneRef}
+            className="building-cutaway"
+            src="/hq3d.html?embed=spatial"
+            title={`${building.name}${building.totalFloors}层总部3D楼层剖切图，当前${selectedFloor}层`}
+            onLoad={() => setSceneReady(true)}
+          />
 
           <div className="building-legend" aria-label="会议室状态图例">
             <span data-status="AVAILABLE"><i />当前空闲</span>
@@ -238,6 +199,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
             <span data-status="MAINTENANCE"><i />维护中</span>
             <span data-status="EMPTY"><i />{resultContext ? '无匹配' : '未录入'}</span>
           </div>
+          <p className="building-scene-note">拖拽旋转、滚轮缩放，点击楼板或右侧刻度切换楼层。业务状态仅覆盖已确认同步的会议室，未映射资源以楼层名录为准。</p>
         </div>
 
         <div className="building-floor-panel">
@@ -254,30 +216,36 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
             <div className="building-plan">
               <div className="building-plan-meta"><span>ROOM INDEX / 房间分布示意</span><span>{selectedFloor}F · {selectedRooms.length} SPACES</span></div>
               <div className="building-room-grid">
-                {selectedRooms.map((room, index) => (
-                  <article key={room.resource.id} className="building-room" data-status={room.status}>
-                    <button type="button" className="building-room-main" onClick={() => onDetails(room.resource)} aria-label={`查看${room.resource.name}详情`}>
-                      <span className="building-room-topline">
-                        <span className="building-room-index">ROOM {String(index + 1).padStart(2, '0')}</span>
-                        <span className="building-room-status"><i />{STATUS_LABELS[room.status]}</span>
-                      </span>
-                      <strong>{room.resource.name}</strong>
-                      <span className="building-room-capacity"><Users size={13} />{room.resource.capacity || 0} 人<span>·</span><MapPin size={13} />{room.resource.location}</span>
-                      <span className="building-room-features">{room.resource.features.slice(0, 3).join(' · ') || '基础会议空间'}</span>
-                      {room.currentBooking && <span className="building-room-current">当前会议 · {room.currentBooking.purpose}</span>}
-                    </button>
-                    {canManage && <div className="building-room-admin" role="group" aria-label={`${room.resource.name}管理操作`}>
-                      <button type="button" onClick={() => onEdit(room.resource)} aria-label={`编辑${room.resource.name}基本信息`} title="编辑基本信息"><Edit2 size={14} />编辑信息</button>
-                      <button type="button" className="building-room-delete" onClick={() => onDelete(room.resource)} aria-label={`删除${room.resource.name}`} title="删除资源"><Trash2 size={14} />删除</button>
-                    </div>}
-                    <footer>
-                      <button type="button" onClick={() => onCalendar(room.resource)} aria-label={`查看${room.resource.name}排期`}><CalendarDays size={14} />排期</button>
-                      <button type="button" onClick={() => onBook(room.resource)} disabled={!isResourceAcceptingBookings(room.resource)}>预约<ArrowUpRight size={14} /></button>
-                    </footer>
-                  </article>
-                ))}
+                {selectedRooms.map((room, index) => {
+                  const locked = isResourceLocked(room.resource.id);
+                  return (
+                    <article key={room.resource.id} className="building-room" data-status={room.status}>
+                      <button type="button" className="building-room-main" onClick={() => onDetails(room.resource)} aria-label={`查看${room.resource.name}详情`}>
+                        <span className="building-room-topline">
+                          <span className="building-room-index">ROOM {String(index + 1).padStart(2, '0')}</span>
+                          <span className="building-room-status"><i />{STATUS_LABELS[room.status]}</span>
+                        </span>
+                        <strong>{room.resource.name}</strong>
+                        <span className="building-room-capacity"><Users size={13} />{room.resource.capacity || 0} 人<span>·</span><MapPin size={13} />{room.resource.location}</span>
+                        <span className="building-room-features">{room.resource.features.slice(0, 3).join(' · ') || '基础会议空间'}</span>
+                        {room.currentBooking && <span className="building-room-current">当前会议 · {room.currentBooking.purpose}</span>}
+                      </button>
+                      {canManage && <div className="building-room-admin" role="group" aria-label={`${room.resource.name}管理操作`}>
+                        <button type="button" className="building-room-lock" aria-pressed={!locked} aria-label={`${locked ? '解锁' : '加锁'}${room.resource.name}管理操作`} title={locked ? '解锁后才能编辑或删除' : '重新加锁以禁用编辑和删除'} onClick={() => onToggleResourceLock(room.resource.id)}>
+                          {locked ? <Lock size={14} /> : <LockOpen size={14} />}{locked ? '解锁' : '加锁'}
+                        </button>
+                        <button type="button" disabled={locked} onClick={() => onEdit(room.resource)} aria-label={`编辑${room.resource.name}基本信息`} title={locked ? '请先解锁此资源' : '编辑基本信息'}><Edit2 size={14} />编辑信息</button>
+                        <button type="button" className="building-room-delete" disabled={locked} onClick={() => onDelete(room.resource)} aria-label={`删除${room.resource.name}`} title={locked ? '请先解锁此资源' : '删除资源'}><Trash2 size={14} />删除</button>
+                      </div>}
+                      <footer>
+                        <button type="button" onClick={() => onCalendar(room.resource)} aria-label={`查看${room.resource.name}排期`}><CalendarDays size={14} />排期</button>
+                        <button type="button" onClick={() => onBook(room.resource)} disabled={!isResourceAcceptingBookings(room.resource)}>预约<ArrowUpRight size={14} /></button>
+                      </footer>
+                    </article>
+                  );
+                })}
               </div>
-              <p className="building-plan-note">房间按资源名录顺序排列，状态来自资源信息与已通过的实时会议。{canManage ? '管理员可在卡片中维护基本信息；仅无预约及设备关联的资源可删除。' : ''}</p>
+              <p className="building-plan-note">房间按资源名录顺序排列，状态来自资源信息与已通过的实时会议。{canManage ? '资源默认锁定，逐项解锁后才能编辑或删除；仅无预约及设备关联的资源可删除。' : ''}</p>
             </div>
           ) : (
             <div className="building-empty">

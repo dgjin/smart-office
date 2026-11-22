@@ -60,6 +60,7 @@ npm run db:seed:hq3d
 - **写入**：`PUT /api/hq3d/rooms/:uid`（改房间资料）、`POST/PATCH/DELETE /api/hq3d/...`（维护记录）、`PUT /api/hq3d/floors/:building/:tag/area`（楼层面积合计）。写操作要求管理员、`SERVICE_COORDINATOR` 或 `FRONT_DESK` 角色，并各自写 `audit_events`。
 - **为什么不用 `mutateDb`**：那套是整库 JSON 快照重写，一次写入会全量 upsert 20+ 集合。3D 的改动粒度是「一间房一条记录」，走快照会白写几百 KB，也会和排班/预订的乐观锁互相打架。
 - **Three.js**：`public/vendor/three/`（0.160.0，来自 `node_modules/three`）。不引 CDN，一是内网/离线可用，二是主应用的 CSP 不允许外域脚本。升级时 `npm i three@<版本>` 后重新拷贝 `build/three.module.js`、`examples/jsm/controls/OrbitControls.js`、`examples/jsm/environments/RoomEnvironment.js`。
+- **空间导航复用**：空间资源库通过 `/hq3d.html?embed=spatial` 嵌入同一场景并锁定整栋剖切，同源 `postMessage` 双向同步楼栋和楼层；楼层名录、筛选、详情、排期、预约与管理操作仍由主应用提供。剖切业务状态仅使用快照中的显式 `resourceId—roomUid` 映射，未映射资源不按名称推断。
 - **侧栏自动收起**：切到「总部楼层 3D」时侧栏自动折叠到 84px，把宽度让给画面（iframe 从 1332 → 1440px）。这个折叠是**视图派生的临时态**，不写进 `user_preferences` —— 否则离开后侧栏会一直收起、下次登录还会被恢复成收起，等于替用户改了设置。在 3D 里手动展开后本次不再自动收，切走视图即复位。
 - **字体自托管**：`public/vendor/fonts/`（205 个 woff2 分片 + `fonts.css`，6.4MB）。三个家族：Noto Sans SC（正文）、ZCOOL XiaoWei（标题）、IBM Plex Mono（数字与微字），由 `npm run fonts:fetch` 从 Google Fonts 抓取并改写为相对路径，页面不请求任何外域。**保留原 `unicode-range` 分片**，浏览器仍按需加载 —— 实测首页只命中 24 片 / 1.1MB，不是把 6.4MB 全下。字体更新时重跑该命令，不要手工改 `fonts.css`（文件名是 URL 的 md5 前 16 位）。
 - **安全头分档**：`server/http.ts` 的 `securityProfileFor()` 只给 `/hq3d.html` 与 `/vendor/three/` 放宽（`X-Frame-Options: SAMEORIGIN`、`frame-ancestors 'self'`、允许内联脚本），因为该页是行内 module 写法；其余路径仍是 `DENY` + `frame-ancestors 'none'`。

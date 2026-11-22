@@ -10,7 +10,7 @@ import {
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
-  PanelLeftClose, PanelLeftOpen
+  PanelLeftClose, PanelLeftOpen, LockOpen
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
@@ -2742,7 +2742,19 @@ const App: React.FC = () => {
   
   const [showImportModal, setShowImportModal] = useState<'USERS' | 'RESOURCES' | 'DEPARTMENTS' | null>(null);
   const [selectedResourceIds, setSelectedResourceIds] = useState<string[]>([]);
+  const [unlockedResourceIds, setUnlockedResourceIds] = useState<Set<string>>(() => new Set());
   const [selectedUserIds, setSelectedUserIds] = useState<string[]>([]);
+
+  const isResourceLocked = (resourceId: string) => !unlockedResourceIds.has(resourceId);
+  const toggleResourceLock = (resourceId: string) => {
+    setUnlockedResourceIds(current => {
+      const next = new Set(current);
+      if (next.has(resourceId)) next.delete(resourceId);
+      else next.add(resourceId);
+      return next;
+    });
+  };
+  useEffect(() => { setUnlockedResourceIds(new Set()); }, [currentUser?.id]);
 
   // New states for Department management
   const [showDepartmentModal, setShowDepartmentModal] = useState(false);
@@ -3898,6 +3910,8 @@ const App: React.FC = () => {
                 onCalendar={setShowResourceCalendar}
                 onBook={(resource) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }}
                 canManage={currentUser.role.includes('SYSTEM_ADMIN')}
+                isResourceLocked={isResourceLocked}
+                onToggleResourceLock={toggleResourceLock}
                 onEdit={(resource) => { setEditingResource(resource); setShowResourceModal(true); }}
                 onDelete={handleDeleteResource}
               />
@@ -3918,26 +3932,32 @@ const App: React.FC = () => {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-50">
-                    {filteredResources.map(r => (
-                      <tr key={r.id} className={`hover:bg-${theme}-50/20 transition-colors ${selectedResourceIds.includes(r.id) ? `bg-${theme}-50/30` : ''}`}>
-                        <td className="px-6 py-4 text-center">
-                          <button onClick={() => setSelectedResourceIds(prev => prev.includes(r.id) ? prev.filter(id => id !== r.id) : [...prev, r.id])} className={`transition-colors ${selectedResourceIds.includes(r.id) ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-500'}`}>
-                            {selectedResourceIds.includes(r.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
-                          </button>
-                        </td>
-                        <td className="px-6 py-4 font-bold text-gray-800"><p>{r.name}</p>{r.type === 'ROOM' && <p className="mt-1 max-w-56 truncate text-[10px] font-medium text-gray-500">{r.features.join(' · ') || '未配置特殊设备'}</p>}</td>
-                        <td className="px-6 py-4 text-xs font-medium text-gray-500"><p>{r.location}</p>{r.campus && <p className="mt-1 text-[10px] font-bold text-indigo-500">{r.campus}</p>}</td>
-                        <td className="px-6 py-4 text-xs text-gray-500 font-bold">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
-                        <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
-                        <td className="px-6 py-4 text-right space-x-1">
-                          <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors" title="详情"><Info size={16}/></button>
-                          <button onClick={() => setShowResourceCalendar(r)} className="p-2 text-gray-500 hover:text-emerald-600 transition-colors" title="排期日历" aria-label={`查看${r.name}排期`}><CalendarDays size={16}/></button>
-                          <button disabled={!isResourceAcceptingBookings(r)} title={!isResourceAcceptingBookings(r) ? '当前状态暂停新预约' : undefined} onClick={() => { setSelectedResource(r); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[11px] font-black shadow-md hover:translate-y-[-1px] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0`}>{isResourceAcceptingBookings(r) ? '预约' : r.status === 'MAINTENANCE' ? '维护中' : '待开放'}</button>
-                          {currentUser.role.includes('SYSTEM_ADMIN') && <><button aria-label={`编辑${r.name}`} title="编辑资源" onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>
-                          <button aria-label={`删除${r.name}`} title="删除资源" onClick={() => handleDeleteResource(r)} className="p-2 text-gray-200 hover:text-rose-600 transition-colors"><Trash2 size={16}/></button></>}
-                        </td>
-                      </tr>
-                    ))}
+                    {filteredResources.map(r => {
+                      const locked = isResourceLocked(r.id);
+                      return (
+                        <tr key={r.id} className={`hover:bg-${theme}-50/20 transition-colors ${selectedResourceIds.includes(r.id) ? `bg-${theme}-50/30` : ''}`}>
+                          <td className="px-6 py-4 text-center">
+                            <button onClick={() => setSelectedResourceIds(prev => prev.includes(r.id) ? prev.filter(id => id !== r.id) : [...prev, r.id])} className={`transition-colors ${selectedResourceIds.includes(r.id) ? `text-${theme}-600` : 'text-gray-200 hover:text-gray-500'}`}>
+                              {selectedResourceIds.includes(r.id) ? <CheckSquare size={18}/> : <Square size={18}/>}
+                            </button>
+                          </td>
+                          <td className="px-6 py-4 font-bold text-gray-800"><p>{r.name}</p>{r.type === 'ROOM' && <p className="mt-1 max-w-56 truncate text-[10px] font-medium text-gray-500">{r.features.join(' · ') || '未配置特殊设备'}</p>}</td>
+                          <td className="px-6 py-4 text-xs font-medium text-gray-500"><p>{r.location}</p>{r.campus && <p className="mt-1 text-[10px] font-bold text-indigo-500">{r.campus}</p>}</td>
+                          <td className="px-6 py-4 text-xs text-gray-500 font-bold">{r.type === 'ROOM' ? '会议室' : '工位'} / {r.capacity || 0}人</td>
+                          <td className="px-6 py-4"><StatusBadge status={r.status} theme={theme} /></td>
+                          <td className="px-6 py-4 text-right space-x-1">
+                            <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors" title="详情"><Info size={16}/></button>
+                            <button onClick={() => setShowResourceCalendar(r)} className="p-2 text-gray-500 hover:text-emerald-600 transition-colors" title="排期日历" aria-label={`查看${r.name}排期`}><CalendarDays size={16}/></button>
+                            <button disabled={!isResourceAcceptingBookings(r)} title={!isResourceAcceptingBookings(r) ? '当前状态暂停新预约' : undefined} onClick={() => { setSelectedResource(r); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[11px] font-black shadow-md hover:translate-y-[-1px] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0`}>{isResourceAcceptingBookings(r) ? '预约' : r.status === 'MAINTENANCE' ? '维护中' : '待开放'}</button>
+                            {currentUser.role.includes('SYSTEM_ADMIN') && <>
+                              <button type="button" className={`resource-lock-button p-2 transition-colors ${locked ? 'text-amber-600 hover:text-amber-700' : 'text-emerald-600 hover:text-emerald-700'}`} aria-pressed={!locked} aria-label={`${locked ? '解锁' : '加锁'}${r.name}`} title={locked ? '解锁后才能编辑或删除' : '重新加锁以禁用编辑和删除'} onClick={() => toggleResourceLock(r.id)}>{locked ? <Lock size={16}/> : <LockOpen size={16}/>}</button>
+                              <button aria-label={`编辑${r.name}`} title={locked ? '请先解锁此资源' : '编辑资源'} disabled={locked} onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><Edit2 size={16}/></button>
+                              <button aria-label={`删除${r.name}`} title={locked ? '请先解锁此资源' : '删除资源'} disabled={locked} onClick={() => handleDeleteResource(r)} className="p-2 text-gray-500 hover:text-rose-600 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"><Trash2 size={16}/></button>
+                            </>}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
                 {filteredResources.length === 0 && (
