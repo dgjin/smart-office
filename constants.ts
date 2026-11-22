@@ -1,5 +1,5 @@
 
-import type { User, Resource, ApprovalNode, Department, RoleDefinition, BookingRuleSettings, ServiceCatalogItem } from './types.ts';
+import type { User, Resource, ApprovalNode, Department, RoleDefinition, BookingRuleSettings, ServiceCatalogItem, ServiceFieldTemplate, ServiceType } from './types.ts';
 
 export const INITIAL_ROLES: RoleDefinition[] = [
   { id: 'SYSTEM_ADMIN', name: '系统管理员', description: '负责系统配置、运维和最终核准', color: 'indigo' },
@@ -51,6 +51,29 @@ export const DEFAULT_RULE_SETTINGS: BookingRuleSettings = {
   approvalHolidays: []
 };
 
+export const SERVICE_TYPES: ServiceType[] = [
+  'TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER',
+  'VEHICLE', 'NAMEPLATE', 'FURNITURE', 'WATER', 'STATIONERY', 'RECEPTION', 'ON_DUTY', 'AUDITORIUM'
+];
+
+export const SERVICE_TYPE_LABELS: Record<ServiceType, string> = {
+  TEA: '茶水服务', VIDEO: '视频会议保障', SIGNAGE: '引导与标识', SECURITY: '现场安保', OTHER: '其他会务服务',
+  VEHICLE: '车辆服务', NAMEPLATE: '桌牌服务', FURNITURE: '桌椅服务', WATER: '饮用水服务',
+  STATIONERY: '文具服务', RECEPTION: '迎宾服务', ON_DUTY: '值守服务', AUDITORIUM: '礼堂专项服务'
+};
+
+export const isServiceType = (value: unknown): value is ServiceType => SERVICE_TYPES.includes(value as ServiceType);
+
+const structuredServiceFields = (units: string[]): ServiceFieldTemplate[] => [
+  { key: 'quantity', label: '数量', type: 'NUMBER', required: true },
+  { key: 'unit', label: '单位', type: 'SELECT', required: true, options: units },
+  { key: 'specification', label: '规格', type: 'TEXT', required: true },
+  { key: 'serviceTime', label: '服务时间', type: 'TEXT', required: true },
+  { key: 'serviceLocation', label: '服务地点', type: 'TEXT', required: true },
+  { key: 'estimatedCost', label: '预估成本（元）', type: 'NUMBER', required: false },
+  { key: 'notes', label: '补充说明', type: 'TEXTAREA', required: false }
+];
+
 export const DEFAULT_SERVICE_CATALOG: ServiceCatalogItem[] = [
   {
     id: 'service-tea', type: 'TEA', name: '茶水服务', version: 1,
@@ -87,8 +110,58 @@ export const DEFAULT_SERVICE_CATALOG: ServiceCatalogItem[] = [
     fields: [{ key: 'notes', label: '服务内容、责任边界与成本说明', type: 'TEXTAREA', required: true }],
     responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: true,
     cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-21T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-vehicle', type: 'VEHICLE', name: '车辆服务', version: 1,
+    fields: structuredServiceFields(['辆', '车次']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 15, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-nameplate', type: 'NAMEPLATE', name: '桌牌服务', version: 1,
+    fields: structuredServiceFields(['个', '套']),
+    responsibleRole: 'FRONT_DESK', slaResponseMinutes: 10, heavyService: false,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-furniture', type: 'FURNITURE', name: '桌椅服务', version: 1,
+    fields: structuredServiceFields(['套', '张', '把']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 15, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-water', type: 'WATER', name: '饮用水服务', version: 1,
+    fields: structuredServiceFields(['瓶', '桶', '箱']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: false,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-stationery', type: 'STATIONERY', name: '文具服务', version: 1,
+    fields: structuredServiceFields(['套', '盒', '支']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: false,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-reception', type: 'RECEPTION', name: '迎宾服务', version: 1,
+    fields: structuredServiceFields(['人', '组']),
+    responsibleRole: 'FRONT_DESK', slaResponseMinutes: 15, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-on-duty', type: 'ON_DUTY', name: '值守服务', version: 1,
+    fields: structuredServiceFields(['人', '班次']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 15, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
+  },
+  {
+    id: 'service-auditorium', type: 'AUDITORIUM', name: '礼堂专项服务', version: 1,
+    fields: structuredServiceFields(['项', '场']),
+    responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 20, heavyService: true,
+    cancellable: true, resourceTypes: ['ROOM'], roomCategories: ['AUDITORIUM'], updatedAt: '2026-11-22T00:00:00.000Z', updatedBy: 'system'
   }
 ];
+
+export const DEFAULT_HEAVY_SERVICE_TYPES = DEFAULT_SERVICE_CATALOG.filter(item => item.heavyService).map(item => item.type);
 
 export const DEFAULT_WORKFLOW: ApprovalNode[] = [
   { id: 'n1', name: '行政预审', approverRole: 'APPROVAL_ADMIN' },

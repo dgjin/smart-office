@@ -29,8 +29,8 @@ test('动态规则覆盖普通、重要、涉密、专属和重服务流程并�
   const db = makeDb();
   const normal = resolveApprovalPolicy(db, booking(), resource);
   assert.equal(normal.ruleId, undefined);
-  assert.equal(normal.nodes[0].name, '默认审批');
-  assert.match(normal.explanation[0], /未命中特殊规则/);
+  assert.deepEqual(normal.nodes, []);
+  assert.match(normal.explanation[0], /未命中特殊规则，普通预约自动核准/);
 
   const important = resolveApprovalPolicy(db, booking({ meetingType: 'IMPORTANT' }), resource);
   assert.equal(important.ruleId, 'important');
@@ -58,6 +58,59 @@ test('组合场景按优先级选择唯一规则且规则集初始化幂等', ()
   assert.equal(resolved.ruleId, 'confidential');
   assert.equal(resolved.ruleSetVersion, 1);
   assert.equal(resolved.workflowVersion, db.approvalRuleSetVersions![0].rules.find(rule => rule.id === 'confidential')!.workflowVersion);
+});
+
+test('恰好三天不触发长期审批，超过三天进入专用流程且系列不累计', () => {
+  const db = makeDb();
+  const start = Date.parse('2026-12-01T02:00:00.000Z');
+  const exact = resolveApprovalPolicy(db, booking({
+    startTime: new Date(start).toISOString(), endTime: new Date(start + 3 * 86400000).toISOString()
+  }), resource);
+  assert.equal(exact.ruleId, undefined);
+  assert.deepEqual(exact.nodes, []);
+
+  const continuous = resolveApprovalPolicy(db, booking({
+    startTime: new Date(start).toISOString(), endTime: new Date(start + 3 * 86400000 + 1).toISOString()
+  }), resource);
+  assert.equal(continuous.ruleId, 'continuous-over-3-days');
+  assert.deepEqual(continuous.nodes.map(node => node.approverRole), ['APPROVAL_ADMIN', 'SYSTEM_ADMIN']);
+  assert.match(continuous.explanation[0], /单次连续时长>3天/);
+
+  for (const recurrenceIndex of [0, 1, 2, 3]) {
+    const occurrence = resolveApprovalPolicy(db, booking({
+      id: `series-${recurrenceIndex}`, seriesId: 'short-series', seriesKind: 'LONG_TERM', recurrenceIndex,
+      startTime: new Date(start + recurrenceIndex * 86400000).toISOString(),
+      endTime: new Date(start + recurrenceIndex * 86400000 + 3600000).toISOString()
+    }), resource);
+    assert.equal(occurrence.ruleId, undefined);
+    assert.deepEqual(occurrence.nodes, []);
+  }
+
+  const combined = resolveApprovalPolicy(db, booking({
+    startTime: new Date(start).toISOString(), endTime: new Date(start + 4 * 86400000).toISOString(),
+    serviceRequirements: [{ type: 'VIDEO' }]
+  }), { ...resource, isExclusive: true });
+  assert.equal(combined.ruleId, 'continuous-over-3-days');
+  assert.equal(resolveApprovalPolicy(db, booking({
+    meetingType: 'IMPORTANT', startTime: new Date(start).toISOString(), endTime: new Date(start + 4 * 86400000).toISOString()
+  }), resource).ruleId, 'important');
+});
+
+test('旧规则集只追加长期规则和新版本，升级过程幂等', () => {
+  const db = makeDb();
+  const current = db.approvalRuleSetVersions![0];
+  db.approvalRuleSetVersions = [{
+    ...current,
+    rules: current.rules.filter(rule => rule.id !== 'continuous-over-3-days')
+  }];
+  ensureApprovalPolicy(db);
+  const upgraded = [...db.approvalRuleSetVersions!].sort((a, b) => b.version - a.version)[0];
+  assert.equal(upgraded.version, 2);
+  assert.equal(upgraded.rules.filter(rule => rule.id === 'continuous-over-3-days').length, 1);
+  assert.equal(upgraded.defaultWorkflowVersion, current.defaultWorkflowVersion);
+  const snapshot = structuredClone(db.approvalRuleSetVersions);
+  ensureApprovalPolicy(db);
+  assert.deepEqual(db.approvalRuleSetVersions, snapshot);
 });
 
 test('审批工作时间支持跨班、周末和节假日，临近开始时间不被隐式延长', () => {

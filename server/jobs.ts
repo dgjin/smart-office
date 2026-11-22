@@ -151,7 +151,7 @@ const processJob = async (job: any) => {
       recipients.forEach(userId => notifications.push(notice(`check-in-reminder-${booking.id}-v${scheduleVersion}-${userId}`, userId, '会议签到提醒', `${bookingNoticePurpose(booking)}已开始 ${settings.checkInReminderAfterStartMinutes} 分钟，请完成签到；未签到将在 ${settings.noShowReleaseAfterStartMinutes} 分钟释放。`, 'WARNING')));
     } else if (job.job_type === 'BOOKING_NO_SHOW') {
       const settings = booking.ruleSettingsSnapshot || getCurrentRuleSettings(db.ruleVersions);
-      if (booking.type !== 'ROOM' || booking.status !== 'APPROVED' || booking.checkedInAt || booking.exclusiveAccessType
+      if (booking.type !== 'ROOM' || booking.status !== 'APPROVED' || booking.checkedInAt
         || now < start + settings.noShowReleaseAfterStartMinutes * 60000
         || now < (Date.parse(booking.noShowReleaseNotBefore || '') || 0)) return false;
       const affectedOrders = (db.workOrders || []).filter(order => order.bookingId === booking.id && !['DONE', 'CANCELLED', 'EXCEPTION'].includes(order.status));

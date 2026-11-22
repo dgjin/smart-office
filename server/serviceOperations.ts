@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { ServiceArea, ServiceCatalogItem, ServiceInspection, ServiceShift, User, WorkOrder, WorkOrderStatus } from '../types.ts';
+import { isServiceType } from '../constants.ts';
 import { mutateDb } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
@@ -22,7 +23,7 @@ export const saveServiceCatalogItem = async (input: any, actor: User, editingId?
   if (!current && !actor.role.includes('SYSTEM_ADMIN')) throw new DbError('FORBIDDEN', 403);
   if (current && !actor.role.includes('SYSTEM_ADMIN')) throw new DbError('FORBIDDEN', 403);
   const type = current?.type || input?.type;
-  if (!['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(type)) throw new DbError('INVALID_SERVICE_TYPE', 400);
+  if (!isServiceType(type)) throw new DbError('INVALID_SERVICE_TYPE', 400);
   if (input?.type && current && input.type !== current.type) throw new DbError('SERVICE_TYPE_IMMUTABLE', 409);
   if (!Array.isArray(input?.fields) || input.fields.length > 20) throw new DbError('INVALID_SERVICE_FIELDS', 400);
   const fields = input.fields.map((field: any) => {

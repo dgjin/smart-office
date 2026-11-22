@@ -46,7 +46,10 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
               participants: 6,
               meetingType: 'IMPORTANT',
               confidentialityChoice: 'CONFIDENTIAL',
-              serviceRequirements: [{ type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' }],
+              serviceRequirements: [
+                { type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' },
+                { type: 'VEHICLE', fieldValues: { quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟', serviceLocation: '北门', estimatedCost: '680' } }
+              ],
               exclusiveRequestReason: '临时重要接待',
               auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' },
               requiredFeatures: ['VIDEO'],
@@ -75,7 +78,10 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
     assert.equal(saved.state.turns[1].actions[0].draft.userId, undefined);
     assert.equal(saved.state.turns[1].actions[0].draft.meetingType, 'IMPORTANT');
     assert.equal(saved.state.turns[1].actions[0].draft.confidentialityChoice, undefined);
-    assert.deepEqual(saved.state.turns[1].actions[0].draft.serviceRequirements, [{ type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' }]);
+    assert.deepEqual(saved.state.turns[1].actions[0].draft.serviceRequirements, [
+      { type: 'SIGNAGE', details: '一楼入口指引' }, { type: 'OTHER', details: '席卡' },
+      { type: 'VEHICLE', fieldValues: { quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟', serviceLocation: '北门', estimatedCost: '680' } }
+    ]);
     assert.equal(saved.state.turns[1].actions[0].draft.exclusiveRequestReason, '临时重要接待');
     assert.equal(saved.state.turns[1].actions[0].draft.auditoriumSetup.seatingLayout, 'CLASSROOM');
     assert.equal(saved.state.handled['1-0'], 'dismissed');

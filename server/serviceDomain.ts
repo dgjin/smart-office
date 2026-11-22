@@ -8,7 +8,7 @@ import type {
   User,
   WorkOrder
 } from '../types.ts';
-import { DEFAULT_SERVICE_CATALOG } from '../constants.ts';
+import { DEFAULT_HEAVY_SERVICE_TYPES, DEFAULT_SERVICE_CATALOG } from '../constants.ts';
 import type { OfficeDb } from './tools.ts';
 import { DbError } from './errors.ts';
 import { bookingNoticePurpose } from './confidentiality.ts';
@@ -21,7 +21,10 @@ type ServiceMutationContext = {
 };
 
 export const ensureServiceDomain = (db: OfficeDb) => {
-  if (!db.serviceCatalog) db.serviceCatalog = structuredClone(DEFAULT_SERVICE_CATALOG);
+  if (!db.serviceCatalog) db.serviceCatalog = [];
+  for (const item of DEFAULT_SERVICE_CATALOG) {
+    if (!db.serviceCatalog.some(existing => existing.type === item.type)) db.serviceCatalog.push(structuredClone(item));
+  }
   if (!db.serviceAreas) db.serviceAreas = [];
   if (!db.serviceShifts) db.serviceShifts = [];
   if (!db.serviceInspections) db.serviceInspections = [];
@@ -110,8 +113,8 @@ export const freezeServiceRequirements = (
 export const isHeavyServiceBooking = (booking: Booking, resource?: Resource) =>
   resource?.roomCategory === 'AUDITORIUM'
   || Boolean(booking.auditoriumSetup?.stageRequired || (booking.auditoriumSetup?.rehearsalMinutes || 0) > 0)
-  || (booking.serviceRequirements || []).some(requirement => requirement.catalogSnapshot?.heavyService
-    || ['VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(requirement.type));
+  || (booking.serviceRequirements || []).some(requirement => requirement.catalogSnapshot
+    ? requirement.catalogSnapshot.heavyService : DEFAULT_HEAVY_SERVICE_TYPES.includes(requirement.type));
 
 export const cancellationCutoffMinutes = (booking: Booking, resource: Resource | undefined, settings: {
   standardCancellationCutoffMinutes: number;

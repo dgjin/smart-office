@@ -1,4 +1,5 @@
 import { getDbPool } from './db.ts';
+import { isServiceType } from '../constants.ts';
 import { HttpError } from './http.ts';
 
 const ACTION_TYPES = new Set(['PROPOSE_BOOKING', 'PROPOSE_CANCEL', 'PROPOSE_APPROVAL', 'PROPOSE_CHECK_IN', 'PROPOSE_WORK_ORDER', 'NAVIGATE', 'REFRESH']);
@@ -35,8 +36,14 @@ const sanitizeDraft = (value: any) => {
     if (!Array.isArray(draft.serviceRequirements) || draft.serviceRequirements.length > 20) invalid();
     serviceRequirements = draft.serviceRequirements.map((value: any) => {
       const requirement = record(value);
-      if (!['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(requirement.type)) invalid();
-      return { type: requirement.type, details: text(requirement.details, 500, true) };
+      if (!isServiceType(requirement.type)) invalid();
+      let fieldValues;
+      if (requirement.fieldValues !== undefined) {
+        const values = record(requirement.fieldValues);
+        if (Object.keys(values).length > 20) invalid();
+        fieldValues = Object.fromEntries(Object.entries(values).map(([key, item]) => [text(key, 50), text(item, 500)]));
+      }
+      return { type: requirement.type, details: text(requirement.details, 500, true), ...(fieldValues ? { fieldValues } : {}) };
     });
   }
   let auditoriumSetup;

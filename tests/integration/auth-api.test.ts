@@ -105,6 +105,55 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal(ordinaryWorkspace.users.find((item: any) => item.id === userId).mobile, undefined);
   });
 
+  it('管理审计按组合条件检索并保留脱敏的变更前后内容', async () => {
+    const user = await server.login(userId);
+    const admin = await server.login(adminId);
+    assert.equal((await server.request('/api/audit', { headers: { Cookie: user.cookie } })).status, 403);
+
+    const auditedUser = {
+      id: 'u-audit-before-after', name: '审计变更前员工', email: 'audit-before-after@company.com',
+      department: '审计部', role: ['EMPLOYEE'], mobile: '13800000009'
+    };
+    const start = new Date(Date.now() - 1000).toISOString();
+    assert.equal((await server.request('/api/users', {
+      method: 'POST', headers: { Cookie: admin.cookie }, ...jsonBody({ user: auditedUser })
+    })).status, 201);
+    assert.equal((await server.request(`/api/users/${auditedUser.id}`, {
+      method: 'PUT', headers: { Cookie: admin.cookie }, ...jsonBody({ user: { ...auditedUser, name: '审计变更后员工' } })
+    })).status, 200);
+
+    const queryEvents = async (action: string, entityType = 'USER') => {
+      const params = new URLSearchParams({
+        actorId: adminId, action, entityType, entityId: auditedUser.id,
+        start, end: new Date(Date.now() + 1000).toISOString(), limit: '20'
+      });
+      const response = await server.request(`/api/audit?${params}`, { headers: { Cookie: admin.cookie } });
+      assert.equal(response.status, 200, JSON.stringify(await readJson(response.clone())));
+      return (await readJson(response)).events;
+    };
+    const createdEvents = await queryEvents('USER_CREATE');
+    assert.equal(createdEvents.length, 1);
+    assert.equal(createdEvents[0].actorId, adminId);
+    assert.equal(createdEvents[0].details.before, null);
+    assert.equal(createdEvents[0].details.after.name, auditedUser.name);
+    assert.equal(createdEvents[0].details.after.email, 'a***@company.com');
+    assert.equal(createdEvents[0].details.after.mobile, '138****09');
+
+    const updatedEvents = await queryEvents('USER_UPDATE');
+    assert.equal(updatedEvents.length, 1);
+    assert.equal(updatedEvents[0].details.before.name, '审计变更前员工');
+    assert.equal(updatedEvents[0].details.after.name, '审计变更后员工');
+    assert.equal(updatedEvents[0].details.before.email, 'a***@company.com');
+    assert.equal(updatedEvents[0].details.after.mobile, '138****09');
+    assert.equal(JSON.stringify(updatedEvents).includes(auditedUser.email), false);
+    assert.equal(JSON.stringify(updatedEvents).includes(auditedUser.mobile), false);
+    assert.deepEqual(await queryEvents('USER_CREATE', 'ROLE'), []);
+
+    const invalidRange = new URLSearchParams({ start: '2026-01-02T00:00:00.000Z', end: '2026-01-01T00:00:00.000Z' });
+    assert.equal((await server.request(`/api/audit?${invalidRange}`, { headers: { Cookie: admin.cookie } })).status, 400);
+    assert.equal((await server.request('/api/audit?limit=not-a-number', { headers: { Cookie: admin.cookie } })).status, 400);
+  });
+
   it('由服务端 actor 决定预约人，并隔离通知读写', async () => {
     const user = await server.login(userId);
     const admin = await server.login(adminId);
@@ -117,7 +166,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     const booking = {
       id: crypto.randomUUID(), userId: adminId, resourceId: resource.id, type: 'ROOM',
       startTime: start.toISOString(), endTime: end.toISOString(), status: 'APPROVED',
-      purpose: 'actor 隔离集成测试', participants: 1, meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', overlapParticipantIds: [otherUserId], createdAt: new Date().toISOString(),
+      purpose: 'actor 隔离集成测试', participants: 1, meetingType: 'IMPORTANT', confidentialityChoice: 'NON_CONFIDENTIAL', overlapParticipantIds: [otherUserId], createdAt: new Date().toISOString(),
       currentNodeIndex: 99, approvalHistory: [{ nodeName: '伪造', approverName: '伪造', status: 'APPROVED', timestamp: new Date().toISOString() }]
     };
     const createdResponse = await server.request('/api/bookings', { method: 'POST', headers: { Cookie: user.cookie }, ...jsonBody({ booking }) });

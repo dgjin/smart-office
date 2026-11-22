@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Booking, Resource, User } from '../types.ts';
-import { generateReport } from '../utils/reports.ts';
+import { calendarReportRange, generateReport, localDateInputValue } from '../utils/reports.ts';
 import { escapeCalendarParameter, escapeCalendarText, generateBookingIcs } from '../utils/calendar.ts';
 
 const localIso = (day: number, hour = 0, minute = 0) =>
@@ -189,6 +189,19 @@ test('报表不修改输入且拒绝无效范围', () => {
   generateReport(bookings, resources, users, range);
   assert.equal(JSON.stringify({ bookings, resources, users }), snapshot);
   assert.throws(() => generateReport(bookings, resources, users, { start: range.end, end: range.start }), RangeError);
+});
+
+test('自然日、自然周和自然月共用本地日历边界', () => {
+  assert.deepEqual(calendarReportRange('DAY', '2026-01-10'), { start: localIso(10), end: localIso(11) });
+  assert.deepEqual(calendarReportRange('WEEK', '2026-01-11'), { start: localIso(5), end: localIso(12) });
+  assert.deepEqual(calendarReportRange('MONTH', '2026-01-31'), { start: localIso(1), end: new Date(2026, 1, 1).toISOString() });
+  assert.equal(localDateInputValue(new Date(2026, 0, 2, 3, 4, 5)), '2026-01-02');
+});
+
+test('自然周期拒绝不存在或格式错误的基准日期', () => {
+  for (const anchor of ['2026-02-30', '2026-13-01', '2026-1-01', 'not-a-date', '']) {
+    assert.throws(() => calendarReportRange('DAY', anchor), RangeError, anchor);
+  }
 });
 
 const icsBooking = () => makeBooking({

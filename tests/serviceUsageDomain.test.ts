@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { DEFAULT_RULE_SETTINGS } from '../constants.ts';
+import { DEFAULT_RULE_SETTINGS, DEFAULT_SERVICE_CATALOG } from '../constants.ts';
 import { DbError } from '../server/errors.ts';
 import {
   assertCancellationAuthorized, createBookingWorkOrders, freezeServiceRequirements,
@@ -9,7 +9,7 @@ import {
 import { applyWorkOrderTransition } from '../server/serviceOperations.ts';
 import type { OfficeDb } from '../server/tools.ts';
 import { completeBookingUsage, recordCheckIn, releaseBooking } from '../server/usageDomain.ts';
-import type { Booking, Resource, User, WorkOrder } from '../types.ts';
+import type { Booking, Resource, ServiceType, User, WorkOrder } from '../types.ts';
 
 const requester: User = {
   id: 'u1', name: '申请人', email: 'u1@example.com', role: ['EMPLOYEE'], department: '市场部',
@@ -64,6 +64,40 @@ test('服务目录在提交时冻结，字段和资源范围严格校验且升�
   assertDbError('SERVICE_FIELD_REQUIRED', () => freezeServiceRequirements(db, [{ type: 'SIGNAGE' }], resource));
   assertDbError('INVALID_SERVICE_FIELD_VALUE', () => freezeServiceRequirements(db, [{ type: 'TEA', fieldValues: { servings: '-1' } }], resource));
   assertDbError('SERVICE_NOT_AVAILABLE_FOR_RESOURCE', () => freezeServiceRequirements(db, [{ type: 'TEA' }], { ...resource, type: 'DESK' }));
+});
+
+test('八类专项会务统一冻结数量、单位、规格、时间、地点和预估成本，既有目录不被覆盖', () => {
+  const types: ServiceType[] = ['VEHICLE', 'NAMEPLATE', 'FURNITURE', 'WATER', 'STATIONERY', 'RECEPTION', 'ON_DUTY', 'AUDITORIUM'];
+  const db = makeDb();
+  const customizedTea = structuredClone(DEFAULT_SERVICE_CATALOG.find(item => item.type === 'TEA')!);
+  customizedTea.name = '既有定制茶水';
+  db.serviceCatalog = [customizedTea];
+  const frozen = freezeServiceRequirements(db, types.map((type, index) => {
+    const catalog = DEFAULT_SERVICE_CATALOG.find(item => item.type === type)!;
+    return {
+      type,
+      fieldValues: {
+        quantity: String(index + 1), unit: catalog.fields.find(field => field.key === 'unit')!.options![0],
+        specification: `${catalog.name}规格`, serviceTime: '2026-11-24 08:30 前',
+        serviceLocation: '主楼 10层', estimatedCost: String(100 + index), notes: `${catalog.name}补充`
+      }
+    };
+  }), { ...resource, roomCategory: 'AUDITORIUM' });
+  assert.equal(db.serviceCatalog!.length, DEFAULT_SERVICE_CATALOG.length);
+  assert.equal(db.serviceCatalog!.find(item => item.type === 'TEA')!.name, '既有定制茶水');
+  assert.deepEqual(frozen.map(item => item.type), types);
+  frozen.forEach((item, index) => {
+    assert.equal(item.fieldValues?.quantity, String(index + 1));
+    assert.equal(item.fieldValues?.specification, `${item.catalogSnapshot?.name}规格`);
+    assert.equal(item.fieldValues?.serviceLocation, '主楼 10层');
+    assert.equal(item.fieldValues?.estimatedCost, String(100 + index));
+    assert.equal(item.catalogSnapshot?.catalogVersion, 1);
+    assert.ok(item.catalogSnapshot?.responsibleRole);
+    const current = db.serviceCatalog!.find(catalog => catalog.type === item.type)!;
+    current.fields.find(field => field.key === 'quantity')!.label = '新版数量';
+    assert.equal(item.catalogSnapshot?.fields.find(field => field.key === 'quantity')?.label, '数量');
+  });
+  assertDbError('SERVICE_NOT_AVAILABLE_FOR_RESOURCE', () => freezeServiceRequirements(db, [{ type: 'AUDITORIUM' }], resource));
 });
 
 test('工单按预约版本幂等补建，SLA 任务携带版本且历史取消单保留', async () => {

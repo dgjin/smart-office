@@ -73,6 +73,11 @@ export const resetTestDb = async () => {
     env: { ...process.env, NODE_ENV: 'development' },
     timeout: 30_000
   });
+  await exec(process.execPath, ['scripts/db/seed-hq3d.ts'], {
+    cwd: root,
+    env: { ...process.env, NODE_ENV: 'development' },
+    timeout: 30_000
+  });
 };
 
 const freePort = async () => {

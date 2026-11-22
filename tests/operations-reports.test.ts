@@ -123,8 +123,12 @@ test('多维报表先过滤涉密预约，再对账计划、签到、实际使�
   assert.equal(early.serviceOrderCount, 2);
   assert.equal(early.serviceCost, 32.5);
   assert.equal(early.reconciliationStatus, '提前结束');
+  assert.equal(early.status, 'COMPLETED');
+  assert.equal(early.displayStatus, 'ENDED_EARLY');
   assert.equal(report.bookings.find(item => item.id === 'b-pending-usage')?.reconciliationStatus, '待确认实际使用');
+  assert.equal(report.bookings.find(item => item.id === 'b-pending-usage')?.displayStatus, 'COMPLETED');
   assert.equal(report.bookings.find(item => item.id === 'b-no-show')?.reconciliationStatus, '未签到释放');
+  assert.equal(report.bookings.find(item => item.id === 'b-no-show')?.displayStatus, 'NO_SHOW');
 
   assert.equal(row(report, 'BUILDING_FLOOR', '1号楼 3层')?.bookingCount, 1);
   assert.equal(row(report, 'RESOURCE_TYPE', 'DESK')?.bookingCount, 1);
@@ -136,6 +140,97 @@ test('多维报表先过滤涉密预约，再对账计划、签到、实际使�
   assert.equal(row(report, 'USAGE', '提前结束')?.actualHours, 0.8);
   assert.equal(report.checkIns.length, 4);
   assert.equal(report.services.length, 2);
+});
+
+test('服务明细从工单冻结快照导出结构字段，目录升级和实际成本互不改写', async () => {
+  const db = makeDb();
+  db.workOrders = [workOrder({
+    id: 'wo-vehicle', type: 'VEHICLE', title: '项目复盘车辆服务', costAmount: 720.5,
+    executionResult: '两车均已准时到达',
+    requirementSnapshot: {
+      type: 'VEHICLE',
+      fieldValues: {
+        quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '2026-01-10 08:30',
+        serviceLocation: '主楼北门', estimatedCost: '680', legacyCode: 'A-07'
+      },
+      catalogSnapshot: {
+        catalogItemId: 'service-vehicle', catalogVersion: 3, name: '历史车辆保障',
+        responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 15, heavyService: true, cancellable: true,
+        fields: [
+          { key: 'quantity', label: '数量', type: 'NUMBER', required: true },
+          { key: 'unit', label: '单位', type: 'SELECT', required: true, options: ['辆'] },
+          { key: 'specification', label: '规格', type: 'TEXT', required: true },
+          { key: 'serviceTime', label: '服务时间', type: 'TEXT', required: true },
+          { key: 'serviceLocation', label: '服务地点', type: 'TEXT', required: true },
+          { key: 'estimatedCost', label: '预估成本（元）', type: 'NUMBER', required: false },
+          { key: 'legacyCode', label: '历史调度号', type: 'TEXT', required: false }
+        ]
+      }
+    }
+  })];
+  db.serviceCatalog = [{ ...structuredClone(db.workOrders[0].requirementSnapshot!.catalogSnapshot!), id: 'service-vehicle', type: 'VEHICLE', version: 99, name: '当前车辆服务', fields: [], resourceTypes: ['ROOM'], updatedAt: iso(10), updatedBy: 'admin' } as any];
+  const report = buildReport(db);
+  const service = report.services[0];
+  assert.equal(service.catalogVersion, 3);
+  assert.equal(service.catalogName, '历史车辆保障');
+  assert.equal(service.quantity, '2');
+  assert.equal(service.unit, '辆');
+  assert.equal(service.specification, '七座商务车');
+  assert.equal(service.serviceLocation, '主楼北门');
+  assert.equal(service.estimatedCost, 680);
+  assert.equal(service.costAmount, 720.5);
+  assert.match(service.requirementDetails, /历史调度号：A-07/);
+  assert.equal(report.supplies.length, 1);
+  const supply = report.supplies[0];
+  assert.equal(supply.serviceName, '历史车辆保障');
+  assert.equal(supply.catalogItemId, 'service-vehicle');
+  assert.equal(supply.catalogVersion, 3);
+  assert.equal(supply.quantityField, 'quantity');
+  assert.equal(supply.quantityLabel, '数量');
+  assert.equal(supply.quantity, 2);
+  assert.equal(supply.unit, '辆');
+  assert.equal(supply.timeSlot, '08:00-12:00');
+  assert.equal(supply.orderCount, 1);
+  assert.equal(supply.doneCount, 1);
+  assert.equal(supply.exceptionCount, 0);
+  const csv = operationsReportCsv(report);
+  assert.match(csv, /"备料统计"\r\n"服务类型","目录名称"/);
+  assert.ok(csv.includes('"历史车辆保障","service-vehicle","3","quantity","数量","辆","08:00-12:00","2","1","0","0","0","1","0","0"'));
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(await xlsxBuffer(report));
+  const supplySheet = workbook.getWorksheet('备料统计')!;
+  assert.equal(supplySheet.getCell('C2').value, 'service-vehicle');
+  assert.equal(supplySheet.getCell('D2').value, 3);
+  assert.equal(supplySheet.getCell('G2').value, '辆');
+  assert.equal(supplySheet.getCell('H2').value, '08:00-12:00');
+  assert.equal(supplySheet.getCell('I2').value, 2);
+  assert.equal(supplySheet.getCell('J2').value, 1);
+  assert.equal(supplySheet.getCell('N2').value, 1);
+  const sheet = workbook.getWorksheet('服务明细')!;
+  assert.equal(sheet.getCell('C2').value, '历史车辆保障');
+  assert.equal(sheet.getCell('E2').value, 3);
+  assert.equal(sheet.getCell('I2').value, '2');
+  assert.equal(sheet.getCell('J2').value, '辆');
+  assert.equal(sheet.getCell('N2').value, 680);
+  assert.match(String(sheet.getCell('O2').value), /历史调度号：A-07/);
+  assert.equal(sheet.getCell('T2').value, '两车均已准时到达');
+  assert.equal(sheet.getCell('V2').value, 720.5);
+});
+
+test('报表展示状态区分主动取消、确认未使用和人工释放且保留主状态', () => {
+  const db = makeDb();
+  db.bookings = [
+    booking({ id: 'b-cancelled', status: 'CANCELLED', releaseType: 'CANCELLED', endedEarlyAt: undefined }),
+    booking({ id: 'b-unused', status: 'CANCELLED', releaseType: 'UNUSED_CONFIRMED', endedEarlyAt: undefined }),
+    booking({ id: 'b-released', status: 'CANCELLED', releaseType: 'MANUAL_EXCEPTION', endedEarlyAt: undefined })
+  ];
+  const report = buildReport(db);
+  assert.deepEqual(report.bookings.map(item => [item.id, item.status, item.displayStatus]), [
+    ['b-cancelled', 'CANCELLED', 'CANCELLED'],
+    ['b-unused', 'CANCELLED', 'RELEASED'],
+    ['b-released', 'CANCELLED', 'RELEASED']
+  ]);
+  assert.ok(report.bookings.every(item => item.reconciliationStatus === '无需使用事实'));
 });
 
 test('对账识别独立事实不一致、使用事实缺口和签到事实缺口', () => {
@@ -186,22 +281,25 @@ test('CSV 保留中文、BOM 与 CRLF，并中和公式前缀而不改数值符�
   assert.doesNotMatch(csv, /,"'-1"/);
 });
 
-test('XLSX 回读六个工作表、中文时间和公式安全文本', async () => {
+test('XLSX 回读七个工作表、中文时间和公式安全文本', async () => {
   const report = buildReport();
   report.bookings[0].purpose = '=2+2';
   const buffer = await xlsxBuffer(report);
   assert.ok(buffer.length > 10_000);
   const workbook = new ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);
-  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['多维汇总', '预约对账', '签到明细', '服务明细', '差异清单', '导出说明']);
+  assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['多维汇总', '预约对账', '签到明细', '备料统计', '服务明细', '差异清单', '导出说明']);
   assert.equal(workbook.getWorksheet('预约对账')!.rowCount, report.bookings.length + 1);
   assert.equal(workbook.getWorksheet('签到明细')!.rowCount, report.checkIns.length + 1);
+  assert.equal(workbook.getWorksheet('备料统计')!.rowCount, report.supplies.length + 1);
   assert.equal(workbook.getWorksheet('服务明细')!.rowCount, report.services.length + 1);
   assert.equal(workbook.getWorksheet('差异清单')!.rowCount, report.differences.length + 1);
   const bookingSheet = workbook.getWorksheet('预约对账')!;
   assert.equal(bookingSheet.getCell('B2').value, "'=2+2");
   assert.equal(typeof bookingSheet.getCell('B2').value, 'string');
-  assert.match(String(bookingSheet.getCell('J2').value), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal(bookingSheet.getCell('I2').value, '提前结束');
+  assert.equal(bookingSheet.getCell('J2').value, '已完成');
+  assert.match(String(bookingSheet.getCell('K2').value), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
   assert.equal(workbook.getWorksheet('导出说明')!.getCell('B5').value, 42);
 });
 

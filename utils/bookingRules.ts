@@ -1,4 +1,32 @@
-import type { Booking, Resource, RoomFeature } from '../types';
+import type { Booking, BookingDisplayStatus, Resource, RoomFeature } from '../types';
+
+export const BOOKING_DISPLAY_STATUS_LABELS: Record<BookingDisplayStatus, string> = {
+  PENDING: '待审批',
+  UPCOMING: '待开始',
+  IN_PROGRESS: '进行中',
+  NO_SHOW: '已爽约',
+  RELEASED: '已释放',
+  ENDED_EARLY: '提前结束',
+  COMPLETED: '已完成',
+  CANCELLED: '已取消',
+  REJECTED: '已驳回'
+};
+
+export const getBookingDisplayStatus = (booking: Booking, now: Date | string | number = new Date()): BookingDisplayStatus => {
+  if (booking.noShow || booking.releaseType === 'NO_SHOW') return 'NO_SHOW';
+  if (booking.endedEarlyAt) return 'ENDED_EARLY';
+  if (booking.releaseType === 'UNUSED_CONFIRMED' || booking.releaseType === 'MANUAL_EXCEPTION') return 'RELEASED';
+  if (booking.status === 'CANCELLED') return 'CANCELLED';
+  if (booking.status === 'REJECTED') return 'REJECTED';
+  if (booking.status === 'PENDING') return 'PENDING';
+  if (booking.status === 'COMPLETED') return 'COMPLETED';
+  const nowMs = new Date(now).getTime();
+  const startMs = Date.parse(booking.startTime);
+  const endMs = Date.parse(booking.actualEndTime || booking.endTime);
+  if (nowMs < startMs) return 'UPCOMING';
+  if (nowMs < endMs) return 'IN_PROGRESS';
+  return 'COMPLETED';
+};
 
 const CHINA_DAY_OFFSET_MS = 8 * 3600000;
 export const bookingDateKey = (value: Date | string | number) => {
@@ -51,6 +79,12 @@ export const resourceSupportsFeature = (resource: Pick<Resource, 'features'>, fe
 export const getBookingRequiredFeatures = (booking: Pick<Booking, 'requiredFeatures' | 'isVideoConference'>): RoomFeature[] =>
   [...new Set([...(booking.requiredFeatures || []), ...(booking.isVideoConference ? ['VIDEO' as const] : [])])];
 
+export const isValidBookingPurpose = (purpose: unknown) => {
+  if (typeof purpose !== 'string') return false;
+  const trimmed = purpose.trim();
+  return trimmed.length > 0 && trimmed.length <= 200 && !['会议', '开会'].includes(trimmed.replace(/\s+/g, ''));
+};
+
 export interface BookingResourceRequirements {
   startTime: string;
   endTime: string;
@@ -68,8 +102,9 @@ export const validateBookingResource = (resource: Resource | undefined, booking:
   if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start) return 'INVALID_TIME_RANGE';
   if (resource.status === 'MAINTENANCE') return 'RESOURCE_MAINTENANCE';
   if (!isResourceAcceptingBookings(resource)) return 'RESOURCE_UNAVAILABLE';
-  if (booking.participants !== undefined && (!Number.isInteger(booking.participants) || booking.participants < 1)) return 'INVALID_PARTICIPANTS';
-  if (resource.type === 'ROOM' && (booking.participants || 1) > (resource.capacity || 0)) return 'CAPACITY_EXCEEDED';
+  const participants = booking.participants;
+  if (participants === undefined || !Number.isInteger(participants) || participants < 1) return 'INVALID_PARTICIPANTS';
+  if (resource.type === 'ROOM' && participants > (resource.capacity || 0)) return 'CAPACITY_EXCEEDED';
   if (getBookingRequiredFeatures(booking).some(feature => !resourceSupportsFeature(resource, feature))) return 'REQUIRED_FEATURE_UNAVAILABLE';
   return null;
 };

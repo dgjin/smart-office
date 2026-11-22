@@ -126,6 +126,15 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
       }
     });
     expect(overlapResponse.status, JSON.stringify(await overlapResponse.clone().json())).toBe(201);
+    const quotaFull = schedule(11, 8, 240);
+    const quotaFullResponse = await api('/api/bookings', 'POST', requester, {
+      booking: {
+        id: crypto.randomUUID(), resourceId: 'r1', type: 'ROOM', startTime: quotaFull.start.toISOString(), endTime: quotaFull.end.toISOString(),
+        status: 'APPROVED', purpose: 'GAP02浏览器A会议室额度已满', participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 99,
+        approvalHistory: [], meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL'
+      }
+    });
+    expect(quotaFullResponse.status, JSON.stringify(await quotaFullResponse.clone().json())).toBe(201);
   });
 
   test.afterAll(async () => {
@@ -137,7 +146,17 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     await login(page);
     const purpose = `MRP2桌面验收 ${Date.now()}`;
     const dialog = await openBooking(page, 'Alpha 战略会议室');
-    await dialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    const purposeInput = dialog.getByRole('textbox', { name: '申请用途' });
+    const participantsInput = dialog.getByLabel('参与人数', { exact: true });
+    await expect(participantsInput).toHaveValue('');
+    await dialog.getByRole('button', { name: '确认预约', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText('有明确主题的申请用途');
+    await expect(purposeInput).toBeFocused();
+    await purposeInput.fill('会 议');
+    await dialog.getByRole('button', { name: '确认预约', exact: true }).click();
+    await expect(dialog.getByRole('alert')).toContainText('不能只填写“会议”或“开会”');
+    await expect(purposeInput).toBeFocused();
+    await purposeInput.fill(purpose);
     await dialog.getByRole('button', { name: '确认预约', exact: true }).click();
     await expect(dialog.getByRole('alert')).toContainText('请选择普通、重要或涉密会议类型');
     await expect(page.locator('#booking-meeting-type')).toBeFocused();
@@ -149,6 +168,14 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     await expect(dialog.getByLabel('联系人快照说明')).toContainText('李员工');
     await expect(dialog.getByLabel('联系人快照说明')).toContainText('010-88886668');
     await expect(dialog.getByLabel('联系人快照说明')).toContainText('13800000003');
+    for (const invalid of ['', '0', '-1', '1.5']) {
+      await participantsInput.fill(invalid);
+      await dialog.getByRole('button', { name: '确认预约', exact: true }).click();
+      await expect(dialog.getByRole('alert')).toContainText('参与人数必填，且必须为大于 0 的整数');
+      await expect(participantsInput).toBeFocused();
+      await expect(participantsInput).toHaveAttribute('aria-invalid', 'true');
+    }
+    await participantsInput.fill('4');
     await fillSchedule(dialog, schedule(7, 10), '11:00');
     await dialog.getByRole('button', { name: /^其他会务服务/ }).click();
     await dialog.getByRole('button', { name: '确认预约', exact: true }).click();
@@ -191,12 +218,57 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     expect(errors).toEqual([]);
   });
 
+  test('A会议室达到部门日额度后表单明确阻断且B会议室可独立提交', async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on('pageerror', error => pageErrors.push(error.message));
+    await login(page);
+    const value = schedule(11, 13);
+    const roomA = await openBooking(page, 'Alpha 战略会议室');
+    await roomA.getByRole('textbox', { name: '申请用途' }).fill(`GAP02浏览器A超额 ${Date.now()}`);
+    await roomA.getByLabel('参与人数', { exact: true }).fill('4');
+    await roomA.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
+    await roomA.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
+    await fillSchedule(roomA, value, '14:00');
+    await expect(roomA.getByLabel('部门额度提示')).toContainText('本部门在当前会议室的每日净额度');
+    await expect(roomA.getByLabel('部门额度提示')).toContainText('不跨其他会议室扣减');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/bookings') && response.status() === 409),
+      roomA.getByRole('button', { name: '确认预约', exact: true }).click()
+    ]);
+    await expect(roomA.getByRole('alert')).toContainText('部门在当前会议室当日净预约额度不足');
+    await roomA.getByRole('button', { name: '取消', exact: true }).click();
+
+    const purpose = `GAP02浏览器B独立额度 ${Date.now()}`;
+    const roomB = await openBooking(page, 'Beta 灵感会议室');
+    await roomB.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await roomB.getByLabel('参与人数', { exact: true }).fill('4');
+    await roomB.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
+    await roomB.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
+    await fillSchedule(roomB, value, '14:00');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/bookings') && response.status() === 201),
+      roomB.getByRole('button', { name: '确认预约', exact: true }).click()
+    ]);
+    const saved = await bookingPayload(purpose);
+    expect(saved.resourceId).toBe('r2');
+    expect(saved.quotaDetails[0].resourceId).toBe('r2');
+    expect(saved.quotaDetails[0].usedBeforeMinutes).toBe(0);
+    expect(saved.quotaDetails[0].remainingMinutes).toBe(180);
+    expect(saved.status).toBe('APPROVED');
+    expect(saved.approvalWorkflow).toEqual([]);
+    expect(saved.approvalHistory[0].nodeName).toBe('系统自动核准');
+    await page.getByRole('button', { name: '通知中心', exact: true }).click();
+    await expect(page.getByRole('button', { name: /预约已自动核准 资源 Beta 灵感会议室/ })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+
   test('礼堂参数和专属临时授权通过桌面表单提交并保留审计', async ({ page }) => {
     const errors = monitorPage(page);
     await login(page);
     const hallPurpose = `MRP2礼堂验收 ${Date.now()}`;
     const hall = await openBooking(page, 'MRP2浏览器礼堂');
     await hall.getByRole('textbox', { name: '申请用途' }).fill(hallPurpose);
+    await hall.getByLabel('参与人数', { exact: true }).fill('20');
     await hall.getByLabel('会议类型', { exact: true }).selectOption('IMPORTANT');
     await hall.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
     await fillSchedule(hall, schedule(9, 10), '12:00');
@@ -221,9 +293,13 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     const exclusivePurpose = `MRP2专属验收 ${Date.now()}`;
     const exclusive = await openBooking(page, 'MRP2浏览器专属室');
     await exclusive.getByRole('textbox', { name: '申请用途' }).fill(exclusivePurpose);
+    await exclusive.getByLabel('参与人数', { exact: true }).fill('4');
     await exclusive.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
     await exclusive.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
     await expect(exclusive.locator('#booking-exclusive-reason')).toHaveAttribute('placeholder', /24 小时内可申请/);
+    await exclusive.getByRole('button', { name: '确认预约', exact: true }).click();
+    await expect(exclusive.locator('#booking-has-leader')).toBeFocused();
+    await exclusive.getByRole('button', { name: '公司领导参会', exact: true }).click();
     await exclusive.getByRole('button', { name: '确认预约', exact: true }).click();
     await expect(exclusive.locator('#booking-exclusive-reason')).toBeFocused();
     await exclusive.locator('#booking-exclusive-reason').fill('临时重要接待');
@@ -236,6 +312,7 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     ]);
     const exclusiveSaved = await bookingPayload(exclusivePurpose);
     expect(exclusiveSaved.exclusiveAccessType).toBe('TEMPORARY');
+    expect(exclusiveSaved.hasLeader).toBe(true);
     expect(exclusiveSaved.exclusiveRequestReason).toBe('临时重要接待');
     const audits = await queryTestDb<any[]>('SELECT actor_id, details FROM audit_events WHERE action = ? AND entity_id = ?', ['EXCLUSIVE_ACCESS_REQUEST', exclusiveSaved.id]);
     expect(audits).toHaveLength(1);
@@ -258,6 +335,7 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     expect(dimensions.scroll).toBeGreaterThan(dimensions.client);
     expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(375);
     await dialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await dialog.getByLabel('参与人数', { exact: true }).fill('4');
     await dialog.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
     await dialog.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
     await fillSchedule(dialog, schedule(10, 14), '15:00');
@@ -291,7 +369,7 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
               resourceId: combinedId, startTime: value.start.toISOString(), endTime: value.end.toISOString(), purpose,
               participants: 20, meetingType: 'IMPORTANT', confidentialityChoice: 'CONFIDENTIAL',
               serviceRequirements: [{ type: 'SIGNAGE', details: '东门指引' }, { type: 'OTHER', details: '嘉宾席卡' }],
-              exclusiveRequestReason: '临时重要接待', auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' },
+              hasLeader: true, exclusiveRequestReason: '临时重要接待', auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' },
               needsTeaService: true, isVideoConference: true, requiredFeatures: ['VIDEO']
             }
           }] }

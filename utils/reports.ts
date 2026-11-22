@@ -10,6 +10,26 @@ export interface DailyOpeningHours {
   end: string;
 }
 
+export type CalendarReportPeriod = 'DAY' | 'WEEK' | 'MONTH';
+
+export const localDateInputValue = (date: Date) => {
+  const pad = (part: number) => String(part).padStart(2, '0');
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+};
+
+export const calendarReportRange = (period: CalendarReportPeriod, anchor: string) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(anchor)) throw new RangeError('Invalid report anchor date');
+  const start = new Date(`${anchor}T00:00:00`);
+  if (!Number.isFinite(start.getTime()) || localDateInputValue(start) !== anchor) throw new RangeError('Invalid report anchor date');
+  if (period === 'WEEK') start.setDate(start.getDate() - ((start.getDay() + 6) % 7));
+  if (period === 'MONTH') start.setDate(1);
+  const end = new Date(start);
+  if (period === 'DAY') end.setDate(end.getDate() + 1);
+  else if (period === 'WEEK') end.setDate(end.getDate() + 7);
+  else end.setMonth(end.getMonth() + 1);
+  return { start: start.toISOString(), end: end.toISOString() };
+};
+
 export type ReportDimension = 'OVERALL' | 'RESOURCE' | 'BUILDING_FLOOR' | 'RESOURCE_TYPE' | 'ROOM_CATEGORY' | 'TIME_SLOT' | 'DEPARTMENT' | 'SERVICE' | 'USAGE';
 
 export interface ReportRow {

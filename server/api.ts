@@ -24,7 +24,7 @@ import { logEvent, observeRequest, requestIdFor } from './observability.ts';
 import { saveServiceArea, saveServiceCatalogItem, saveServiceShift, transitionWorkOrder, updateServiceInspection } from './serviceOperations.ts';
 import { checkInBooking, completeBookingEarly, confirmBookingUsage, createUsageAppeal, releaseBookingByActor, resolveUsageAppeal } from './usageOperations.ts';
 import { actOnException, getDashboard, getExceptionCenter } from './operations.ts';
-import { createDevice, getDeviceSnapshot, heartbeatDevice, listDevices, revokeDevice, rotateDevice } from './devices.ts';
+import { createDevice, getDeviceSnapshot, heartbeatDevice, listDevices, restartDevice, revokeDevice, rotateDevice } from './devices.ts';
 import { getOperationsReport, operationsReportCsv, writeOperationsReportXlsx } from './reports.ts';
 import { applyOrganizationSync, listOrganizationSyncBatches, previewOrganizationSync } from './organizationSync.ts';
 import { handleOaCallback } from './oaCallbacks.ts';
@@ -155,12 +155,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 201, await createDevice(actor, await readJson(req)));
       return true;
     }
-    const deviceMatch = url.pathname.match(/^\/api\/devices\/([^/]+)\/(rotate|revoke)$/);
+    const deviceMatch = url.pathname.match(/^\/api\/devices\/([^/]+)\/(rotate|restart|revoke)$/);
     if (deviceMatch && req.method === 'POST') {
       requireAdmin(actor);
       const id = decodeURIComponent(deviceMatch[1]);
       await readJson(req);
-      const device = deviceMatch[2] === 'rotate' ? await rotateDevice(actor, id) : { device: await revokeDevice(actor, id) };
+      const device = deviceMatch[2] === 'rotate' ? await rotateDevice(actor, id)
+        : deviceMatch[2] === 'restart' ? { device: await restartDevice(actor, id) }
+          : { device: await revokeDevice(actor, id) };
       send(res, 200, device);
       return true;
     }
@@ -247,7 +249,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
     if (url.pathname === '/api/audit' && req.method === 'GET') {
       requireAdmin(actor);
-      send(res, 200, { events: await listAuditEvents(Number(url.searchParams.get('limit')) || 200) });
+      send(res, 200, { events: await listAuditEvents({
+        actorId: url.searchParams.get('actorId') || undefined,
+        action: url.searchParams.get('action') || undefined,
+        entityType: url.searchParams.get('entityType') || undefined,
+        entityId: url.searchParams.get('entityId') || undefined,
+        start: url.searchParams.get('start') || undefined,
+        end: url.searchParams.get('end') || undefined,
+        limit: url.searchParams.has('limit') ? Number(url.searchParams.get('limit')) : undefined
+      }) });
       return true;
     }
     if (url.pathname === '/api/rules' && req.method === 'GET') {

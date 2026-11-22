@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Sparkles, X, Send, Check, TriangleAlert, Wrench, ChevronDown, Loader2, Trash2, Pencil, RotateCcw } from 'lucide-react';
-import type { AuditoriumSetup, Booking, BookingServiceRequirement, Resource, RoomFeature, User } from '../types';
+import type { AuditoriumSetup, Booking, BookingServiceRequirement, Resource, RoomFeature, ServiceCatalogItem, User } from '../types';
+import { SERVICE_TYPE_LABELS } from '../constants';
 import { formatDate, formatTime } from '../utils/dateTime';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { validateBookingDraft } from '../utils/bookingDraft';
@@ -65,6 +66,7 @@ interface ChatDockProps {
   resources: Resource[];
   bookings: Booking[];
   users: User[];
+  serviceCatalog: ServiceCatalogItem[];
   onAction: (action: AgentAction) => void | Promise<void>;
   onNavigate: (view: string) => void;
 }
@@ -137,11 +139,12 @@ const RichText = ({ text }: { text: string }) => (
   </div>
 );
 
-const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, state, error, onChange, onConfirm, onDiscard, onRestore }: {
+const BookingDraftCard = ({ action, resources, bookings, users, serviceCatalog, currentUserId, state, error, onChange, onConfirm, onDiscard, onRestore }: {
   action: AgentAction & { draft: BookingDraft };
   resources: Resource[];
   bookings: Booking[];
   users: User[];
+  serviceCatalog: ServiceCatalogItem[];
   currentUserId: string;
   state?: ActionState;
   error?: string;
@@ -161,8 +164,15 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
   const services = [...(draft.serviceRequirements || [])];
   if (draft.needsTeaService && !services.some(item => item.type === 'TEA')) services.push({ type: 'TEA' });
   if (draft.isVideoConference && !services.some(item => item.type === 'VIDEO')) services.push({ type: 'VIDEO' });
-  const serviceLabels: Record<BookingServiceRequirement['type'], string> = { TEA: '茶水服务', VIDEO: '视频会议', SIGNAGE: '指引标识', SECURITY: '安保', OTHER: '其他服务' };
-  const serviceSummary = services.map(item => `${serviceLabels[item.type]}${item.details ? `：${item.details}` : ''}`);
+  const serviceLabels = SERVICE_TYPE_LABELS;
+  const applicableServiceCatalog = serviceCatalog.filter(item => editResource && item.resourceTypes.includes(editResource.type)
+    && (!item.roomCategories?.length || (editResource.roomCategory && item.roomCategories.includes(editResource.roomCategory))));
+  const serviceSummary = services.map(item => {
+    const snapshot = item.catalogSnapshot;
+    const fields = snapshot?.fields || serviceCatalog.find(catalog => catalog.type === item.type)?.fields || [];
+    const details = Object.entries(item.fieldValues || {}).map(([key, value]) => `${fields.find(field => field.key === key)?.label || key}：${value}`).join('；') || item.details;
+    return `${snapshot?.name || serviceLabels[item.type]}${details ? `：${details}` : ''}`;
+  });
   if (draft.hasLeader) serviceSummary.push(`领导参会${draft.leaderDetails ? `：${draft.leaderDetails}` : ''}`);
   const start = new Date(draft.startTime);
   const end = new Date(draft.endTime);
@@ -191,8 +201,17 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
       ...(editDraft.isVideoConference ? ['VIDEO' as const] : [])
     ])];
     const additionalServices = (editDraft.serviceRequirements || []).filter(item => !['TEA', 'VIDEO'].includes(item.type));
-    if (additionalServices.some(item => item.type === 'OTHER' && !item.details?.trim())) {
+    if (additionalServices.some(item => item.type === 'OTHER' && !item.details?.trim() && !item.fieldValues?.notes?.trim())) {
       return setValidationError('其他服务需要填写具体说明');
+    }
+    for (const requirement of additionalServices) {
+      const catalog = applicableServiceCatalog.find(item => item.type === requirement.type);
+      if (!catalog) return setValidationError(`${serviceLabels[requirement.type]}不适用于当前资源`);
+      for (const field of catalog.fields) {
+        const value = String(requirement.fieldValues?.[field.key] ?? (field.key === 'notes' ? requirement.details || '' : '')).trim();
+        if (field.required && !value) return setValidationError(`请填写${catalog.name}的“${field.label}”`);
+        if (value && field.type === 'NUMBER' && (!Number.isFinite(Number(value)) || Number(value) < 0)) return setValidationError(`${catalog.name}的“${field.label}”必须是非负数字`);
+      }
     }
     const serviceRequirements = [
       ...additionalServices.map(item => ({ ...item, details: item.details?.trim() || undefined })),
@@ -201,7 +220,6 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
     ];
     const revised = {
       ...editDraft,
-      participants: editDraft.participants ?? 1,
       requiredFeatures,
       serviceRequirements,
       exclusiveRequestReason: editResource?.isExclusive ? editDraft.exclusiveRequestReason?.trim() : undefined,
@@ -228,7 +246,7 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
       await onConfirm({
         ...action,
         draft,
-        summary: `${resource?.name || draft.resourceId} · ${range} · ${draft.participants || 1} 人 · 用途：${draft.purpose}`
+        summary: `${resource?.name || draft.resourceId} · ${range} · ${draft.participants} 人 · 用途：${draft.purpose}`
       });
     } finally {
       setBusy(false);
@@ -278,7 +296,7 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
             </label>
           </div>
           <label>参与人数
-            <input type="number" min="1" value={editDraft.participants || 1} onChange={event => setEditDraft(prev => ({ ...prev, participants: Number(event.target.value) }))} />
+            <input type="number" min="1" step="1" required value={editDraft.participants ?? ''} onChange={event => setEditDraft(prev => ({ ...prev, participants: event.target.value === '' ? undefined : Number(event.target.value) }))} />
           </label>
           <fieldset>
             <legend>参会人</legend>
@@ -291,10 +309,21 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
           <div className="chat-draft-checks">
             <label><input type="checkbox" checked={Boolean(editDraft.isVideoConference)} onChange={event => setEditDraft(prev => ({ ...prev, isVideoConference: event.target.checked }))} />视频会议</label>
             <label><input type="checkbox" checked={Boolean(editDraft.needsTeaService)} onChange={event => setEditDraft(prev => ({ ...prev, needsTeaService: event.target.checked }))} />茶水服务</label>
-            {(['SIGNAGE', 'SECURITY', 'OTHER'] as const).map(type => <label key={type}><input type="checkbox" checked={(editDraft.serviceRequirements || []).some(item => item.type === type)} onChange={() => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).some(item => item.type === type) ? (prev.serviceRequirements || []).filter(item => item.type !== type) : [...(prev.serviceRequirements || []), { type }] }))} />{serviceLabels[type]}</label>)}
+            {serviceCatalog.filter(catalog => !['TEA', 'VIDEO'].includes(catalog.type)
+              && (applicableServiceCatalog.some(item => item.type === catalog.type) || (editDraft.serviceRequirements || []).some(item => item.type === catalog.type))).map(catalog => <label key={catalog.type}><input type="checkbox" checked={(editDraft.serviceRequirements || []).some(item => item.type === catalog.type)} onChange={() => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).some(item => item.type === catalog.type) ? (prev.serviceRequirements || []).filter(item => item.type !== catalog.type) : [...(prev.serviceRequirements || []), { type: catalog.type }] }))} />{catalog.name}</label>)}
             <label><input type="checkbox" checked={Boolean(editDraft.hasLeader)} onChange={event => setEditDraft(prev => ({ ...prev, hasLeader: event.target.checked }))} />领导参会</label>
           </div>
-          {(editDraft.serviceRequirements || []).filter(item => ['SIGNAGE', 'SECURITY', 'OTHER'].includes(item.type)).map(item => <label key={item.type}>{serviceLabels[item.type]}说明{item.type === 'OTHER' ? '（必填）' : '（可选）'}<input value={item.details || ''} onChange={event => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).map(service => service.type === item.type ? { ...service, details: event.target.value } : service) }))} /></label>)}
+          {(editDraft.serviceRequirements || []).filter(item => !['TEA', 'VIDEO'].includes(item.type)).map(requirement => {
+            const catalog = serviceCatalog.find(item => item.type === requirement.type);
+            if (!catalog) return null;
+            return <fieldset key={requirement.type}><legend>{catalog.name} · 目录 V{catalog.version}</legend>{catalog.fields.map(field => {
+              const value = requirement.fieldValues?.[field.key] ?? (field.key === 'notes' ? requirement.details || '' : '');
+              const update = (next: string) => setEditDraft(prev => ({ ...prev, serviceRequirements: (prev.serviceRequirements || []).map(service => service.type === requirement.type ? { ...service, fieldValues: { ...(service.fieldValues || {}), [field.key]: next }, ...(field.key === 'notes' ? { details: next } : {}) } : service) }));
+              return <label key={field.key}>{field.label}{field.required ? '（必填）' : '（可选）'}
+                {field.type === 'TEXTAREA' ? <textarea rows={2} maxLength={500} value={value} onChange={event => update(event.target.value)} /> : field.type === 'SELECT' ? <select value={value} onChange={event => update(event.target.value)}><option value="">请选择</option>{field.options?.map(option => <option key={option} value={option}>{option}</option>)}</select> : <input type={field.type === 'NUMBER' ? 'number' : 'text'} min={field.type === 'NUMBER' ? '0' : undefined} maxLength={field.type === 'NUMBER' ? undefined : 500} value={value} onChange={event => update(event.target.value)} />}
+              </label>;
+            })}</fieldset>;
+          })}
           {editDraft.hasLeader && <label>领导姓名或职位<input value={editDraft.leaderDetails || ''} onChange={event => setEditDraft(prev => ({ ...prev, leaderDetails: event.target.value }))} /></label>}
           {editResource?.isExclusive && <label>专属资源临时申请理由<textarea rows={2} maxLength={500} value={editDraft.exclusiveRequestReason || ''} onChange={event => setEditDraft(prev => ({ ...prev, exclusiveRequestReason: event.target.value }))} /></label>}
           {editResource?.roomCategory === 'AUDITORIUM' && <fieldset>
@@ -323,7 +352,7 @@ const BookingDraftCard = ({ action, resources, bookings, users, currentUserId, s
           <div><dt>时间</dt><dd>{range}</dd></div>
           <div><dt>用途</dt><dd>{draft.purpose}</dd></div>
           <div><dt>会议类型</dt><dd>{draft.meetingType === 'IMPORTANT' ? '重要会议' : draft.meetingType === 'NORMAL' ? '普通会议' : '待正式表单选择'}</dd></div>
-          <div><dt>人数</dt><dd>{draft.participants || 1} 人</dd></div>
+          <div><dt>人数</dt><dd>{draft.participants === undefined ? '待填写' : `${draft.participants} 人`}</dd></div>
           <div><dt>参会人</dt><dd>{attendees.length ? attendees.join('、') : '暂未添加'}</dd></div>
           <div><dt>服务</dt><dd>{serviceSummary.join(' · ') || '无特殊需求'}</dd></div>
           {draft.exclusiveRequestReason && <div><dt>专属理由</dt><dd>{draft.exclusiveRequestReason}</dd></div>}
@@ -392,7 +421,7 @@ const SUGGESTIONS = [
   '最近 30 天会议室用得怎么样？'
 ];
 
-export default function ChatDock({ open, onClose, userId, userName, theme, resources, bookings, users, onAction, onNavigate }: ChatDockProps) {
+export default function ChatDock({ open, onClose, userId, userName, theme, resources, bookings, users, serviceCatalog, onAction, onNavigate }: ChatDockProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -953,6 +982,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
                               resources={resources}
                               bookings={bookings}
                               users={users}
+                              serviceCatalog={serviceCatalog}
                               currentUserId={userId}
                               state={handled[key]}
                               error={actionErrors[key]}

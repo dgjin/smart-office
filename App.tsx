@@ -14,11 +14,12 @@ import {
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
-import { findAttendeeOverlaps, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, resourceSupportsFeature, splitBookingByNaturalDay, validateBookingResource } from './utils/bookingRules';
+import { BOOKING_DISPLAY_STATUS_LABELS, findAttendeeOverlaps, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getBookingDisplayStatus, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, isValidBookingPurpose, resourceSupportsFeature, splitBookingByNaturalDay, validateBookingResource } from './utils/bookingRules';
 import { validateBookingDraft } from './utils/bookingDraft';
 import { filterResources } from './utils/resourceSearch';
 import { getApprovalGroups, getBookingWorkflow } from './utils/approval';
 import { getResourceBuilding, getResourceFloor, getRoomCategory } from './utils/resourceDomain';
+import { addLocalDays, bookingEffectiveEnd, calculateResourceOccupancy, countsTowardOccupancy, localDateKey, resourceOpenMinutes, startOfLocalDay } from './utils/dashboard';
 import { parseCheckInQr } from './utils/checkInQr';
 import ChatDock, { type AgentAction } from './components/ChatDock';
 import ServiceOperations, { BookingUsageActions } from './components/ServiceOperations';
@@ -26,7 +27,7 @@ import ExceptionCenter from './components/ExceptionCenter';
 import DeviceManagement from './components/DeviceManagement';
 import OperationsReports from './components/OperationsReports';
 import BuildingExplorer, { BUILDINGS, getFloorNumbers, type BuildingId } from './components/BuildingExplorer';
-import { DEFAULT_RULE_SETTINGS } from './constants';
+import { DEFAULT_RULE_SETTINGS, SERVICE_TYPE_LABELS } from './constants';
 
 type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'EXCEPTIONS' | 'DEVICES' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'CONFIDENTIALITY' | 'DATA_CENTER' | 'HQ_3D';
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
@@ -51,11 +52,11 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   RESOURCE_MAINTENANCE: '该会议室正在维护，请选择其他会议室。',
   RESOURCE_UNAVAILABLE: '该会议室暂未开放预约，请选择其他会议室。',
   INVALID_TIME_RANGE: '预约时间无效，请重新选择。',
-  INVALID_PARTICIPANTS: '参与人数无效，请重新填写。',
+  INVALID_PARTICIPANTS: '参与人数必填，且必须为大于 0 的整数。',
   CAPACITY_EXCEEDED: '参与人数超过会议室当前容量，请减少人数或更换会议室。',
   REQUIRED_FEATURE_UNAVAILABLE: '会议室当前设备不满足预约要求，请调整设备需求或更换会议室。',
   ACTIVE_BOOKINGS_REQUIRE_REVIEW: '仍有未结束的有效预约，请先取消或改期后再切换维护状态。',
-  INVALID_BOOKING_PURPOSE: '请填写 200 字以内的会议主题或申请用途。',
+  INVALID_BOOKING_PURPOSE: '请填写 200 字以内且有明确主题的申请用途，不能只填写“会议”或“开会”。',
   MEETING_TYPE_REQUIRED: '请选择普通、重要或涉密会议类型。',
   CONFIDENTIALITY_CHOICE_REQUIRED: '请明确选择本会议是否涉密。',
   CONFIDENTIALITY_TYPE_MISMATCH: '会议类型与涉密选择不一致，涉密会议必须选择“涉密”。',
@@ -68,9 +69,10 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   BOOKING_START_IN_PAST: '预约开始时间已过，请重新选择。',
   RESOURCE_OUTSIDE_OPEN_HOURS: '预约时间超出资源开放时段，请调整后重试。',
   EXCLUSIVE_REQUEST_WINDOW_CLOSED: '专属会议室仅在会前配置时限内接受临时申请。',
+  EXCLUSIVE_LEADER_REQUIRED: '专属会议室仅适用于公司领导参会的会议，请确认领导参会。',
   EXCLUSIVE_REQUEST_REASON_REQUIRED: '请填写 2 至 500 字的专属会议室临时申请理由。',
   REQUESTER_TIME_CONFLICT: '您在相同时段已有其他预约，请调整时间。',
-  DEPARTMENT_DAILY_QUOTA_EXCEEDED: '部门当日净预约额度不足，请缩短时长或更换日期。',
+  DEPARTMENT_DAILY_QUOTA_EXCEEDED: '部门在当前会议室当日净预约额度不足，请缩短时长、更换会议室或日期。',
   REQUESTER_DEPARTMENT_NOT_FOUND: '申请人部门档案不完整，请联系管理员维护。',
   MULTI_RESOURCE_BOOKING_NOT_SUPPORTED: '普通联合预约暂未开放，请按单个资源分别申请。',
   LONG_TERM_LIMIT_EXCEEDED: '单期长期预订超过当前规则上限，请缩短截止日期。',
@@ -207,6 +209,22 @@ const StatusBadge = ({ status, theme }: { status: string, theme: string }) => {
   return <span className={`status-badge status-${String(status).toLowerCase()} ${styles[status] || styles.PENDING}`}>{labels[status] || status}</span>;
 };
 
+const BookingStatusBadge = ({ booking, theme }: { booking: Booking; theme: string }) => {
+  const status = getBookingDisplayStatus(booking);
+  const styles: Record<string, string> = {
+    PENDING: 'bg-amber-50 text-amber-600 border-amber-100',
+    UPCOMING: `bg-${theme}-50 text-${theme}-600 border-${theme}-100`,
+    IN_PROGRESS: 'bg-emerald-50 text-emerald-600 border-emerald-100',
+    NO_SHOW: 'bg-rose-50 text-rose-600 border-rose-100',
+    RELEASED: 'bg-gray-100 text-gray-500 border-gray-200',
+    ENDED_EARLY: 'bg-amber-50 text-amber-600 border-amber-100',
+    COMPLETED: 'bg-gray-100 text-gray-500 border-gray-200',
+    CANCELLED: 'bg-gray-100 text-gray-500 border-gray-200',
+    REJECTED: 'bg-rose-50 text-rose-600 border-rose-100'
+  };
+  return <span className={`status-badge status-${status.toLowerCase()} ${styles[status]}`}>{BOOKING_DISPLAY_STATUS_LABELS[status]}</span>;
+};
+
 const RoleTag = ({ roleId, roles, theme }: any) => {
   const role = roles.find((r: any) => r.id === roleId);
   if (!role) return <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-gray-100 text-gray-500">未知</span>;
@@ -283,9 +301,9 @@ const StatCard = ({ title, value, icon: Icon, trend, color, onClick }: any) => (
 );
 
 const SCHEDULE_RANGES = [
-  { id: 'TODAY', label: '今日', code: 'DAY', description: '08:00—20:00 时间轨 · 点击会议查看详情' },
-  { id: 'WEEK', label: '本周', code: '7 DAYS', description: '未来 7 天申请概况 · 点击日期查看详情' },
-  { id: 'MONTH', label: '本月', code: '30 DAYS', description: '未来 30 天申请概况 · 点击日期查看详情' }
+  { id: 'TODAY', label: '今日', code: 'DAY', description: '全部资源 · 实际开放时段 · 点击非涉密会议查看详情' },
+  { id: 'WEEK', label: '本周', code: '7 DAYS', description: '未来 7 天五档占用率与重点会议 · 点击日期查看详情' },
+  { id: 'MONTH', label: '本月', code: '30 DAYS', description: '未来 30 天五档占用率 · 点击日期查看详情' }
 ] as const;
 type ScheduleRange = typeof SCHEDULE_RANGES[number]['id'];
 
@@ -471,184 +489,220 @@ const LoginView = ({ onLogin }: any) => {
   );
 };
 
-const TodayResourceUsage = ({ resources, bookings, users, theme, onBookingClick }: any) => {
-  const hours = Array.from({ length: 13 }, (_, i) => i + 8); // 8:00 - 20:00
+const TodayResourceUsage = ({ resources, bookings, users, onBookingClick }: any) => {
+  const [zoom, setZoom] = useState<30 | 60>(60);
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 30000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const dayStart = startOfLocalDay(now);
+  const dayEnd = addLocalDays(dayStart, 1);
+  const dailyBookings = bookings.filter((booking: Booking) => {
+    const status = getBookingDisplayStatus(booking, now);
+    return !['PENDING', 'REJECTED', 'CANCELLED'].includes(status)
+      && Date.parse(booking.startTime) < dayEnd.getTime()
+      && Date.parse(booking.actualEndTime || booking.releasedAt || booking.endTime) > dayStart.getTime();
+  });
+  const range = useMemo(() => {
+    const open = resources.map((resource: Resource) => resourceOpenMinutes(resource));
+    let start = Math.min(8 * 60, ...open.map((item: { start: number }) => item.start));
+    let end = Math.max(20 * 60, ...open.map((item: { end: number }) => item.end));
+    dailyBookings.forEach((booking: Booking) => {
+      const bookingStart = new Date(booking.startTime);
+      const bookingEnd = new Date(booking.actualEndTime || booking.releasedAt || booking.endTime);
+      if (bookingStart < dayEnd && bookingEnd > dayStart) {
+        start = Math.min(start, bookingStart < dayStart ? 0 : bookingStart.getHours() * 60 + bookingStart.getMinutes());
+        end = Math.max(end, bookingEnd > dayEnd ? 1440 : bookingEnd.getHours() * 60 + bookingEnd.getMinutes());
+      }
+    });
+    return { start: Math.floor(start / 30) * 30, end: Math.min(1440, Math.ceil(end / 30) * 30) };
+  }, [resources, bookings, localDateKey(now)]);
+  const totalMinutes = Math.max(30, range.end - range.start);
+  const ticks = Array.from({ length: Math.floor(totalMinutes / zoom) + 1 }, (_, index) => range.start + index * zoom);
+  const groups = useMemo(() => {
+    const floorRank = (floor?: number) => floor === 16 ? 0 : floor === 19 ? 1 : floor === 20 ? 2 : 3;
+    const sorted = [...resources].sort((a: Resource, b: Resource) => floorRank(a.floor) - floorRank(b.floor)
+      || (a.floor ?? 999) - (b.floor ?? 999) || String(a.code || a.id).localeCompare(String(b.code || b.id), 'zh-CN', { numeric: true }));
+    const result: Array<{ key: string; label: string; resources: Resource[] }> = [];
+    sorted.forEach((resource: Resource) => {
+      const primaryFloor = resource.floor === 16 || resource.floor === 19 || resource.floor === 20;
+      const key = primaryFloor ? `floor:${resource.floor}` : 'other';
+      const label = primaryFloor ? `${resource.floor}层` : '其他楼层';
+      let group = result.find(item => item.key === key);
+      if (!group) { group = { key, label, resources: [] }; result.push(group); }
+      group.resources.push(resource);
+    });
+    return result;
+  }, [resources]);
+  const currentMinutes = (now.getTime() - dayStart.getTime()) / 60000;
+  const nowLeft = (currentMinutes - range.start) / totalMinutes * 100;
+  const canOpenDetails = (booking: Booking) => Boolean(booking.userId)
+    && booking.meetingType !== 'CONFIDENTIAL' && booking.confidentialityChoice !== 'CONFIDENTIAL';
   return (
-    <div className="studio-timeline overflow-x-auto">
-      <div className="min-w-[600px]">
+    <div className="studio-timeline overflow-x-auto" aria-label="当日全部资源时间轴">
+      <div className="timeline-toolbar">
+        <div className="timeline-legend" aria-label="时间轴状态图例">
+          {[['in-progress', '使用中'], ['starting', '即将开始'], ['upcoming', '待开始'], ['completed', '已结束'], ['confidential', '涉密不可见'], ['exception', '释放或异常']].map(([status, label]) =>
+            <span key={status}><i className={`timeline-legend-swatch timeline-status-${status}`}/>{label}</span>)}
+        </div>
+        <div className="timeline-zoom" role="group" aria-label="时间轴刻度">
+          <button type="button" aria-pressed={zoom === 60} onClick={() => setZoom(60)}>小时</button>
+          <button type="button" aria-pressed={zoom === 30} onClick={() => setZoom(30)}>半小时</button>
+        </div>
+      </div>
+      <div className="min-w-[900px]">
         <div className="flex mb-4">
-          <div className="w-32 shrink-0 p-2 text-xs font-black text-gray-500 uppercase tracking-widest">资源名称</div>
-          <div className="flex-1 flex justify-between text-xs text-gray-500 font-bold uppercase relative">
-            {hours.map(h => <div key={h} className="flex-1 text-center border-l border-gray-100">{h}:00</div>)}
+          <div className="w-44 shrink-0 p-2 text-xs font-black text-gray-500 uppercase tracking-widest">楼层 / 资源</div>
+          <div className="flex-1 flex text-[10px] text-gray-500 font-bold relative">
+            {ticks.map(minutes => <div key={minutes} className="flex-1 text-center border-l border-gray-100 first:border-l-0">{pad2(Math.floor(minutes / 60))}:{pad2(minutes % 60)}</div>)}
           </div>
         </div>
-        <div className="space-y-3">
-          {resources.slice(0, 5).map((r: any) => {
-            const dailyBookings = bookings.filter((b: any) => 
-              b.resourceId === r.id && 
-              b.status === 'APPROVED' && 
-              new Date(b.startTime).toDateString() === new Date().toDateString()
-            );
-
-            return (
-              <div key={r.id} className="flex items-center group">
-                <div className="w-32 shrink-0 text-xs font-bold text-gray-600 truncate pr-4 flex items-center gap-2">
-                  <div className={`w-2 h-2 rounded-full ${r.type === 'ROOM' ? 'bg-indigo-400' : 'bg-emerald-400'}`}></div>
-                  {r.name}
+        {groups.map(group => <section key={group.key} className="timeline-floor-group" aria-label={`${group.label}会议室`}>
+          <h4>{group.label}<span>{group.resources.length} 个空间</span></h4>
+          <div className="space-y-2">
+            {group.resources.map((resource: Resource) => {
+              const resourceBookings = dailyBookings.filter((booking: Booking) => booking.resourceId === resource.id);
+              return <div key={resource.id} className="flex items-center group">
+                <div className="w-44 shrink-0 pr-4 text-xs font-bold text-gray-600" title={`${resource.code || resource.id} · ${resource.name}`}>
+                  <div className="flex items-center gap-2"><i className={`timeline-resource-dot ${resource.type === 'ROOM' ? 'room' : 'desk'}`}/><span className="truncate">{resource.name}</span></div>
+                  <small>{resource.code || resource.id}{resource.status !== 'AVAILABLE' ? ` · ${resource.status}` : ''}</small>
                 </div>
-                <div className="flex-1 h-10 bg-gray-50/50 rounded-xl relative overflow-hidden border border-transparent group-hover:border-gray-100 transition-all">
-                   {/* Background Grid Lines */}
-                   <div className="absolute inset-0 flex">
-                      {hours.map(h => <div key={h} className="flex-1 border-l border-gray-100 first:border-l-0"></div>)}
-                   </div>
-
-                   {dailyBookings.map((b: any) => {
-                    const start = new Date(b.startTime);
-                    const end = new Date(b.endTime);
-                    const startHour = start.getHours() + start.getMinutes() / 60;
-                    const endHour = end.getHours() + end.getMinutes() / 60;
-                    
-                    // Clamp to view 8-20
-                    let s = Math.max(startHour, 8);
-                    let e = Math.min(endHour, 21);
-                    if (s >= 21 || e <= 8) return null;
-
-                    const left = ((s - 8) / 13) * 100;
-                    const width = ((e - s) / 13) * 100;
-                    
-                    const user = users?.find((u: any) => u.id === b.userId);
-
-                    return (
-                      <button 
-                        key={b.id} 
-                        onClick={() => onBookingClick && onBookingClick({ resource: r, date: new Date(), bookings: dailyBookings })}
-                        className={`absolute top-1.5 bottom-1.5 bg-${theme}-500/90 rounded-lg text-white text-[10px] font-bold flex items-center px-2 hover:bg-${theme}-600 transition-all shadow-sm hover:shadow-md z-10 hover:z-20 border border-${theme}-400/20 overflow-hidden whitespace-nowrap`} 
-                        style={{ left: `${left}%`, width: `${width}%` }} 
-                        title={`${user?.name || '未知'} · ${b.purpose}`}
-                      >
-                         {user?.name}
-                      </button>
-                    );
+                <div className="timeline-track flex-1">
+                  <div className="absolute inset-0 flex" aria-hidden="true">{ticks.slice(0, -1).map(minutes => <div key={minutes} className="flex-1 border-l border-gray-100 first:border-l-0"/>)}</div>
+                  {nowLeft >= 0 && nowLeft <= 100 && <span className="timeline-now" style={{ left: `${nowLeft}%` }} aria-label={`当前时刻 ${toLocalTimeString(now)}`}/>}
+                  {resourceBookings.map((booking: Booking) => {
+                    const displayStatus = getBookingDisplayStatus(booking, now);
+                    const confidential = !canOpenDetails(booking);
+                    const soon = displayStatus === 'UPCOMING' && Date.parse(booking.startTime) - now.getTime() <= 30 * 60000;
+                    const status = confidential ? 'confidential' : ['NO_SHOW', 'RELEASED'].includes(displayStatus) ? 'exception'
+                      : ['COMPLETED', 'ENDED_EARLY'].includes(displayStatus) ? 'completed' : soon ? 'starting' : displayStatus === 'IN_PROGRESS' ? 'in-progress' : 'upcoming';
+                    const start = Math.max(range.start, (Date.parse(booking.startTime) - dayStart.getTime()) / 60000);
+                    const end = Math.min(range.end, (Date.parse(booking.actualEndTime || booking.releasedAt || booking.endTime) - dayStart.getTime()) / 60000);
+                    if (end <= start) return null;
+                    const user = users?.find((item: User) => item.id === booking.userId);
+                    const label = confidential ? '涉密会议 · 占用' : `${booking.purpose} · ${toLocalTimeString(booking.startTime)}—${toLocalTimeString(booking.endTime)}`;
+                    return <button type="button" key={booking.id} disabled={confidential}
+                      onClick={() => onBookingClick({ resource, date: dayStart, bookings: resourceBookings.filter(canOpenDetails) })}
+                      className={`timeline-booking timeline-status-${status}`}
+                      style={{ left: `${(start - range.start) / totalMinutes * 100}%`, width: `${(end - start) / totalMinutes * 100}%` }}
+                      title={confidential ? '涉密会议，仅显示占用状态' : `${label}${user ? ` · ${user.department} · ${user.name}` : ''}`}
+                      aria-label={confidential ? `${resource.name}，涉密会议，占用，详情不可见` : `${resource.name}，${label}`}>
+                      {confidential && <Lock size={11} aria-hidden="true"/>}<span>{confidential ? '占用' : booking.purpose}</span><small>{toLocalTimeString(booking.startTime)}</small>
+                    </button>;
                   })}
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              </div>;
+            })}
+          </div>
+        </section>)}
       </div>
     </div>
   );
 };
 
-const ResourceUsageGrid = ({ days, resources, bookings, onDayClick, theme }: any) => {
-  const isBookingActiveOnDay = (booking: Booking, day: Date, resourceId: string) => {
-    if (booking.resourceId !== resourceId) return false;
-    if (booking.status !== 'APPROVED') return false;
-    
-    const dayStart = new Date(day); dayStart.setHours(0,0,0,0);
-    const dayEnd = new Date(day); dayEnd.setHours(23,59,59,999);
-    const bStart = new Date(booking.startTime);
-    const bEnd = new Date(booking.endTime);
-    
-    return bStart < dayEnd && bEnd > dayStart;
-  };
+const occupancyLevel = (utilization: number) => utilization <= 0 ? 0 : utilization <= 25 ? 1 : utilization <= 50 ? 2 : utilization <= 75 ? 3 : 4;
+const OCCUPANCY_LEVEL_LABELS = ['空闲 0%', '较低 1—25%', '中等 26—50%', '较高 51—75%', '紧张 76—100%'];
 
+const ResourceUsageGrid = ({ days, resources, bookings, onDayClick }: any) => {
+  const now = new Date();
+  const trend = days.map((day: Date) => {
+    const totals = resources.reduce((sum: { booked: number; available: number; important: number }, resource: Resource) => {
+      const occupancy = calculateResourceOccupancy(resource, bookings, day, now);
+      return { booked: sum.booked + occupancy.bookedMinutes, available: sum.available + occupancy.availableMinutes, important: sum.important + occupancy.importantBookingCount };
+    }, { booked: 0, available: 0, important: 0 });
+    return { day, utilization: totals.available ? Math.min(100, Math.round(totals.booked / totals.available * 1000) / 10) : 0, important: totals.important };
+  });
   return (
-    <div className="studio-usage-grid flex flex-col">
+    <div className="studio-usage-grid flex flex-col" aria-label={days.length === 7 ? '未来七日五档占用率矩阵' : '未来三十日五档占用率矩阵'}>
+      {days.length === 7 && <div className="occupancy-trend" aria-label="七日占用率趋势">
+        {trend.map(({ day, utilization, important }: { day: Date; utilization: number; important: number }) => <div key={localDateKey(day)} className="occupancy-trend-day">
+          <span>{utilization}%</span>
+          <div className="occupancy-trend-track"><i style={{ height: `${Math.max(4, utilization)}%` }}/></div>
+          <strong>{day.getMonth() + 1}/{day.getDate()}</strong>
+          <small>重点 {important}</small>
+        </div>)}
+      </div>}
       <div className="overflow-x-auto custom-scrollbar pb-2">
-        <table className="border-collapse w-full min-w-[800px]">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-20 bg-white p-3 text-left text-xs font-black text-gray-500 uppercase tracking-widest border-b border-gray-100 min-w-[140px]">资源名称</th>
-              {days.map((d: Date, i: number) => {
-                const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                return (
-                  <th key={i} className={`p-2 text-[11px] font-bold text-gray-500 border-b border-gray-100 min-w-[40px] text-center ${isWeekend ? 'bg-slate-50 text-slate-400' : ''}`}>
-                    {d.getMonth() + 1}/{d.getDate()}
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {resources.map((r: any) => (
-              <tr key={r.id} className="group hover:bg-gray-50/30 transition-colors">
-                <td className="sticky left-0 z-10 bg-white group-hover:bg-gray-50/30 p-3 text-xs font-bold text-gray-700 border-b border-gray-50 shadow-[2px_0_5px_-2px_rgba(0,0,0,0.05)] truncate max-w-[140px]" title={r.name}>
-                  <div className="flex items-center space-x-2">
-                    <span className={`w-2 h-2 rounded-full ${r.type === 'ROOM' ? 'bg-indigo-400' : 'bg-emerald-400'}`}></span>
-                    <span className="truncate">{r.name}</span>
-                  </div>
-                </td>
-                {days.map((d: Date, i: number) => {
-                  const dayBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, d, r.id));
-                  const bookingCount = dayBookings.length;
-                  const isWeekend = d.getDay() === 0 || d.getDay() === 6;
-                  
-                  // Logic for continuous bars visualization
-                  let connectLeft = false;
-                  let connectRight = false;
-                  
-                  // Only apply continuous logic if there is exactly one booking, to avoid confusion with overlaps
-                  if (bookingCount === 1) {
-                      const currentBookingId = dayBookings[0].id;
-                      if (i > 0) {
-                         const prevD = days[i-1];
-                         const prevBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, prevD, r.id));
-                         if (prevBookings.some((b: any) => b.id === currentBookingId)) connectLeft = true;
-                      }
-                      if (i < days.length - 1) {
-                         const nextD = days[i+1];
-                         const nextBookings = bookings.filter((b: any) => isBookingActiveOnDay(b, nextD, r.id));
-                         if (nextBookings.some((b: any) => b.id === currentBookingId)) connectRight = true;
-                      }
-                  }
-
-                  let shapeClass = 'rounded-lg';
-                  let widthClass = 'w-full';
-                  let marginClass = '';
-                  
-                  if (connectLeft && connectRight) {
-                      shapeClass = 'rounded-none';
-                      widthClass = 'w-[calc(100%+9px)]'; 
-                      marginClass = '-mx-1';
-                  } else if (connectLeft) {
-                      shapeClass = 'rounded-l-none rounded-r-lg';
-                      widthClass = 'w-[calc(100%+4px)]';
-                      marginClass = '-ml-1';
-                  } else if (connectRight) {
-                      shapeClass = 'rounded-l-lg rounded-r-none';
-                      widthClass = 'w-[calc(100%+4px)]';
-                      marginClass = '-mr-1';
-                  }
-
-                  return (
-                    <td key={i} className={`p-1 border-b border-gray-50 text-center relative ${isWeekend ? 'bg-slate-50' : ''}`}>
-                      <div className="relative w-full h-8 flex items-center justify-center">
-                        <button 
-                          onClick={() => onDayClick(r.id, d)}
-                          className={`h-full flex items-center justify-center transition-all ${bookingCount > 0 ? `bg-${theme}-600 border-${theme}-700 border shadow-sm ${shapeClass} ${widthClass} ${marginClass} z-10` : 'w-full hover:bg-gray-100 rounded-lg'}`}
-                          title={bookingCount > 0 ? `${bookingCount} 项预订` : '空闲'}
-                        >
-                          {bookingCount > 0 && (
-                            <span className="text-[10px] font-bold text-white">{bookingCount > 1 ? bookingCount : ''}</span>
-                          )}
-                        </button>
-                      </div>
-                    </td>
-                  );
-                })}
-              </tr>
-            ))}
-          </tbody>
+        <table className="border-collapse w-full" style={{ minWidth: Math.max(800, days.length * 86 + 180) }}>
+          <thead><tr>
+            <th className="sticky left-0 z-20 bg-white p-3 text-left text-xs font-black text-gray-500 uppercase tracking-widest border-b border-gray-100 min-w-[160px]">楼层 / 资源</th>
+            {days.map((day: Date) => {
+              const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+              return <th key={localDateKey(day)} className={`p-2 text-[11px] font-bold text-gray-500 border-b border-gray-100 min-w-[72px] text-center ${isWeekend ? 'bg-slate-50 text-slate-400' : ''}`}>{day.getMonth() + 1}/{day.getDate()}</th>;
+            })}
+          </tr></thead>
+          <tbody>{resources.map((resource: Resource) => <tr key={resource.id} className="group">
+            <td className="sticky left-0 z-10 bg-white p-3 text-xs font-bold text-gray-700 border-b border-gray-50" title={`${resource.code || resource.id} · ${resource.name}`}>
+              <div className="flex items-center gap-2"><i className={`timeline-resource-dot ${resource.type === 'ROOM' ? 'room' : 'desk'}`}/><span className="truncate max-w-[130px]">{resource.name}</span></div>
+              <small className="occupancy-resource-meta">{resource.floor === undefined ? resource.location : `${resource.floor}层`} · {resource.code || resource.id}</small>
+            </td>
+            {days.map((day: Date) => {
+              const occupancy = calculateResourceOccupancy(resource, bookings, day, now);
+              const level = occupancyLevel(occupancy.utilization);
+              const isWeekend = day.getDay() === 0 || day.getDay() === 6;
+              return <td key={localDateKey(day)} className={`p-1 border-b border-gray-50 text-center ${isWeekend ? 'bg-slate-50' : ''}`}>
+                <button type="button" onClick={() => onDayClick(resource.id, day)}
+                  className={`occupancy-cell occupancy-level-${level}`}
+                  title={`${resource.name} · ${localDateKey(day)} · 占用率 ${occupancy.utilization}% · 重点会议 ${occupancy.importantBookingCount} 场`}
+                  aria-label={`${resource.name}，${localDateKey(day)}，占用率 ${occupancy.utilization}%，重点会议 ${occupancy.importantBookingCount} 场`}>
+                  <span>{occupancy.utilization}%</span>{occupancy.importantBookingCount > 0 && <small>重点 {occupancy.importantBookingCount}</small>}
+                </button>
+              </td>;
+            })}
+          </tr>)}</tbody>
         </table>
       </div>
-      <div className="mt-4 flex items-center space-x-4 text-[11px] text-gray-500 font-bold justify-end">
-        <div className="flex items-center space-x-1"><span className={`w-3 h-3 rounded bg-${theme}-600 border border-${theme}-700`}></span><span>已预订</span></div>
-        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-white border border-gray-200"></span><span>空闲</span></div>
-        <div className="flex items-center space-x-1"><span className="w-3 h-3 rounded bg-slate-50"></span><span>周末</span></div>
+      <div className="occupancy-legend" aria-label="五档占用率图例">
+        {OCCUPANCY_LEVEL_LABELS.map((label, level) => <span key={label}><i className={`occupancy-level-${level}`}/>{label}</span>)}
       </div>
     </div>
   );
+};
+
+const ExecutiveDashboard = ({ executive, resources, bookings, exceptions, onDayClick, onOpenExceptions }: any) => {
+  const now = new Date();
+  const metrics = [
+    ['会议室总数', executive.roomCount, '间', '启用状态会议室'],
+    ['当前使用中', executive.currentInUse, '间', '当前进行中'],
+    ['当前空闲', executive.currentIdle, '间', '当前无有效占用'],
+    ['今日预约场次', executive.todayBookingCount, '场', '不含已取消'],
+    ['今日占用率', executive.todayUtilization, '%', '预约时长 ÷ 开放时长'],
+    ['本周平均占用率', executive.weekAverageUtilization, '%', '未来七日含今日'],
+    ['今日爽约', executive.todayNoShowCount, '场', '已判定未签到'],
+    ['超时未释放', executive.overdueReleaseCount, '间', '已超过释放阈值']
+  ];
+  const exclusiveResources = resources.filter((resource: Resource) => resource.type === 'ROOM' && resource.isExclusive)
+    .sort((a: Resource, b: Resource) => (a.floor ?? 999) - (b.floor ?? 999) || String(a.code || a.id).localeCompare(String(b.code || b.id), 'zh-CN', { numeric: true }));
+  const openExceptions = exceptions.filter((item: OperationalException) => item.status !== 'RESOLVED').slice(0, 4);
+  return <section className="executive-dashboard" aria-label="公司办公室领导驾驶舱">
+    <div className="executive-heading"><div><span>OFFICE LEADERSHIP / LIVE</span><h3>公司办公室领导驾驶舱</h3><p>同源预约事实 · 涉密仅计占用 · 指标更新于 {toLocalTimeString(now.toISOString())}</p></div><Crown size={28}/></div>
+    <div className="executive-metric-grid">{metrics.map(([label, value, unit, detail]) => <article key={String(label)} className="executive-metric">
+      <span>{label}</span><strong>{value}<small>{unit}</small></strong><p>{detail}</p>
+    </article>)}</div>
+    <div className="executive-operational-grid">
+      <section className="executive-exclusive" aria-label="领导层专属会议室专区">
+        <header><div><span>EXCLUSIVE FLOORS / 16 · 19 · 20</span><h4>领导层专属会议室</h4></div><small>{exclusiveResources.length} 间</small></header>
+        <div className="executive-room-grid">{exclusiveResources.length ? exclusiveResources.map((resource: Resource) => {
+          const current = bookings.filter((booking: Booking) => booking.resourceId === resource.id
+            && Date.parse(booking.startTime) <= now.getTime() && Date.parse(booking.actualEndTime || booking.endTime) > now.getTime()
+            && ['IN_PROGRESS'].includes(getBookingDisplayStatus(booking, now)))[0];
+          const next = bookings.filter((booking: Booking) => booking.resourceId === resource.id && getBookingDisplayStatus(booking, now) === 'UPCOMING')
+            .sort((a: Booking, b: Booking) => Date.parse(a.startTime) - Date.parse(b.startTime))[0];
+          return <button type="button" key={resource.id} onClick={() => onDayClick(resource.id, now)} className={`executive-room ${current ? 'occupied' : 'idle'}`}>
+            <span>{resource.floor ? `${resource.floor}层` : resource.location} · {resource.code || resource.id}</span>
+            <strong>{resource.name}</strong>
+            <small>{current ? `使用中 · ${current.userId ? current.purpose : '涉密不可见'}` : next ? `空闲 · 下一场 ${toLocalTimeString(next.startTime)}` : '当前空闲 · 今日后续暂无预约'}</small>
+          </button>;
+        }) : <p className="executive-empty">当前台账未配置领导层专属会议室。</p>}</div>
+      </section>
+      <section className="executive-exceptions" aria-label="领导异常提醒区">
+        <header><div><span>ATTENTION REQUIRED</span><h4>异常提醒</h4></div><button type="button" onClick={onOpenExceptions}>进入异常中心</button></header>
+        {openExceptions.length ? <ul>{openExceptions.map((item: OperationalException) => <li key={item.id}><i className={item.severity === 'CRITICAL' ? 'critical' : ''}/><div><strong>{item.title}</strong><span>{item.status === 'ACKNOWLEDGED' ? '已认领' : '待处理'} · {toLocalDateTimeString(item.occurredAt)}</span></div></li>)}</ul>
+          : <p className="executive-empty">当前没有待处理异常。</p>}
+      </section>
+    </div>
+  </section>;
 };
 
 const WorkflowStepper = ({ booking, workflow, theme }: any) => {
@@ -693,7 +747,7 @@ const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users
            <div className="flex flex-wrap items-center gap-2">
              <h4 className="font-bold text-gray-800 text-lg">{user?.name} 申请 {resource?.name}</h4>
              {isLongTerm && <span className="shrink-0 whitespace-nowrap bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-indigo-100">{booking.renewalOfSeriesId ? '长期续期' : '长期预订'}</span>}
-             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService) && <span className="shrink-0 whitespace-nowrap bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-rose-100">特殊需求</span>}
+             {(booking.hasLeader || booking.isVideoConference || booking.needsTeaService || booking.serviceRequirements?.length > 0) && <span className="shrink-0 whitespace-nowrap bg-rose-50 text-rose-600 px-2 py-0.5 rounded-md text-[11px] font-black border border-rose-100">特殊需求</span>}
            </div>
            <p className="text-xs text-gray-500 font-medium">{isLongTerm ? `${toLocalDateString(booking.startTime)} 至 ${booking.seriesEndDate} · 每天 ${toLocalTimeString(booking.startTime)} - ${toLocalTimeString(booking.endTime)} · ${seriesBookings.length} 个会议日` : `${toLocalDateTimeString(booking.startTime)} 至 ${toLocalDateTimeString(booking.endTime)}`} · {booking.purpose}</p>
            <p className="mt-1 text-[11px] font-bold text-gray-500">当前节点：{currentNode?.name || '待审批'}{booking.workflowVersion ? ` · 流程 V${booking.workflowVersion}` : ''}{booking.approvalRuleSetVersion ? ` · 规则集 V${booking.approvalRuleSetVersion}` : ''}</p>
@@ -707,13 +761,13 @@ const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users
                    <span className="font-bold">领导参会: {booking.leaderDetails}</span>
                  </div>
                )}
-               {booking.isVideoConference && (
+               {booking.isVideoConference && !booking.serviceRequirements?.some((item: BookingServiceRequirement) => item.type === 'VIDEO') && (
                  <div className="flex items-center space-x-1 text-[11px] text-gray-600 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
                    <Video size={12} className="text-indigo-500"/>
                    <span className="font-bold">视频会议</span>
                  </div>
                )}
-               {booking.needsTeaService && (
+               {booking.needsTeaService && !booking.serviceRequirements?.some((item: BookingServiceRequirement) => item.type === 'TEA') && (
                  <div className="flex items-center space-x-1 text-[11px] text-gray-600 bg-gray-50 px-2 py-1 rounded-lg border border-gray-100">
                    <CupSoda size={12} className="text-emerald-500"/>
                    <span className="font-bold">茶水服务</span>
@@ -721,6 +775,20 @@ const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users
                )}
              </div>
            )}
+           {booking.serviceRequirements?.length > 0 && <div className="mt-3 space-y-2" aria-label="结构化会务需求">
+             {booking.serviceRequirements.map((requirement: BookingServiceRequirement) => {
+               const snapshot = requirement.catalogSnapshot;
+               const fields = snapshot?.fields || [];
+               const values = requirement.fieldValues || {};
+               return <section key={requirement.type} className="rounded-xl border border-gray-100 bg-gray-50 px-3 py-2 text-[11px] text-gray-600">
+                 <p className="font-black text-gray-700">{snapshot?.name || SERVICE_TYPE_LABELS[requirement.type as keyof typeof SERVICE_TYPE_LABELS] || requirement.type}{snapshot ? ` · 目录 V${snapshot.catalogVersion}` : ''}</p>
+                 <dl className="mt-1 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                   {fields.filter((field: any) => values[field.key]).map((field: any) => <div key={field.key} className="flex gap-1"><dt className="shrink-0 text-gray-400">{field.label}：</dt><dd className="break-words font-bold">{values[field.key]}</dd></div>)}
+                   {!fields.length && requirement.details && <div><dt className="inline text-gray-400">说明：</dt><dd className="inline font-bold">{requirement.details}</dd></div>}
+                 </dl>
+               </section>;
+             })}
+           </div>}
         </div>
       </div>
       <div className="w-full md:w-72 shrink-0 space-y-2">
@@ -737,65 +805,60 @@ const ApprovalTaskCard = ({ booking, seriesBookings = [booking], workflow, users
 };
 
 const DayBookingDetailModal = ({ detail, onClose, users, resources, theme }: any) => (
-  <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-    <div className="bg-white rounded-3xl p-8 max-w-md w-full relative animate-in zoom-in">
-      <button onClick={onClose} className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full text-gray-500 hover:text-gray-600"><X size={20}/></button>
+  <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label="当日会议详情">
+    <div className="bg-white rounded-3xl p-8 max-w-lg w-full relative animate-in zoom-in">
+      <button onClick={onClose} aria-label="关闭当日会议详情" className="absolute top-4 right-4 p-2 bg-gray-100 rounded-full text-gray-500 hover:text-gray-600"><X size={20}/></button>
       <h3 className="font-black text-xl mb-1 text-gray-800">{formatDate(detail.date)}</h3>
       <p className="text-xs text-gray-500 font-bold uppercase tracking-widest mb-6">{detail.resource.name}</p>
-      
-      <div className="space-y-3 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
-         {detail.bookings.length === 0 ? (
-           <div className="py-12 text-center border-2 border-dashed border-gray-100 rounded-2xl">
-             <p className="text-gray-500 text-sm font-bold">该日暂无预订记录</p>
-           </div>
-         ) : (
-           detail.bookings.map((b: any) => {
-             const user = users.find((u: any) => u.id === b.userId);
-             const resource = resources ? resources.find((r: any) => r.id === b.resourceId) : null;
-             return (
-               <div key={b.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100 hover:border-indigo-100 transition-all">
-                 <div className="flex justify-between items-start mb-2">
-                   <div>
-                     <p className={`text-xs font-black text-${theme}-600 mb-0.5`}>{toLocalTimeString(b.startTime)} - {toLocalTimeString(b.endTime)}</p>
-                     {resource && <p className="text-[11px] text-gray-500 font-bold uppercase">{resource.name}</p>}
-                   </div>
-                   <span className={`px-2 py-0.5 rounded text-[10px] font-bold ${b.status === 'APPROVED' ? 'bg-emerald-100 text-emerald-600' : 'bg-amber-100 text-amber-600'}`}>
-                     {b.status === 'APPROVED' ? '已核准' : '待审批'}
-                   </span>
-                 </div>
-                 <div className="flex items-center space-x-3 mt-3 pt-3 border-t border-gray-200/50">
-                   <div className={`w-8 h-8 rounded-full bg-white flex items-center justify-center text-[11px] font-bold text-gray-600 shadow-sm`}>
-                     {user?.name?.[0]}
-                   </div>
-                   <div>
-                     <p className="text-xs font-bold text-gray-800">{user?.name} <span className="text-gray-500 font-medium">· {user?.department}</span></p>
-                     <p className="text-[11px] text-gray-500 mt-0.5">{b.purpose}</p>
-                   </div>
-                 </div>
 
-                 {(b.hasLeader || b.isVideoConference || b.needsTeaService) && (
-                   <div className="mt-3 pt-2 border-t border-gray-200/50 flex flex-wrap gap-2">
-                     {b.hasLeader && (
-                       <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-amber-50 text-amber-600 border border-amber-100">
-                         <Crown size={12} className="mr-1"/> 领导{b.leaderDetails ? `: ${b.leaderDetails}` : ''}
-                       </span>
-                     )}
-                     {b.isVideoConference && (
-                       <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-indigo-50 text-indigo-600 border border-indigo-100">
-                         <Video size={12} className="mr-1"/> 视频会
-                       </span>
-                     )}
-                     {b.needsTeaService && (
-                       <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-emerald-50 text-emerald-600 border border-emerald-100">
-                         <CupSoda size={12} className="mr-1"/> 茶水
-                       </span>
-                     )}
-                   </div>
-                 )}
-               </div>
-             );
-           })
-         )}
+      <div className="space-y-3 max-h-[60vh] overflow-y-auto custom-scrollbar pr-1">
+        {detail.bookings.length === 0 ? (
+          <div className="py-12 text-center border-2 border-dashed border-gray-100 rounded-2xl">
+            <p className="text-gray-500 text-sm font-bold">该日暂无有效占用记录</p>
+          </div>
+        ) : detail.bookings.map((b: Booking) => {
+          const user = users.find((item: User) => item.id === b.userId);
+          const resource = resources?.find((item: Resource) => item.id === b.resourceId);
+          const contact = b.contactSnapshot;
+          const contactNumbers = [contact?.landline || user?.landline, contact?.mobile || user?.mobile].filter(Boolean).join(' / ');
+          const services: BookingServiceRequirement[] = [...(b.serviceRequirements || [])];
+          if (b.isVideoConference && !services.some(item => item.type === 'VIDEO')) services.push({ type: 'VIDEO' });
+          if (b.needsTeaService && !services.some(item => item.type === 'TEA')) services.push({ type: 'TEA' });
+          return <article key={b.id} className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+            <div className="flex justify-between items-start gap-3 mb-2">
+              <div>
+                <p className={`text-xs font-black text-${theme}-600 mb-0.5`}>{toLocalTimeString(b.startTime)} - {toLocalTimeString(bookingEffectiveEnd(b))}</p>
+                {resource && <p className="text-[11px] text-gray-500 font-bold uppercase">{resource.name}</p>}
+              </div>
+              <BookingStatusBadge booking={b} theme={theme} />
+            </div>
+            <h4 className="mt-3 pt-3 border-t border-gray-200/50 text-sm font-black text-gray-800">{b.purpose}</h4>
+            <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2 text-[11px]">
+              <div><dt className="text-gray-400">部门</dt><dd className="mt-0.5 font-bold text-gray-700">{user?.department || b.requesterDepartmentId || '未提供'}</dd></div>
+              <div><dt className="text-gray-400">联系人</dt><dd className="mt-0.5 font-bold text-gray-700">{contact?.name || user?.name || '未提供'}</dd></div>
+              <div><dt className="text-gray-400">联系方式</dt><dd className="mt-0.5 break-words font-bold text-gray-700">{contactNumbers || '未提供'}</dd></div>
+              <div><dt className="text-gray-400">参会人数</dt><dd className="mt-0.5 font-bold text-gray-700">{b.participants === undefined ? '未提供' : `${b.participants} 人`}</dd></div>
+            </dl>
+            {b.hasLeader && <div className="mt-3 flex flex-wrap gap-2">
+              <span className="inline-flex items-center px-2 py-1 rounded text-[11px] font-bold bg-amber-50 text-amber-600 border border-amber-100"><Crown size={12} className="mr-1"/>领导{b.leaderDetails ? `：${b.leaderDetails}` : '参会'}</span>
+            </div>}
+            <section className="mt-3 pt-3 border-t border-gray-200/50" aria-label="会务服务摘要">
+              <p className="text-[11px] font-black text-gray-600">会务服务</p>
+              {services.length ? <div className="mt-2 space-y-2">{services.map(requirement => {
+                const snapshot = requirement.catalogSnapshot;
+                const fields = snapshot?.fields || [];
+                const values = requirement.fieldValues || {};
+                return <div key={requirement.type} className="rounded-xl border border-gray-100 bg-white px-3 py-2 text-[11px] text-gray-600">
+                  <p className="font-black text-gray-700">{snapshot?.name || SERVICE_TYPE_LABELS[requirement.type] || requirement.type}{snapshot ? ` · 目录 V${snapshot.catalogVersion}` : ''}</p>
+                  {(fields.some(field => values[field.key]) || requirement.details) && <dl className="mt-1 grid gap-x-4 gap-y-1 sm:grid-cols-2">
+                    {fields.filter(field => values[field.key]).map(field => <div key={field.key} className="flex gap-1"><dt className="shrink-0 text-gray-400">{field.label}：</dt><dd className="break-words font-bold">{values[field.key]}</dd></div>)}
+                    {!fields.length && requirement.details && <div><dt className="inline text-gray-400">说明：</dt><dd className="inline font-bold">{requirement.details}</dd></div>}
+                  </dl>}
+                </div>;
+              })}</div> : <p className="mt-1 text-[11px] text-gray-400">无会务服务</p>}
+            </section>
+          </article>;
+        })}
       </div>
     </div>
   </div>
@@ -1195,7 +1258,7 @@ const ResourceCalendarModal = ({ resource, bookings, users, theme, onClose, onSe
                     <span className={`block text-lg font-black group-hover:text-${theme}-600 ${isToday ? `text-${theme}-600` : 'text-gray-700'}`}>{date.getMonth() + 1}/{date.getDate()}</span>
                   </button>
                   <div className="space-y-2 mt-3">
-                    {dayBookings.map((b: Booking) => <div key={b.id} title={b.purpose} className={`p-2 rounded-xl border text-[11px] font-bold ${b.status === 'APPROVED' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-amber-50 border-amber-100 text-amber-700'}`}><p>{toLocalTimeString(b.startTime)}-{toLocalTimeString(b.endTime)}</p><p className="truncate mt-1 opacity-80">{b.purpose}</p></div>)}
+                    {dayBookings.map((b: Booking) => <div key={b.id} title={b.purpose} className={`p-2 rounded-xl border text-[11px] font-bold ${b.status === 'APPROVED' ? 'bg-emerald-50 border-emerald-100 text-emerald-700' : 'bg-amber-50 border-amber-100 text-amber-700'}`}><p>{toLocalTimeString(b.startTime)}-{toLocalTimeString(b.endTime)}</p><p className="mt-1 text-[10px] opacity-70">{BOOKING_DISPLAY_STATUS_LABELS[getBookingDisplayStatus(b)]}</p><p className="truncate mt-1 opacity-80">{b.purpose}</p></div>)}
                     <button onClick={() => onSelectDate(`${formatDate(date)}T09:00`)} className={`w-full py-2 rounded-xl border border-dashed text-[11px] font-bold text-gray-500 hover:text-${theme}-600 hover:border-${theme}-300`}>{dayBookings.length ? '+ 预约其他时段' : '+ 空白日期，点击预约'}</button>
                   </div>
                 </div>
@@ -1696,7 +1759,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   });
   const [deskEndDate, setDeskEndDate] = useState(initialDateObj);
   const [purpose, setPurpose] = useState(initialValues?.purpose || '');
-  const [participants, setParticipants] = useState(initialValues?.participants || resource.capacity || 1);
+  const [participants, setParticipants] = useState<number | undefined>(initialValues?.participants);
   const [meetingType, setMeetingType] = useState<MeetingType | ''>(initialValues?.extras?.meetingType || '');
   const [confidentialityChoice, setConfidentialityChoice] = useState<ConfidentialityChoice | ''>(initialValues?.extras?.confidentialityChoice || '');
   const [serviceRequirements, setServiceRequirements] = useState<BookingServiceRequirement[]>(initialServices.filter(item => !['TEA', 'VIDEO'].includes(item.type)));
@@ -1705,6 +1768,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   const [exclusiveRequestReason, setExclusiveRequestReason] = useState(initialValues?.extras?.exclusiveRequestReason || '');
   const [auditoriumSetup, setAuditoriumSetup] = useState<AuditoriumSetup>(initialValues?.extras?.auditoriumSetup || { seatingLayout: 'THEATER', stageRequired: false, rehearsalMinutes: 0, notes: '' });
   const [formError, setFormError] = useState<string | null>(null);
+  const [errorFieldId, setErrorFieldId] = useState<string>();
   const [submitting, setSubmitting] = useState(false);
   const [hasLeader, setHasLeader] = useState(initialValues?.extras?.hasLeader || false);
   const [leaderDetails, setLeaderDetails] = useState(initialValues?.extras?.leaderDetails || '');
@@ -1720,16 +1784,21 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   const longTermDays = getDailyOccurrenceCount(selectedDate, longTermEndDate);
   const showFormError = (message: string, fieldId?: string) => {
     setFormError(message);
+    setErrorFieldId(fieldId);
     requestAnimationFrame(() => (fieldId ? document.getElementById(fieldId) : errorRef.current)?.focus());
   };
   useEffect(() => {
     if (!externalError) return;
     const fields: Record<string, string> = {
+      INVALID_BOOKING_PURPOSE: 'booking-purpose',
+      INVALID_PARTICIPANTS: 'booking-participants',
+      CAPACITY_EXCEEDED: 'booking-participants',
       MEETING_TYPE_REQUIRED: 'booking-meeting-type',
       CONFIDENTIALITY_CHOICE_REQUIRED: 'booking-confidentiality',
       CONFIDENTIALITY_TYPE_MISMATCH: 'booking-confidentiality',
       RESOURCE_OUTSIDE_OPEN_HOURS: 'booking-start-time',
       BOOKING_START_IN_PAST: 'booking-start-time',
+      EXCLUSIVE_LEADER_REQUIRED: 'booking-has-leader',
       EXCLUSIVE_REQUEST_REASON_REQUIRED: 'booking-exclusive-reason',
       AUDITORIUM_SETUP_REQUIRED: 'booking-auditorium-layout',
       SERVICE_DETAILS_REQUIRED: 'booking-service-OTHER'
@@ -1889,7 +1958,8 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
 
   const handleSubmit = async () => {
     setFormError(null);
-    if (!purpose.trim()) return showFormError('请填写会议主题或申请用途', 'booking-purpose');
+    setErrorFieldId(undefined);
+    if (!isValidBookingPurpose(purpose)) return showFormError(BOOKING_ERROR_MESSAGES.INVALID_BOOKING_PURPOSE, 'booking-purpose');
     if (!meetingType) return showFormError(BOOKING_ERROR_MESSAGES.MEETING_TYPE_REQUIRED, 'booking-meeting-type');
     if (!confidentialityChoice) return showFormError(BOOKING_ERROR_MESSAGES.CONFIDENTIALITY_CHOICE_REQUIRED, 'booking-confidentiality');
     if ((meetingType === 'CONFIDENTIAL') !== (confidentialityChoice === 'CONFIDENTIAL')) {
@@ -1898,9 +1968,14 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
     if (!contactUser?.name || !contactUser.landline?.trim() || !contactUser.mobile?.trim()) {
       return showFormError(BOOKING_ERROR_MESSAGES.CONTACT_SNAPSHOT_INCOMPLETE);
     }
-    if (!Number.isInteger(participants) || participants < 1) return showFormError('请填写有效的参与人数', 'booking-participants');
+    if (participants === undefined || !Number.isInteger(participants) || participants < 1) {
+      return showFormError(BOOKING_ERROR_MESSAGES.INVALID_PARTICIPANTS, 'booking-participants');
+    }
     if (isRoom && resource.capacity && participants > resource.capacity) {
       return showFormError(`「${resource.name}」最多容纳 ${resource.capacity} 人，请减少人数或更换更大的会议室`, 'booking-participants');
+    }
+    if (resource.isExclusive && !hasLeader) {
+      return showFormError(BOOKING_ERROR_MESSAGES.EXCLUSIVE_LEADER_REQUIRED, 'booking-has-leader');
     }
     if (resource.isExclusive && exclusiveRequestReason.trim().length < 2) {
       return showFormError(BOOKING_ERROR_MESSAGES.EXCLUSIVE_REQUEST_REASON_REQUIRED, 'booking-exclusive-reason');
@@ -1931,7 +2006,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
 
     const requestedFeatures = [...new Set<RoomFeature>([...requiredFeatures, ...(isVideoConference ? ['VIDEO' as const] : [])])];
     const resourceError = validateBookingResource(resource, { startTime: finalStart, endTime: finalEnd, participants, requiredFeatures: requestedFeatures, isVideoConference });
-    if (resourceError) return showFormError(BOOKING_ERROR_MESSAGES[resourceError], 'booking-start-time');
+    if (resourceError) return showFormError(BOOKING_ERROR_MESSAGES[resourceError], ['INVALID_PARTICIPANTS', 'CAPACITY_EXCEEDED'].includes(resourceError) ? 'booking-participants' : 'booking-start-time');
 
     let recurrence;
     if (repeatFrequency === 'DAILY') {
@@ -2034,6 +2109,9 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               id="booking-purpose"
               aria-label="申请用途"
               aria-required="true"
+              aria-invalid={errorFieldId === 'booking-purpose'}
+              aria-describedby={errorFieldId === 'booking-purpose' ? 'booking-form-error' : undefined}
+              maxLength={200}
               value={purpose}
               onChange={e => setPurpose(e.target.value)}
               placeholder="会议主题或办公内容..."
@@ -2152,7 +2230,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               <span>人数</span>
               {resource.capacity ? <span className="text-gray-500 normal-case">该空间最多 {resource.capacity} 人</span> : null}
             </label>
-            <input id="booking-participants" aria-label="参与人数" type="number" min="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants} onChange={e => setParticipants(parseInt(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
+            <input id="booking-participants" aria-label="参与人数" aria-required="true" aria-invalid={errorFieldId === 'booking-participants'} aria-describedby={errorFieldId === 'booking-participants' ? 'booking-form-error' : undefined} type="number" min="1" step="1" max={resource.capacity || undefined} value={Number.isNaN(participants) ? '' : participants ?? ''} onChange={e => setParticipants(e.target.value === '' ? undefined : Number(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
           </div>
 
           {isAuditorium && <fieldset className="space-y-3 p-4 rounded-2xl bg-gray-50 border border-gray-100">
@@ -2198,10 +2276,14 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           <div className="space-y-4 pt-4 border-t border-gray-100">
              <div className="flex items-center justify-between">
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center space-x-1">
-                    <Crown size={12}/> <span>领导参会</span>
+                    <Crown size={12}/> <span>公司领导参会{resource.isExclusive ? '（专属会议室必填）' : ''}</span>
                 </label>
-                <button 
-                    onClick={() => setHasLeader(!hasLeader)} 
+                <button
+                    id="booking-has-leader"
+                    type="button"
+                    aria-label="公司领导参会"
+                    aria-pressed={hasLeader}
+                    onClick={() => setHasLeader(!hasLeader)}
                     className={`w-10 h-6 rounded-full p-1 transition-all ${hasLeader ? `bg-${theme}-600` : 'bg-gray-200'}`}
                 >
                     <div className={`w-4 h-4 bg-white rounded-full shadow-sm transition-all ${hasLeader ? 'translate-x-4' : 'translate-x-0'}`}></div>
@@ -2262,16 +2344,16 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
           </div>
 
           {selectedRange && <div className="p-3 rounded-2xl bg-gray-50 border border-gray-100 text-[11px] leading-relaxed text-gray-600" aria-label="部门额度提示">
-            <p className="font-black text-gray-700">部门每日净额度 · 每日 {ruleSettings.departmentDailyNetMinutes} 分钟</p>
+            <p className="font-black text-gray-700">本部门在当前会议室的每日净额度 · 每日 {ruleSettings.departmentDailyNetMinutes} 分钟</p>
             {quotaSegments.map(segment => <p key={segment.date}>{segment.date}：本次计 {segment.minutes} 分钟{segment.minutes > ruleSettings.departmentDailyNetMinutes ? '，已超过单日上限' : ''}</p>)}
-            <p className="text-gray-500">跨日按中国自然日拆分；系列逐期累计，取消或驳回自动返还。实际剩余额度以服务端提交校验为准。</p>
+            <p className="text-gray-500">不跨其他会议室扣减；跨日按中国自然日拆分，系列逐期累计，取消或驳回自动返还。实际剩余额度以服务端提交校验为准。</p>
           </div>}
           {attendeeWarnings.length > 0 && <div role="status" className="p-3 rounded-2xl bg-amber-50 border border-amber-100 text-[11px] font-bold text-amber-700 space-y-1">
             <p>参会人时间重叠提示（不阻断申请）</p>{attendeeWarnings.map(warning => <p key={warning}>{warning}</p>)}
           </div>}
 
           {formError && (
-            <p ref={errorRef} tabIndex={-1} role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3 outline-none">{formError}</p>
+            <p id="booking-form-error" ref={errorRef} tabIndex={-1} role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3 outline-none">{formError}</p>
           )}
 
           <div className="flex space-x-3 mt-6 pt-4 border-t border-gray-100">
@@ -2414,7 +2496,7 @@ const DetailViewModal = ({ viewDetail, onClose, users, bookings, theme, roles }:
                         <p className="font-bold text-gray-700">{b.purpose}</p>
                         <p className="text-gray-500 mt-0.5">{toLocalDateTimeString(b.startTime)}</p>
                       </div>
-                      <StatusBadge status={b.status} theme={theme} />
+                      <BookingStatusBadge booking={b} theme={theme} />
                    </div>
                  ))}
                  {relatedBookings.length === 0 && <p className="text-center text-gray-500 text-xs py-4 font-bold">暂无记录</p>}
@@ -2589,11 +2671,19 @@ const App: React.FC = () => {
     const requestId = ++operationSequenceRef.current;
     operationRequestRef.current = { id: requestId, owner };
     try {
-      const [dashboardResponse, exceptionResponse] = await Promise.all([fetch('/api/dashboard'), fetch('/api/exceptions')]);
-      const dashboardData = await dashboardResponse.json();
-      const exceptionData = await exceptionResponse.json();
-      if (!dashboardResponse.ok || !exceptionResponse.ok) throw new Error('OPERATIONS_REFRESH_FAILED');
+      const [workspaceResponse, dashboardResponse, exceptionResponse] = await Promise.all([
+        fetch('/api/workspace'), fetch('/api/dashboard'), fetch('/api/exceptions')
+      ]);
+      const [workspaceData, dashboardData, exceptionData] = await Promise.all([
+        workspaceResponse.json(), dashboardResponse.json(), exceptionResponse.json()
+      ]);
+      if ([workspaceResponse, dashboardResponse, exceptionResponse].some(response => response.status === 401) && operationOwnerRef.current === owner) {
+        setCurrentUser(null);
+      }
+      if (!workspaceResponse.ok || !dashboardResponse.ok || !exceptionResponse.ok) throw new Error('OPERATIONS_REFRESH_FAILED');
       if (operationOwnerRef.current !== owner) return;
+      applyWorkspace(workspaceData);
+      setWorkspaceLoaded(true);
       setDashboard(dashboardData);
       setExceptions(exceptionData.exceptions || []);
       setIsOnline(true);
@@ -2627,7 +2717,6 @@ const App: React.FC = () => {
   useEffect(() => {
     setWorkspaceLoaded(false);
     setPreferencesLoaded(false);
-    if (currentUser) void loadWorkspace();
   }, [currentUser?.id]);
 
   useEffect(() => {
@@ -2715,6 +2804,7 @@ const App: React.FC = () => {
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditQuery, setAuditQuery] = useState('');
+  const [auditFilters, setAuditFilters] = useState({ actorId: '', action: '', entityType: '', entityId: '', start: '', end: '' });
   const [auditLoading, setAuditLoading] = useState(false);
   const [auditError, setAuditError] = useState('');
   const [showRoleModal, setShowRoleModal] = useState(false);
@@ -2771,8 +2861,8 @@ const App: React.FC = () => {
   const ITEMS_PER_PAGE = 5;
 
   // Computed days for dashboard views
-  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
-  const monthDays = useMemo(() => Array.from({ length: 30 }, (_, i) => new Date(Date.now() + i * 86400000)), []);
+  const weekDays = useMemo(() => Array.from({ length: 7 }, (_, i) => addLocalDays(new Date(), i)), []);
+  const monthDays = useMemo(() => Array.from({ length: 30 }, (_, i) => addLocalDays(new Date(), i)), []);
 
   const markNotificationRead = (id: string) => {
     setNotifications(prev => prev.map(n => n.id === id ? { ...n, isRead: true } : n));
@@ -2859,12 +2949,14 @@ const App: React.FC = () => {
   const activeSchedule = SCHEDULE_RANGES.find(range => range.id === scheduleRange)!;
 
   const openScheduleDay = (resourceId: string | null, date: Date) => {
-    const dayStart = new Date(date); dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(date); dayEnd.setHours(23, 59, 59, 999);
+    const dayStart = startOfLocalDay(date);
+    const dayEnd = addLocalDays(dayStart, 1);
+    const now = new Date();
     setDayDetail({
       resource: resourceId ? resources.find(r => r.id === resourceId) : { name: '全公司资源概览' },
       date,
-      bookings: bookings.filter(b => b.status === 'APPROVED' && (!resourceId || b.resourceId === resourceId) && new Date(b.startTime) < dayEnd && new Date(b.endTime) > dayStart)
+      bookings: bookings.filter(b => countsTowardOccupancy(b, now) && (!resourceId || b.resourceId === resourceId)
+        && Date.parse(b.startTime) < dayEnd.getTime() && Date.parse(bookingEffectiveEnd(b)) > dayStart.getTime())
     });
   };
 
@@ -3002,7 +3094,6 @@ const App: React.FC = () => {
   const saveBookingSeries = async (plan: any, occurrences: any[]) => {
     if (!currentUser || !occurrences.length) return;
     const seriesId = `series-${Date.now()}`;
-    const status = workflow.length === 0 ? 'APPROVED' as const : 'PENDING' as const;
     const newBookings: Booking[] = occurrences.map((o, index) => ({
       id: `bk-${Date.now()}-${index}`,
       userId: currentUser.id,
@@ -3010,7 +3101,7 @@ const App: React.FC = () => {
       type: plan.resource.type,
       startTime: new Date(o.start).toISOString(),
       endTime: new Date(o.end).toISOString(),
-      status,
+      status: 'PENDING',
       purpose: plan.purpose,
       participants: plan.participants,
       createdAt: new Date().toISOString(),
@@ -3029,10 +3120,12 @@ const App: React.FC = () => {
       addNotification('预约未保存', '预约服务未连接，请恢复连接后再提交。', 'WARNING');
       return;
     }
+    let savedBookings: Booking[] = [];
     try {
       const res = await fetch('/api/bookings/batch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ bookings: newBookings }) });
       const result = await res.json().catch(() => ({}));
       if (res.ok) {
+        savedBookings = Array.isArray(result.bookings) ? result.bookings : newBookings;
         if (result.workspace) applyWorkspace(result.workspace);
         setBookingFormError(null);
         const warnings = [...new Set((result.bookings || []).flatMap((booking: Booking) => booking.attendeeWarnings || []))];
@@ -3068,10 +3161,20 @@ const App: React.FC = () => {
     setBookingPrefill(null);
     const isLongTerm = plan.extras.seriesKind === 'LONG_TERM';
     const isRenewal = !!plan.extras.renewalOfSeriesId;
-    addNotification(isRenewal ? '续期申请已提交' : isLongTerm ? '长期预订已创建' : '周期会议已创建', `已创建 ${newBookings.length} 次「${plan.purpose}」预约${isLongTerm ? `，本期至 ${plan.extras.seriesEndDate}` : ''}。`, 'SUCCESS');
-    (plan.extras?.attendeeIds || []).forEach((id: string) => addNotification(isLongTerm ? '长期会议邀请' : '周期会议邀请', `${currentUser.name} 邀请您参加 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', id));
-    const firstRole = workflow[0]?.approverRole;
-    if (firstRole) users.filter(u => u.role.includes(firstRole)).forEach(u => addNotification(isRenewal ? '长期预订续期待审批' : isLongTerm ? '长期预订待审批' : '周期会议待审批', `${currentUser.name} 提交了 ${newBookings.length} 次「${plan.purpose}」。`, 'INFO', u.id));
+    const pendingBookings = savedBookings.filter(booking => booking.status === 'PENDING');
+    const approvedCount = savedBookings.filter(booking => booking.status === 'APPROVED').length;
+    const statusSummary = pendingBookings.length && approvedCount
+      ? `其中 ${approvedCount} 次已自动核准，${pendingBookings.length} 次待审批`
+      : pendingBookings.length ? `${pendingBookings.length} 次待审批` : `${approvedCount} 次已自动核准`;
+    addNotification(isRenewal ? '续期申请已提交' : isLongTerm ? '长期预订已创建' : '周期会议已创建', `已创建 ${savedBookings.length} 次「${plan.purpose}」预约，${statusSummary}${isLongTerm ? `，本期至 ${plan.extras.seriesEndDate}` : ''}。`, 'SUCCESS');
+    (plan.extras?.attendeeIds || []).forEach((id: string) => addNotification(isLongTerm ? '长期会议邀请' : '周期会议邀请', `${currentUser.name} 邀请您参加 ${savedBookings.length} 次「${plan.purpose}」。`, 'INFO', id));
+    const approvalNotifications = new Map<string, number>();
+    pendingBookings.forEach(booking => {
+      const firstRole = booking.approvalWorkflow?.[0]?.approverRole;
+      if (!firstRole) return;
+      users.filter(user => user.role.includes(firstRole)).forEach(user => approvalNotifications.set(user.id, (approvalNotifications.get(user.id) || 0) + 1));
+    });
+    approvalNotifications.forEach((count, userId) => addNotification(isRenewal ? '长期预订续期待审批' : isLongTerm ? '长期预订待审批' : '周期会议待审批', `${currentUser.name} 提交了 ${count} 次「${plan.purpose}」。`, 'INFO', userId));
   };
 
   const prepareRecurringBooking = (resource: Resource, purpose: string, start: Date, end: Date, participants: number | undefined, extras: any, latestBookings: Booking[]) => {
@@ -3156,7 +3259,7 @@ const App: React.FC = () => {
       type: resource.type,
       startTime: start.toISOString(),
       endTime: end.toISOString(),
-      status: workflow.length === 0 ? 'APPROVED' : 'PENDING',
+      status: 'PENDING',
       purpose,
       participants,
       createdAt: editingBooking?.createdAt || new Date().toISOString(),
@@ -3203,12 +3306,15 @@ const App: React.FC = () => {
     setCalendarDateForBooking(null);
     setBookingPrefill(null);
     setEditingBooking(null);
-    addNotification(editingBooking ? "预约已修改" : "预约申请已提交", editingBooking ? `资源 ${resource.name} 的预约已更新，并重新进入审批流程。` : `资源 ${resource.name} 的预约已进入审批流程。`, "SUCCESS");
+    const needsApproval = savedBooking.status === 'PENDING';
+    addNotification(editingBooking ? '预约已修改' : needsApproval ? '预约申请已提交' : '预约已自动核准', editingBooking
+      ? `资源 ${resource.name} 的预约已更新，并${needsApproval ? '重新进入审批流程' : '自动核准'}。`
+      : `资源 ${resource.name} 的预约${needsApproval ? '已进入审批流程' : '已自动核准'}。`, 'SUCCESS');
     const confidential = savedBooking.meetingType === 'CONFIDENTIAL' || savedBooking.confidentialityChoice === 'CONFIDENTIAL';
     (extras?.attendeeIds || []).filter((id: string) => id !== currentUser.id).forEach((id: string) => addNotification('会议邀请', confidential
       ? `${currentUser.name} 邀请您参加一项涉密会议，请在“我的申请”中查看已授权详情。`
       : `${currentUser.name} 邀请您参加「${purpose}」，时间：${toLocalDateTimeString(savedBooking.startTime)}。`, 'INFO', id));
-    const firstRole = savedBooking.approvalWorkflow?.[0]?.approverRole || workflow[0]?.approverRole;
+    const firstRole = needsApproval ? savedBooking.approvalWorkflow?.[0]?.approverRole : undefined;
     if (firstRole) users.filter(u => u.id !== currentUser.id && u.role.includes(firstRole)).forEach(u => addNotification('新预约待审批', confidential
       ? `${currentUser.name} 提交了一项涉密会议申请，请在审批工作台处理。`
       : `${currentUser.name} 提交了「${purpose}」，资源：${resource.name}，时间：${toLocalDateTimeString(savedBooking.startTime)}。`, 'INFO', u.id));
@@ -3550,7 +3656,17 @@ const App: React.FC = () => {
     setAuditLoading(true);
     setAuditError('');
     try {
-      const res = await fetch('/api/audit?limit=200');
+      const params = new URLSearchParams({ limit: '200' });
+      for (const field of ['actorId', 'action', 'entityType', 'entityId'] as const) {
+        if (auditFilters[field].trim()) params.set(field, auditFilters[field].trim());
+      }
+      if (auditFilters.start) params.set('start', new Date(`${auditFilters.start}T00:00:00`).toISOString());
+      if (auditFilters.end) {
+        const end = new Date(`${auditFilters.end}T00:00:00`);
+        end.setDate(end.getDate() + 1);
+        params.set('end', end.toISOString());
+      }
+      const res = await fetch(`/api/audit?${params}`);
       const result = await res.json();
       if (!res.ok) throw new Error(result.error || '审计记录读取失败');
       setAuditEvents(result.events || []);
@@ -3836,6 +3952,9 @@ const App: React.FC = () => {
                 {canAccessApproval ? <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} trend={pendingCount ? '等待你的处理' : '今日任务已清零'} color="amber" onClick={() => setView('APPROVAL_CENTER')} /> : <StatCard title="我的进行中申请" value={bookings.filter(b => b.userId === currentUser.id && b.status === 'PENDING').length} icon={Activity} trend="个人申请 · 流程跟进" color="amber" onClick={() => setView('BOOKINGS')} />}
               </div>
 
+              {dashboard?.executive && <ExecutiveDashboard executive={dashboard.executive} resources={resources} bookings={bookings} exceptions={exceptions}
+                onDayClick={openScheduleDay} onOpenExceptions={() => setView('EXCEPTIONS')} />}
+
               <section className="studio-panel studio-schedule-card" aria-label="资源占用日程">
                 <div className="studio-schedule-head">
                   <div>
@@ -3862,9 +3981,9 @@ const App: React.FC = () => {
                 </div>
                 <div key={scheduleRange} id="schedule-panel" className="studio-schedule-panel" role="tabpanel" aria-labelledby={`schedule-tab-${scheduleRange}`}>
                   {scheduleRange === 'TODAY' ? (
-                    <TodayResourceUsage resources={resources} bookings={bookings} users={users} theme={theme} onBookingClick={(detail: any) => setDayDetail(detail)} />
+                    <TodayResourceUsage resources={resources} bookings={bookings} users={users} onBookingClick={(detail: any) => setDayDetail(detail)} />
                   ) : (
-                    <ResourceUsageGrid days={scheduleRange === 'WEEK' ? weekDays : monthDays} resources={resources} bookings={bookings} theme={theme} onDayClick={openScheduleDay} />
+                    <ResourceUsageGrid days={scheduleRange === 'WEEK' ? weekDays : monthDays} resources={resources} bookings={bookings} onDayClick={openScheduleDay} />
                   )}
                 </div>
                 <div className="studio-schedule-foot"><span>{resources.length} SPACES · REALTIME</span><span>ONLY ONE VIEW, THE FULL PICTURE.</span></div>
@@ -4126,9 +4245,8 @@ const App: React.FC = () => {
                                            <div className="flex items-center space-x-4">
                                                {b.userId !== currentUser.id && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">受邀会议</span>}
                                                {b.checkedInAt && <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">已签到 {toLocalTimeString(b.checkedInAt)}</span>}
-                                               {b.noShow && <span className="text-[11px] font-bold text-rose-600 bg-rose-50 px-2 py-1 rounded-lg">未签到</span>}
                                                {b.seriesKind === 'LONG_TERM' && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">{b.renewalOfSeriesId ? '续期' : '长期预订'} · {longTermSeries.length} 天</span>}
-                                               <StatusBadge status={b.status} theme={theme} />
+                                               <BookingStatusBadge booking={b} theme={theme} />
                                                <div className={`p-2 rounded-full transition-transform duration-300 ${isExpanded ? 'rotate-180 bg-gray-100 text-gray-600' : 'text-gray-500'}`}>
                                                    <ChevronDown size={16}/>
                                                </div>
@@ -4221,7 +4339,7 @@ const App: React.FC = () => {
 
           {view === 'WORKFLOW_CONFIG' && (
              <div className="space-y-8 animate-in fade-in max-w-5xl">
-               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">审批流程引擎</h3><p className="text-sm text-gray-500 mt-1">每次保存发布新版本；在途申请仍按提交时冻结的流程审批。</p></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增节点</span></button></div>
+               <div className="flex justify-between items-center mb-6"><div><h3 className="text-2xl font-black">通用特殊审批流程</h3><p className="text-sm text-gray-500 mt-1">发布后用于重要、专属和重服务预约；普通预约自动核准，涉密与连续超 3 天使用专用流程。在途申请仍按冻结版本审批。</p></div><button onClick={() => { setEditingWorkflowNode(null); setShowWorkflowModal(true); }} className={`bg-${theme}-600 text-white px-5 py-2.5 rounded-xl font-bold shadow-lg flex items-center space-x-2`}><Plus size={18}/> <span>新增节点</span></button></div>
                <div className="space-y-4">
                  {workflow.map((node, index) => (
                    <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all">
@@ -4237,11 +4355,11 @@ const App: React.FC = () => {
                      </div>
                    </div>
                  ))}
-                 {workflow.length === 0 && <div className="p-20 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold">暂无审批节点，流程将默认免审通过。</div>}
+                 {workflow.length === 0 && <div className="p-20 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold">请新增至少一个审批节点后再发布；普通预约自动核准不受影响。</div>}
                </div>
                {latestApprovalRuleSet && <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="approval-rules-title">
-                 <div><h4 id="approval-rules-title" className="font-black text-gray-800">动态规则集 V{latestApprovalRuleSet.version}</h4><p className="mt-1 text-xs text-gray-500">按优先级从高到低命中第一条规则；未命中时使用默认流程 V{latestApprovalRuleSet.defaultWorkflowVersion}。提交后冻结规则集与流程版本。</p></div>
-                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">{[...latestApprovalRuleSet.rules].sort((a, b) => b.priority - a.priority).map(rule => <div key={rule.id} className="p-4 rounded-2xl bg-gray-50 border border-gray-100"><div className="flex items-center justify-between gap-3"><p className="text-sm font-black text-gray-800">{rule.name}</p><span className="text-[11px] font-black text-indigo-600">优先级 {rule.priority}</span></div><p className="mt-2 text-xs text-gray-500">{[rule.conditions.meetingTypes?.length ? `会议类型：${rule.conditions.meetingTypes.join(' / ')}` : '', rule.conditions.exclusive !== undefined ? `专属资源：${rule.conditions.exclusive ? '是' : '否'}` : '', rule.conditions.heavyService !== undefined ? `重服务：${rule.conditions.heavyService ? '是' : '否'}` : ''].filter(Boolean).join(' · ')}</p><p className="mt-1 text-[11px] font-bold text-gray-500">目标流程 V{rule.workflowVersion}</p></div>)}</div>
+                 <div><h4 id="approval-rules-title" className="font-black text-gray-800">动态规则集 V{latestApprovalRuleSet.version}</h4><p className="mt-1 text-xs text-gray-500">按优先级从高到低命中第一条规则；普通预约未命中特殊规则时自动核准。提交后冻结规则集与流程版本。</p></div>
+                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">{[...latestApprovalRuleSet.rules].sort((a, b) => b.priority - a.priority).map(rule => <div key={rule.id} className="p-4 rounded-2xl bg-gray-50 border border-gray-100"><div className="flex items-center justify-between gap-3"><p className="text-sm font-black text-gray-800">{rule.name}</p><span className="text-[11px] font-black text-indigo-600">优先级 {rule.priority}</span></div><p className="mt-2 text-xs text-gray-500">{[rule.conditions.meetingTypes?.length ? `会议类型：${rule.conditions.meetingTypes.join(' / ')}` : '', rule.conditions.exclusive !== undefined ? `专属资源：${rule.conditions.exclusive ? '是' : '否'}` : '', rule.conditions.heavyService !== undefined ? `重服务：${rule.conditions.heavyService ? '是' : '否'}` : '', rule.conditions.continuousOverDays !== undefined ? `单次连续超过：${rule.conditions.continuousOverDays} 天` : ''].filter(Boolean).join(' · ')}</p><p className="mt-1 text-[11px] font-bold text-gray-500">目标流程 V{rule.workflowVersion}</p></div>)}</div>
                </section>}
                <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="delegation-title">
                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -4410,9 +4528,18 @@ const App: React.FC = () => {
                </div>
                <section className="studio-panel p-6" aria-labelledby="audit-title">
                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-                   <div><h4 id="audit-title" className="font-black text-gray-800">操作审计</h4><p className="mt-1 text-xs text-gray-500">关键写入与业务操作同事务记录；最多查询最近 200 条。</p></div>
-                   <div className="flex gap-2"><input aria-label="筛选审计记录" type="search" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} placeholder="操作、对象或操作人" className="studio-search min-w-0 px-3 py-2 text-xs"/><button onClick={() => void loadAuditEvents()} disabled={auditLoading} className="studio-secondary shrink-0"><RefreshCw size={14} className={auditLoading ? 'animate-spin' : ''}/>刷新</button></div>
+                   <div><h4 id="audit-title" className="font-black text-gray-800">操作审计</h4><p className="mt-1 text-xs text-gray-500">关键写入与业务操作同事务记录；组合条件在 MySQL 服务端查询，最多返回 200 条。</p></div>
+                   <div className="flex gap-2"><input aria-label="筛选审计记录" type="search" value={auditQuery} onChange={e => setAuditQuery(e.target.value)} placeholder="在结果中快速筛选" className="studio-search min-w-0 px-3 py-2 text-xs"/><button onClick={() => void loadAuditEvents()} disabled={auditLoading} className="studio-secondary shrink-0"><RefreshCw size={14} className={auditLoading ? 'animate-spin' : ''}/>刷新</button></div>
                  </div>
+                 <form className="mt-5 grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-7" onSubmit={event => { event.preventDefault(); void loadAuditEvents(); }}>
+                   <select aria-label="审计操作人" value={auditFilters.actorId} onChange={event => setAuditFilters(current => ({ ...current, actorId: event.target.value }))} className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold"><option value="">全部操作人</option>{users.map(user => <option key={user.id} value={user.id}>{user.name}</option>)}</select>
+                   <input aria-label="审计动作" value={auditFilters.action} onChange={event => setAuditFilters(current => ({ ...current, action: event.target.value }))} placeholder="动作，如 USER_UPDATE" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs"/>
+                   <select aria-label="审计对象类型" value={auditFilters.entityType} onChange={event => setAuditFilters(current => ({ ...current, entityType: event.target.value }))} className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs font-bold"><option value="">全部对象类型</option>{['USER', 'ROLE', 'DEPARTMENT', 'WORKFLOW', 'RULE_SETTINGS', 'RESOURCE', 'DELEGATION', 'BOOKING', 'DEVICE'].map(type => <option key={type} value={type}>{type}</option>)}</select>
+                   <input aria-label="审计对象ID" value={auditFilters.entityId} onChange={event => setAuditFilters(current => ({ ...current, entityId: event.target.value }))} placeholder="对象 ID" className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs"/>
+                   <input aria-label="审计开始日期" type="date" value={auditFilters.start} onChange={event => setAuditFilters(current => ({ ...current, start: event.target.value }))} className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs"/>
+                   <input aria-label="审计结束日期" type="date" value={auditFilters.end} onChange={event => setAuditFilters(current => ({ ...current, end: event.target.value }))} className="rounded-xl border border-gray-200 bg-white px-3 py-2.5 text-xs"/>
+                   <button type="submit" disabled={auditLoading} className="rounded-xl bg-indigo-600 px-4 py-2.5 text-xs font-black text-white disabled:opacity-40">查询审计</button>
+                 </form>
                  {auditError && <p role="alert" className="mt-4 rounded-xl bg-rose-50 p-3 text-xs font-bold text-rose-600">{auditError}</p>}
                  <div className="studio-table-shell mt-5">
                    <table className="w-full min-w-[820px] text-left">
@@ -4556,6 +4683,7 @@ const App: React.FC = () => {
         resources={resources}
         bookings={bookings}
         users={users}
+        serviceCatalog={serviceCatalog}
         onAction={handleAgentAction}
         onNavigate={(view) => setView(view as any)}
       />

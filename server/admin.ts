@@ -4,7 +4,7 @@ import { isActiveBooking } from '../utils/bookingRules.ts';
 import { getCurrentRuleSettings, getLatestRuleVersion } from '../utils/resourceDomain.ts';
 import { ensureApprovalPolicy } from '../utils/approvalPolicy.ts';
 import { isConfidentialBooking } from './confidentiality.ts';
-import { DEFAULT_RULE_SETTINGS } from '../constants.ts';
+import { DEFAULT_RULE_SETTINGS, isServiceType } from '../constants.ts';
 import { ensureServiceDomain } from './serviceDomain.ts';
 import type { ApprovalDelegate, ApprovalNode, ApprovalRuleSetVersion, Booking, BookingRuleSettings, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, Department, ExceptionActionRecord, Resource, ResourceImportBatch, RoleDefinition, RuleVersion, User, WorkOrder, WorkflowVersion } from '../types.ts';
 import { validateDeviceBackup } from './devices.ts';
@@ -19,6 +19,25 @@ const optionalString = (value: unknown, field: string) => value === undefined ||
 const unique = (items: Array<{ id: string }>, label: string) => {
   if (new Set(items.map(item => item.id)).size !== items.length) throw new DbError(`DUPLICATE_${label}_ID`, 409);
 };
+const changeDetails = (before: unknown, after: unknown) => ({ before: before || null, after: after || null });
+const maskEmail = (value: string) => {
+  const [local, domain] = value.split('@');
+  return `${local.slice(0, 1)}***@${domain}`;
+};
+const maskPhone = (value?: string) => value
+  ? value.length <= 5 ? '*'.repeat(value.length) : `${value.slice(0, 3)}****${value.slice(-2)}`
+  : undefined;
+const userAuditView = (user?: User) => user ? {
+  id: user.id, name: user.name, email: maskEmail(user.email), role: [...user.role], department: user.department,
+  landline: maskPhone(user.landline), mobile: maskPhone(user.mobile), status: user.status,
+  directorySource: user.directorySource, directorySyncedAt: user.directorySyncedAt, disabledAt: user.disabledAt
+} : null;
+const roleAuditView = (role?: RoleDefinition) => role ? {
+  id: role.id, name: role.name, description: role.description, color: role.color
+} : null;
+const departmentAuditView = (department?: Department) => department ? {
+  id: department.id, name: department.name, parentId: department.parentId
+} : null;
 
 const normalizeRole = (input: any, id?: string): RoleDefinition => ({
   id: id || idValue(input?.id),
@@ -123,7 +142,8 @@ export const getRuleConfiguration = async () => {
 
 export const saveRuleSettings = async (input: any, actorId: string) => mutateDb(async (db, { audit }) => {
   const currentVersion = getLatestRuleVersion(db.ruleVersions);
-  const settings = normalizeRuleSettings(input, getCurrentRuleSettings(db.ruleVersions));
+  const currentSettings = getCurrentRuleSettings(db.ruleVersions);
+  const settings = normalizeRuleSettings(input, currentSettings);
   const version: RuleVersion = {
     version: (currentVersion?.version || 0) + 1,
     settings,
@@ -131,7 +151,7 @@ export const saveRuleSettings = async (input: any, actorId: string) => mutateDb(
     createdBy: actorId
   };
   db.ruleVersions = [...(db.ruleVersions || []), version];
-  await audit({ actorId, action: 'RULE_VERSION_PUBLISH', entityType: 'RULE_SETTINGS', entityId: String(version.version), details: { ...settings } });
+  await audit({ actorId, action: 'RULE_VERSION_PUBLISH', entityType: 'RULE_SETTINGS', entityId: String(version.version), details: changeDetails(currentSettings, settings) });
   return version;
 });
 
@@ -152,13 +172,14 @@ export const saveUser = async (input: any, actorId: string, editingId?: string) 
   }
   db.users = editingId ? users.map(item => item.id === editingId ? user : item) : [...users, user];
   if (user.status === 'DISABLED' && current?.status !== 'DISABLED') await revokeUserSessions([user.id]);
-  await audit({ actorId, action: editingId ? 'USER_UPDATE' : 'USER_CREATE', entityType: 'USER', entityId: user.id });
+  await audit({ actorId, action: editingId ? 'USER_UPDATE' : 'USER_CREATE', entityType: 'USER', entityId: user.id, details: changeDetails(userAuditView(current), userAuditView(user)) });
   return user;
 });
 
 export const deleteUser = async (id: string, actorId: string) => mutateDb(async (db, { audit, revokeUserSessions }) => {
   if (id === actorId) throw new DbError('CANNOT_DELETE_SELF', 409);
-  if (!(db.users || []).some(user => user.id === id)) throw new DbError('USER_NOT_FOUND', 404);
+  const current = (db.users || []).find(user => user.id === id);
+  if (!current) throw new DbError('USER_NOT_FOUND', 404);
   if ((db.bookings || []).some(booking => booking.userId === id && isActiveBooking(booking))) {
     throw new DbError('USER_HAS_ACTIVE_BOOKINGS', 409);
   }
@@ -167,7 +188,7 @@ export const deleteUser = async (id: string, actorId: string) => mutateDb(async 
   }
   db.users = (db.users || []).filter(user => user.id !== id);
   await revokeUserSessions([id]);
-  await audit({ actorId, action: 'USER_DELETE', entityType: 'USER', entityId: id });
+  await audit({ actorId, action: 'USER_DELETE', entityType: 'USER', entityId: id, details: changeDetails(userAuditView(current), null) });
   return { ok: true };
 });
 
@@ -179,7 +200,7 @@ export const saveRole = async (input: any, actorId: string, editingId?: string) 
   if (!editingId && roles.some(item => item.id === role.id)) throw new DbError('DUPLICATE_ROLE_ID', 409);
   if (roles.some(item => item.id !== role.id && item.name === role.name)) throw new DbError('DUPLICATE_ROLE_NAME', 409);
   db.roles = editingId ? roles.map(item => item.id === editingId ? role : item) : [...roles, role];
-  await audit({ actorId, action: editingId ? 'ROLE_UPDATE' : 'ROLE_CREATE', entityType: 'ROLE', entityId: role.id });
+  await audit({ actorId, action: editingId ? 'ROLE_UPDATE' : 'ROLE_CREATE', entityType: 'ROLE', entityId: role.id, details: changeDetails(roleAuditView(current), roleAuditView(role)) });
   return role;
 });
 
@@ -202,7 +223,7 @@ export const saveDepartment = async (input: any, actorId: string, editingId?: st
   if (current && current.name !== department.name) {
     db.users = (db.users || []).map(user => user.department === current.name ? { ...user, department: department.name } : user);
   }
-  await audit({ actorId, action: editingId ? 'DEPARTMENT_UPDATE' : 'DEPARTMENT_CREATE', entityType: 'DEPARTMENT', entityId: department.id });
+  await audit({ actorId, action: editingId ? 'DEPARTMENT_UPDATE' : 'DEPARTMENT_CREATE', entityType: 'DEPARTMENT', entityId: department.id, details: changeDetails(departmentAuditView(current), departmentAuditView(department)) });
   return department;
 });
 
@@ -216,12 +237,13 @@ export const deleteDepartment = async (id: string, actorId: string) => mutateDb(
     throw new DbError('DEPARTMENT_USED_BY_WORKFLOW', 409);
   }
   db.departments = (db.departments || []).filter(item => item.id !== id);
-  await audit({ actorId, action: 'DEPARTMENT_DELETE', entityType: 'DEPARTMENT', entityId: id });
+  await audit({ actorId, action: 'DEPARTMENT_DELETE', entityType: 'DEPARTMENT', entityId: id, details: changeDetails(departmentAuditView(department), null) });
   return { ok: true };
 });
 
 export const saveWorkflow = async (input: any, actorId: string) => mutateDb(async (db, { audit }) => {
   const workflow = normalizeWorkflow(input, db.roles || [], db.departments || []);
+  if (!workflow.length) throw new DbError('INVALID_WORKFLOW', 400);
   ensureApprovalPolicy(db);
   const currentRuleSet = [...(db.approvalRuleSetVersions || [])].sort((a, b) => b.version - a.version)[0]!;
   const current = (db.workflowVersions || []).find(item => item.version === currentRuleSet.defaultWorkflowVersion)
@@ -238,14 +260,21 @@ export const saveWorkflow = async (input: any, actorId: string) => mutateDb(asyn
   const ruleSetVersion: ApprovalRuleSetVersion = {
     version: currentRuleSet.version + 1,
     defaultWorkflowVersion: version.version,
-    rules: structuredClone(currentRuleSet.rules),
+    rules: structuredClone(currentRuleSet.rules).map(rule => ['important', 'exclusive', 'heavy-service'].includes(rule.id)
+      ? { ...rule, workflowVersion: version.version }
+      : rule),
     createdAt: version.createdAt,
     createdBy: actorId
   };
   db.workflowVersions = [...(db.workflowVersions || []), version].sort((a, b) => a.version - b.version);
   db.approvalRuleSetVersions = [...(db.approvalRuleSetVersions || []), ruleSetVersion];
   db.workflow = workflow;
-  await audit({ actorId, action: 'WORKFLOW_PUBLISH', entityType: 'WORKFLOW', entityId: String(version.version), details: { nodeCount: workflow.length, approvalRuleSetVersion: ruleSetVersion.version } });
+  await audit({ actorId, action: 'WORKFLOW_PUBLISH', entityType: 'WORKFLOW', entityId: String(version.version), details: {
+    nodeCount: workflow.length,
+    approvalRuleSetVersion: ruleSetVersion.version,
+    before: { version: current.version, nodes: current.nodes },
+    after: { version: version.version, nodes: workflow }
+  } });
   return workflow;
 });
 
@@ -276,7 +305,7 @@ export const saveApprovalDelegate = async (input: any, actorId: string) => mutat
     throw new DbError('DELEGATION_OVERLAP', 409);
   }
   db.approvalDelegates = [delegate, ...(db.approvalDelegates || [])];
-  await audit({ actorId, action: 'DELEGATION_CREATE', entityType: 'DELEGATION', entityId: delegate.id, details: { delegatorId: delegate.delegatorId, delegateId: delegate.delegateId, startsAt: delegate.startsAt, endsAt: delegate.endsAt } });
+  await audit({ actorId, action: 'DELEGATION_CREATE', entityType: 'DELEGATION', entityId: delegate.id, details: changeDetails(null, delegate) });
   return delegate;
 });
 
@@ -284,7 +313,7 @@ export const deleteApprovalDelegate = async (id: string, actorId: string) => mut
   const current = (db.approvalDelegates || []).find(item => item.id === id);
   if (!current) throw new DbError('DELEGATION_NOT_FOUND', 404);
   db.approvalDelegates = (db.approvalDelegates || []).filter(item => item.id !== id);
-  await audit({ actorId, action: 'DELEGATION_REVOKE', entityType: 'DELEGATION', entityId: id });
+  await audit({ actorId, action: 'DELEGATION_REVOKE', entityType: 'DELEGATION', entityId: id, details: changeDetails(current, null) });
   return { ok: true };
 });
 
@@ -344,7 +373,7 @@ export const saveConfidentialWhitelistEntry = async (input: any, actorId: string
     createdBy: actorId
   };
   db.confidentialWhitelist = [entry, ...(db.confidentialWhitelist || [])];
-  await audit({ actorId, action: 'CONFIDENTIAL_WHITELIST_ADD', entityType: 'USER', entityId: userId, details: { whitelistId: entry.id } });
+  await audit({ actorId, action: 'CONFIDENTIAL_WHITELIST_ADD', entityType: 'USER', entityId: userId, details: { before: null, after: { whitelistId: entry.id, userId } } });
   return entry;
 });
 
@@ -353,7 +382,7 @@ export const deleteConfidentialWhitelistEntry = async (id: string, actorId: stri
   const entry = (db.confidentialWhitelist || []).find(item => item.id === id);
   if (!entry) throw new DbError('CONFIDENTIAL_WHITELIST_NOT_FOUND', 404);
   db.confidentialWhitelist = (db.confidentialWhitelist || []).filter(item => item.id !== id);
-  await audit({ actorId, action: 'CONFIDENTIAL_WHITELIST_REMOVE', entityType: 'USER', entityId: entry.userId, details: { whitelistId: id } });
+  await audit({ actorId, action: 'CONFIDENTIAL_WHITELIST_REMOVE', entityType: 'USER', entityId: entry.userId, details: { before: { whitelistId: id, userId: entry.userId }, after: null } });
   return { ok: true };
 });
 
@@ -373,7 +402,7 @@ export const createConfidentialityAuthorization = async (bookingId: string, inpu
     createdAt: new Date().toISOString()
   };
   db.confidentialityAuthorizations = [authorization, ...(db.confidentialityAuthorizations || [])];
-  await audit({ actorId, action: 'CONFIDENTIALITY_AUTHORIZATION_CREATE', entityType: 'BOOKING', entityId: bookingId, details: { authorizationId: authorization.id, changeAction: authorization.action } });
+  await audit({ actorId, action: 'CONFIDENTIALITY_AUTHORIZATION_CREATE', entityType: 'BOOKING', entityId: bookingId, details: { before: null, after: { authorizationId: authorization.id, changeAction: authorization.action } } });
   return authorization;
 });
 
@@ -390,6 +419,7 @@ const normalizeApprovalRuleSets = (input: any, workflowVersions: WorkflowVersion
         || (conditions.meetingTypes !== undefined && (!Array.isArray(conditions.meetingTypes) || conditions.meetingTypes.some((type: any) => !['NORMAL', 'IMPORTANT', 'CONFIDENTIAL'].includes(type))))
         || (conditions.exclusive !== undefined && typeof conditions.exclusive !== 'boolean')
         || (conditions.heavyService !== undefined && typeof conditions.heavyService !== 'boolean')
+        || (conditions.continuousOverDays !== undefined && (typeof conditions.continuousOverDays !== 'number' || !Number.isFinite(conditions.continuousOverDays) || conditions.continuousOverDays <= 0))
         || !Number.isSafeInteger(rule?.priority) || !workflowVersions.some(item => item.version === rule?.workflowVersion)) {
         throw new DbError('INVALID_APPROVAL_RULE', 400);
       }
@@ -594,7 +624,7 @@ export const restoreBackup = async (body: any, actorId: string) => {
   const delegates: ApprovalDelegate[] = data.approvalDelegates.map((delegate: any) => normalizeDelegate(delegate, users, actorId));
   unique(delegates, 'DELEGATION');
   const workOrders: WorkOrder[] = data.workOrders.map((order: any) => {
-    if (!order || !['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(order.type) || !['TODO', 'PENDING_INFO', 'IN_PROGRESS', 'DONE', 'CANCELLED', 'EXCEPTION'].includes(order.status)
+    if (!order || !isServiceType(order.type) || !['TODO', 'PENDING_INFO', 'IN_PROGRESS', 'DONE', 'CANCELLED', 'EXCEPTION'].includes(order.status)
       || !frozenBookings.some((booking: Booking) => booking.id === order.bookingId) || !roles.some(role => role.id === order.assigneeRole)) {
       throw new DbError('INVALID_BACKUP_WORK_ORDER', 400);
     }

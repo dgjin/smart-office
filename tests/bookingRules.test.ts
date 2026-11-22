@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { Booking, Resource } from '../types.ts';
-import { addCalendarMonthClamped, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getDailyOccurrenceCount, getLongTermMaxEndDate, getResourceUpdateError, hasBookingConflict, isLongTermSeriesWithinLimit, timeRangesOverlap, validateBookingResource } from '../utils/bookingRules.ts';
+import { addCalendarMonthClamped, BOOKING_DISPLAY_STATUS_LABELS, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getBookingDisplayStatus, getDailyOccurrenceCount, getLongTermMaxEndDate, getResourceUpdateError, hasBookingConflict, isLongTermSeriesWithinLimit, isValidBookingPurpose, timeRangesOverlap, validateBookingResource } from '../utils/bookingRules.ts';
 import { validateBookingDraft } from '../utils/bookingDraft.ts';
 
 const makeBooking = (overrides: Partial<Booking> = {}): Booking => ({
@@ -24,6 +24,32 @@ const candidate = {
   startTime: '2026-11-20T01:30:00.000Z',
   endTime: '2026-11-20T02:30:00.000Z'
 };
+
+test('展示状态保留审批主状态并按使用事实统一派生', () => {
+  const now = new Date('2026-11-20T01:30:00.000Z');
+  const cases: Array<[string, Partial<Booking>, ReturnType<typeof getBookingDisplayStatus>]> = [
+    ['待审批', { status: 'PENDING' }, 'PENDING'],
+    ['已驳回', { status: 'REJECTED' }, 'REJECTED'],
+    ['待开始', { startTime: '2026-11-20T02:00:00.000Z', endTime: '2026-11-20T03:00:00.000Z' }, 'UPCOMING'],
+    ['开始等值为进行中', { startTime: now.toISOString(), endTime: '2026-11-20T02:30:00.000Z' }, 'IN_PROGRESS'],
+    ['会议进行中', {}, 'IN_PROGRESS'],
+    ['结束等值为已完成', { startTime: '2026-11-20T00:30:00.000Z', endTime: now.toISOString() }, 'COMPLETED'],
+    ['持久已完成', { status: 'COMPLETED' }, 'COMPLETED'],
+    ['主动取消', { status: 'CANCELLED', releaseType: 'CANCELLED', releasedAt: now.toISOString() }, 'CANCELLED'],
+    ['历史取消', { status: 'CANCELLED' }, 'CANCELLED'],
+    ['未签到爽约', { status: 'CANCELLED', noShow: true, releaseType: 'NO_SHOW' }, 'NO_SHOW'],
+    ['释放类型兼容识别爽约', { status: 'CANCELLED', releaseType: 'NO_SHOW' }, 'NO_SHOW'],
+    ['人工异常释放', { status: 'CANCELLED', releaseType: 'MANUAL_EXCEPTION' }, 'RELEASED'],
+    ['确认未使用释放', { status: 'CANCELLED', releaseType: 'UNUSED_CONFIRMED' }, 'RELEASED'],
+    ['提前结束优先于释放类型', { status: 'COMPLETED', endedEarlyAt: now.toISOString(), releaseType: 'MANUAL_EXCEPTION' }, 'ENDED_EARLY']
+  ];
+  for (const [name, overrides, expected] of cases) {
+    assert.equal(getBookingDisplayStatus(makeBooking(overrides), now), expected, name);
+  }
+  assert.equal(BOOKING_DISPLAY_STATUS_LABELS.NO_SHOW, '已爽约');
+  assert.equal(BOOKING_DISPLAY_STATUS_LABELS.RELEASED, '已释放');
+  assert.equal(BOOKING_DISPLAY_STATUS_LABELS.ENDED_EARLY, '提前结束');
+});
 
 test('相交时段冲突，首尾相接不冲突', () => {
   assert.equal(timeRangesOverlap(new Date('2026-11-20T01:30Z'), new Date('2026-11-20T02:30Z'), new Date('2026-11-20T01:00Z'), new Date('2026-11-20T02:00Z')), true);
@@ -105,6 +131,23 @@ const resourceCandidate = {
   participants: 6
 };
 
+test('预约人数必填且必须是大于 0 的整数，容量使用实际人数', () => {
+  for (const participants of [undefined, 0, -1, 1.5, Number.NaN, '4']) {
+    assert.equal(validateBookingResource(makeResource(), { ...resourceCandidate, participants: participants as any }), 'INVALID_PARTICIPANTS');
+  }
+  assert.equal(validateBookingResource(makeResource(), { ...resourceCandidate, participants: 1 }), null);
+  assert.equal(validateBookingResource(makeResource(), { ...resourceCandidate, participants: 11 }), 'CAPACITY_EXCEEDED');
+});
+
+test('会议主题必须有明确内容且不超 200 字，纯通用词及空白变体无效', () => {
+  for (const purpose of ['', ' ', '会议', '开会', ' 会 议 ', '开\n会', '会\t议', '项'.repeat(201), undefined, 4]) {
+    assert.equal(isValidBookingPurpose(purpose), false);
+  }
+  for (const purpose of ['项目评审会', '项目会议', '一对一沟通', ' 季度经营复盘 ']) {
+    assert.equal(isValidBookingPurpose(purpose), true);
+  }
+});
+
 test('维护中和待开放资源不可预约，当前占用允许预约未来空档', () => {
   assert.equal(validateBookingResource(makeResource({ status: 'MAINTENANCE' }), resourceCandidate), 'RESOURCE_MAINTENANCE');
   assert.equal(validateBookingResource(makeResource({ status: 'PENDING' }), resourceCandidate), 'RESOURCE_UNAVAILABLE');
@@ -155,11 +198,15 @@ test('草案确认前校验用途、时间、人数、容量、设备和资源�
   const draft = { ...resourceCandidate, resourceId: 'r1', purpose: '项目评审' };
   assert.equal(validateBookingDraft(draft, [makeResource()], [], now), null);
   assert.match(validateBookingDraft({ ...draft, purpose: ' ' }, [makeResource()], [], now) || '', /用途/);
+  assert.match(validateBookingDraft({ ...draft, purpose: '会 议' }, [makeResource()], [], now) || '', /明确主题/);
   assert.match(validateBookingDraft({ ...draft, resourceId: 'missing' }, [makeResource()], [], now) || '', /有效资源/);
   assert.match(validateBookingDraft({ ...draft, endTime: draft.startTime }, [makeResource()], [], now) || '', /结束时间/);
   assert.match(validateBookingDraft({ ...draft, startTime: '2026-11-18T01:00:00.000Z', endTime: '2026-11-18T02:00:00.000Z' }, [makeResource()], [], now) || '', /开始时间已过/);
+  assert.match(validateBookingDraft({ ...draft, participants: undefined }, [makeResource()], [], now) || '', /大于 0 的整数/);
   assert.match(validateBookingDraft({ ...draft, participants: 0 }, [makeResource()], [], now) || '', /大于 0 的整数/);
+  assert.match(validateBookingDraft({ ...draft, participants: -1 }, [makeResource()], [], now) || '', /大于 0 的整数/);
   assert.match(validateBookingDraft({ ...draft, participants: 1.5 }, [makeResource()], [], now) || '', /大于 0 的整数/);
+  assert.match(validateBookingDraft({ ...draft, participants: Number.NaN }, [makeResource()], [], now) || '', /大于 0 的整数/);
   assert.match(validateBookingDraft({ ...draft, participants: 11 }, [makeResource()], [], now) || '', /最多容纳 10 人/);
   assert.match(validateBookingDraft({ ...draft, requiredFeatures: ['DISPLAY'] }, [makeResource({ features: ['白板'] })], [], now) || '', /设备要求/);
   assert.match(validateBookingDraft(draft, [makeResource({ status: 'MAINTENANCE' })], [], now) || '', /暂停预约/);

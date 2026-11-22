@@ -114,6 +114,25 @@ test('propose_booking 冲突时不生成提案，并给出最近空档', () => {
   assert.match(result.error || '', /最近空档/);
 });
 
+test('propose_booking 要求明确主题和必填正整数人数，不自动补默认值', () => {
+  const base = { resourceName: 'Beta', startTime: '2026-11-20T10:00', endTime: '2026-11-20T11:00', purpose: '项目评审' };
+  for (const participants of [undefined, 0, -1, 1.5, 'four']) {
+    const result = exec('3').propose_booking({ ...base, participants });
+    assert.equal(result.ok, false);
+    assert.equal(result.action, undefined);
+    assert.match(result.error || '', /参与人数必填/);
+  }
+  for (const purpose of ['', ' ', '会议', '开会', ' 会 议 ', '开\n会']) {
+    const result = exec('3').propose_booking({ ...base, purpose, participants: 2 });
+    assert.equal(result.ok, false);
+    assert.equal(result.action, undefined);
+    assert.match(result.error || '', /明确主题/);
+  }
+  const accepted = exec('3').propose_booking({ ...base, participants: 1 });
+  assert.equal(accepted.ok, true);
+  assert.equal(accepted.data.draft.participants, 1);
+});
+
 test('propose_booking 成功时返回可直接提交的草稿', () => {
   const result = exec('3').propose_booking({
     resourceName: 'Beta',
@@ -158,14 +177,20 @@ test('propose_booking 仅生成普通或重要会议草案并保留明确服务�
   const result = createExecutor(db, { userId: '3', now: NOW }).propose_booking({
     resourceName: 'Beta', startTime: '2026-11-20T10:00', endTime: '2026-11-20T11:00',
     purpose: '重要接待', meetingType: 'IMPORTANT', participants: 2,
-    serviceRequirements: [{ type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' }],
+    serviceRequirements: [
+      { type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' },
+      { type: 'VEHICLE', fieldValues: { quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟', serviceLocation: '北门', estimatedCost: '680' } }
+    ],
     exclusiveRequestReason: '临时重要接待',
     auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '前排预留' }
   });
   assert.equal(result.ok, true, result.error);
   assert.equal(result.data.draft.meetingType, 'IMPORTANT');
   assert.equal(result.data.draft.confidentialityChoice, undefined);
-  assert.deepEqual(result.data.draft.serviceRequirements, [{ type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' }]);
+  assert.deepEqual(result.data.draft.serviceRequirements, [
+    { type: 'SIGNAGE', details: '入口指引' }, { type: 'OTHER', details: '席卡' },
+    { type: 'VEHICLE', fieldValues: { quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟', serviceLocation: '北门', estimatedCost: '680' } }
+  ]);
   assert.equal(result.data.draft.exclusiveRequestReason, '临时重要接待');
   assert.equal(result.data.draft.auditoriumSetup.seatingLayout, 'CLASSROOM');
 

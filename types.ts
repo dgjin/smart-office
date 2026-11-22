@@ -213,6 +213,7 @@ export interface ResourceImportBatch {
 }
 
 export type BookingStatus = 'PENDING' | 'APPROVED' | 'REJECTED' | 'COMPLETED' | 'CANCELLED';
+export type BookingDisplayStatus = 'PENDING' | 'UPCOMING' | 'IN_PROGRESS' | 'NO_SHOW' | 'RELEASED' | 'ENDED_EARLY' | 'COMPLETED' | 'CANCELLED' | 'REJECTED';
 
 export interface ApprovalNode {
   id: string;
@@ -233,6 +234,7 @@ export interface ApprovalRuleConditions {
   meetingTypes?: MeetingType[];
   exclusive?: boolean;
   heavyService?: boolean;
+  continuousOverDays?: number;
 }
 
 export interface ApprovalRule {
@@ -323,7 +325,8 @@ export interface BookingContactSnapshot {
   mobile: string;
 }
 
-export type ServiceType = 'TEA' | 'VIDEO' | 'SIGNAGE' | 'SECURITY' | 'OTHER';
+export type ServiceType = 'TEA' | 'VIDEO' | 'SIGNAGE' | 'SECURITY' | 'OTHER'
+  | 'VEHICLE' | 'NAMEPLATE' | 'FURNITURE' | 'WATER' | 'STATIONERY' | 'RECEPTION' | 'ON_DUTY' | 'AUDITORIUM';
 
 export interface ServiceFieldTemplate {
   key: string;
@@ -375,6 +378,7 @@ export interface AuditoriumSetup {
 }
 
 export interface BookingQuotaDetail {
+  resourceId: string;
   date: string;
   limitMinutes: number;
   usedBeforeMinutes: number;
@@ -587,6 +591,7 @@ export interface DoorDevice {
   updatedAt: string;
   lastHeartbeatAt?: string;
   lastSnapshotRevision?: number;
+  restartRequestedAt?: string;
   revokedAt?: string;
 }
 
@@ -632,10 +637,27 @@ export interface OperationalException {
   history: ExceptionActionRecord['history'];
 }
 
+export interface ExecutiveDashboardSnapshot {
+  roomCount: number;
+  currentInUse: number;
+  currentIdle: number;
+  todayBookingCount: number;
+  todayUtilization: number;
+  weekAverageUtilization: number;
+  todayNoShowCount: number;
+  overdueReleaseCount: number;
+  week: Array<{
+    date: string;
+    utilization: number;
+    importantBookingCount: number;
+  }>;
+}
+
 export interface DashboardSnapshot {
   generatedAt: string;
   revision: number;
   scope: 'ENTERPRISE' | 'OPERATIONS' | 'PERSONAL';
+  executive?: ExecutiveDashboardSnapshot;
   stats: {
     totalResources: number;
     availableRooms: number;
@@ -690,6 +712,7 @@ export interface OperationsBookingReport {
   resourceType: string;
   timeSlot: string;
   status: BookingStatus;
+  displayStatus: BookingDisplayStatus;
   startTime: string;
   endTime: string;
   scheduledMinutes: number;
@@ -730,9 +753,41 @@ export interface OperationsServiceReport {
   responseDueAt?: string;
   respondedAt?: string;
   completedAt?: string;
+  catalogItemId?: string;
+  catalogVersion?: number;
+  catalogName?: string;
+  fieldValues: Record<string, string>;
+  requirementDetails: string;
+  quantity?: string;
+  unit?: string;
+  specification?: string;
+  serviceTime?: string;
+  serviceLocation?: string;
+  estimatedCost?: number;
+  executionResult?: string;
+  cancellationReason?: string;
   costAmount: number;
   costNote?: string;
   exceptionReason?: string;
+}
+
+export interface OperationsSupplyReport {
+  serviceType: ServiceType;
+  serviceName: string;
+  catalogItemId: string;
+  catalogVersion: number;
+  quantityField: string;
+  quantityLabel: string;
+  unit: string;
+  timeSlot: string;
+  quantity: number;
+  orderCount: number;
+  todoCount: number;
+  pendingInfoCount: number;
+  inProgressCount: number;
+  doneCount: number;
+  cancelledCount: number;
+  exceptionCount: number;
 }
 
 export interface OperationsReport {
@@ -745,5 +800,6 @@ export interface OperationsReport {
   bookings: OperationsBookingReport[];
   checkIns: OperationsCheckInReport[];
   services: OperationsServiceReport[];
+  supplies: OperationsSupplyReport[];
   differences: OperationsBookingReport[];
 }

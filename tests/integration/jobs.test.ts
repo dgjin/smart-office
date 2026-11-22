@@ -59,7 +59,8 @@ const insertApprovedBooking = async (input: { id: string; resourceId: string; st
     id: input.id, userId: '3', resourceId: input.resourceId, type: 'ROOM', startTime: input.start.toISOString(), endTime: input.end.toISOString(),
     status: 'APPROVED', purpose: input.purpose, participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 1,
     approvalHistory: [], attendeeIds: ['4'], needsTeaService: Boolean(input.tea),
-    exclusiveAccessType: input.exclusive ? 'TEMPORARY' : undefined, exclusiveRequestReason: input.exclusive ? '专属临时授权' : undefined
+    exclusiveAccessType: input.exclusive ? 'TEMPORARY' : undefined, exclusiveRequestReason: input.exclusive ? '专属临时授权' : undefined,
+    hasLeader: input.exclusive ? true : undefined
   };
   await queryTestDb(`INSERT INTO bookings (id, user_id, resource_id, start_time, end_time, status, payload, created_at)
     VALUES (?, '3', ?, ?, ?, 'APPROVED', ?, ?)`, [input.id, input.resourceId, input.start, input.end, JSON.stringify(payload), new Date()]);
@@ -86,7 +87,7 @@ describe('MySQL Job Worker 与 Outbox', { skip: !integrationEnabled, concurrency
     const exclusiveId = `job-exclusive-${crypto.randomUUID()}`;
     await insertApprovedBooking({ id: reminderId, resourceId: resource.id, start: new Date(Date.now() + 10 * 60000), end: new Date(Date.now() + 70 * 60000), purpose: '双 Worker 会前提醒' });
     await insertApprovedBooking({ id: noShowId, resourceId: resource.id, start: new Date(Date.now() - 21 * 60000), end: new Date(Date.now() + 39 * 60000), purpose: '双 Worker no-show', tea: true });
-    await insertApprovedBooking({ id: exclusiveId, resourceId: resource.id, start: new Date(Date.now() - 21 * 60000), end: new Date(Date.now() + 39 * 60000), purpose: '专属预约 no-show 豁免', exclusive: true });
+    await insertApprovedBooking({ id: exclusiveId, resourceId: resource.id, start: new Date(Date.now() - 21 * 60000), end: new Date(Date.now() + 39 * 60000), purpose: '专属预约统一 no-show', exclusive: true });
     await queryTestDb(`INSERT INTO scheduled_jobs (id, job_key, job_type, payload, run_at, status, attempts, lease_owner, lease_expires_at)
       VALUES (?, ?, 'BOOKING_REMINDER', ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 MINUTE), 'RUNNING', 1, 'crashed-worker', DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))
       ON DUPLICATE KEY UPDATE job_type = VALUES(job_type), payload = VALUES(payload), run_at = VALUES(run_at),
@@ -98,8 +99,10 @@ describe('MySQL Job Worker 与 Outbox', { skip: !integrationEnabled, concurrency
       const rows = await queryTestDb<any[]>('SELECT status FROM bookings WHERE id = ?', [noShowId]);
       const notices = await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ?', [`reminder-${reminderId}-%`]);
       const checkInNotices = await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ?', [`check-in-reminder-${noShowId}-%`]);
+      const exclusiveRows = await queryTestDb<any[]>('SELECT status FROM bookings WHERE id = ?', [exclusiveId]);
       const exclusiveJobs = await queryTestDb<any[]>('SELECT status FROM scheduled_jobs WHERE job_key = ?', [`noshow:${exclusiveId}:v1`]);
-      return rows[0]?.status === 'CANCELLED' && notices.length === 2 && checkInNotices.length === 2 && exclusiveJobs[0]?.status === 'DONE';
+      return rows[0]?.status === 'CANCELLED' && notices.length === 2 && checkInNotices.length === 2
+        && exclusiveRows[0]?.status === 'CANCELLED' && exclusiveJobs[0]?.status === 'DONE';
     });
     const reminders = await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ? ORDER BY id', [`reminder-${reminderId}-%`]);
     assert.deepEqual(reminders.map(row => row.id), [`reminder-${reminderId}-v1-3`, `reminder-${reminderId}-v1-4`]);
@@ -115,10 +118,19 @@ describe('MySQL Job Worker 与 Outbox', { skip: !integrationEnabled, concurrency
     assert.equal(noShowPayload.releaseType, 'NO_SHOW');
     assert.ok(noShowPayload.releasedAt && noShowPayload.accessRevokedAt);
     const exclusiveBooking = await queryTestDb<any[]>('SELECT status, payload FROM bookings WHERE id = ?', [exclusiveId]);
-    assert.equal(exclusiveBooking[0].status, 'APPROVED');
-    assert.equal((typeof exclusiveBooking[0].payload === 'string' ? JSON.parse(exclusiveBooking[0].payload) : exclusiveBooking[0].payload).noShow, undefined);
-    assert.equal((await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ?', [`noshow-${exclusiveId}-%`])).length, 0);
-    assert.equal((await queryTestDb<any[]>('SELECT id FROM audit_events WHERE action = ? AND entity_id = ?', ['BOOKING_NO_SHOW_CANCEL', exclusiveId])).length, 0);
+    assert.equal(exclusiveBooking[0].status, 'CANCELLED');
+    const exclusivePayload = typeof exclusiveBooking[0].payload === 'string' ? JSON.parse(exclusiveBooking[0].payload) : exclusiveBooking[0].payload;
+    assert.equal(exclusivePayload.noShow, true);
+    assert.equal(exclusivePayload.releaseType, 'NO_SHOW');
+    assert.ok(exclusivePayload.releasedAt && exclusivePayload.accessRevokedAt);
+    assert.equal((await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ?', [`noshow-${exclusiveId}-%`])).length, 2);
+    assert.equal((await queryTestDb<any[]>('SELECT id FROM audit_events WHERE action = ? AND entity_id = ?', ['BOOKING_NO_SHOW_CANCEL', exclusiveId])).length, 1);
+    const usageState = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'usageFacts'");
+    const usageFacts = typeof usageState[0].payload === 'string' ? JSON.parse(usageState[0].payload) : usageState[0].payload;
+    const exclusiveFact = usageFacts.find((fact: any) => fact.bookingId === exclusiveId);
+    assert.match(exclusiveFact.releaseReason, /20 分钟后仍未签到/);
+    assert.ok(exclusiveFact.releasedAt);
+    assert.equal(exclusiveFact.source, 'SYSTEM');
     const workOrderState = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'workOrders'");
     const workOrders = typeof workOrderState[0].payload === 'string' ? JSON.parse(workOrderState[0].payload) : workOrderState[0].payload;
     const noShowOrders = workOrders.filter((item: any) => item.id === `wo-${noShowId}-v1-TEA`);

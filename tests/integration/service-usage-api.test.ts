@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 import { after, before, describe, it } from 'node:test';
-import type { Booking, BookingUsageFact, ServiceInspection, UsageAppeal, WorkOrder } from '../../types.ts';
+import ExcelJS from 'exceljs';
+import type { Booking, BookingServiceRequirement, BookingUsageFact, ServiceInspection, ServiceType, UsageAppeal, WorkOrder } from '../../types.ts';
 import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
 
 const server = new TestServer();
@@ -13,6 +14,7 @@ let coordinator: Session;
 let frontDesk: Session;
 const coordinatorId = 'u-mrp45-coordinator';
 const frontDeskId = 'u-mrp45-front-desk';
+let structuredBookingId = '';
 
 const call = (pathname: string, method: string, session: Session, body?: unknown) =>
   server.request(pathname, { method, headers: { Cookie: session.cookie }, body: body === undefined ? undefined : JSON.stringify(body) });
@@ -95,7 +97,7 @@ describe('MRP4-5 会务服务与使用释放真实 API 集成验证', { skip: !i
         id: bookingId, userId: '3', resourceId: 'r1', type: 'ROOM', startTime: start.toISOString(),
         endTime: new Date(start.getTime() + 3600000).toISOString(), status: 'PENDING', purpose: '会务服务全链路验证',
         participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [], attendeeIds: [],
-        meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', requesterDepartmentId: 'dpt3',
+        meetingType: 'IMPORTANT', confidentialityChoice: 'NON_CONFIDENTIAL', requesterDepartmentId: 'dpt3',
         serviceRequirements: [{ type: 'TEA', fieldValues: { servings: '4' } }]
       }
     }), 201);
@@ -295,5 +297,206 @@ describe('MRP4-5 会务服务与使用释放真实 API 集成验证', { skip: !i
     const noShowJob = jobs.find(job => job.job_type === 'BOOKING_NO_SHOW');
     assert.ok(Math.abs(Date.parse(noShowJob.run_at) - Date.parse(restored.booking.noShowReleaseNotBefore)) < 1000);
     assert.ok((await readCollection<UsageAppeal>('usageAppeals')).find(item => item.id === appeal.appeal.id)?.resolutionNote);
+  });
+
+  it('八类专项会务在申请、审批、工单和报表中数量一致，取消后保留执行成本与异常', async () => {
+    const resourceId = `gap06-hall-${crypto.randomUUID()}`;
+    await expectJson(await call('/api/resources', 'POST', admin, {
+      resource: {
+        id: resourceId, code: 'GAP06-HALL-201', name: 'GAP06结构化会务礼堂', type: 'ROOM', capacity: 120,
+        location: '2号楼 2层 · G201', building: 'ANNEX', floor: 2, roomNumber: 'G201', roomCategory: 'AUDITORIUM',
+        features: ['舞台', '音响'], status: 'AVAILABLE', isPublic: true, isExclusive: false, openStart: '08:00', openEnd: '20:00'
+      }
+    }), 201);
+    const types: ServiceType[] = ['VEHICLE', 'NAMEPLATE', 'FURNITURE', 'WATER', 'STATIONERY', 'RECEPTION', 'ON_DUTY', 'AUDITORIUM'];
+    const units = ['辆', '个', '套', '箱', '套', '组', '班次', '场'];
+    const requirements: BookingServiceRequirement[] = types.map((type, index) => ({
+      type,
+      fieldValues: {
+        quantity: String(index + 2), unit: units[index], specification: `${type}专用规格-${index + 1}`,
+        serviceTime: '会前 60 分钟至会议结束', serviceLocation: '2号楼 2层 G201 及北门',
+        estimatedCost: String(100 + index * 25), notes: `${type}历史快照核验`
+      }
+    }));
+    const start = new Date(Date.now() + 4 * 86400000);
+    start.setUTCHours(2, 0, 0, 0);
+    const end = new Date(start.getTime() + 3600000);
+    structuredBookingId = `gap06-${crypto.randomUUID()}`;
+    const created = await expectJson(await call('/api/bookings', 'POST', requester, {
+      booking: {
+        id: structuredBookingId, userId: '3', resourceId, type: 'ROOM', startTime: start.toISOString(), endTime: end.toISOString(),
+        status: 'PENDING', purpose: 'GAP06八类结构化会务全链路验证', participants: 30, createdAt: new Date().toISOString(),
+        currentNodeIndex: 0, approvalHistory: [], attendeeIds: [], meetingType: 'IMPORTANT', confidentialityChoice: 'NON_CONFIDENTIAL',
+        requesterDepartmentId: 'dpt3', serviceRequirements: requirements,
+        auditoriumSetup: { seatingLayout: 'CLASSROOM', stageRequired: true, rehearsalMinutes: 30, notes: '八类服务联调布置' }
+      }
+    }), 201);
+    assert.equal(created.booking.serviceRequirements.length, 8);
+    const approvalWorkspace = await expectJson(await call('/api/workspace', 'GET', approver), 200);
+    const approvalBooking = approvalWorkspace.bookings.find((item: Booking) => item.id === structuredBookingId);
+    assert.equal(approvalBooking.serviceRequirements.length, 8);
+    for (const [index, requirement] of (created.booking.serviceRequirements as BookingServiceRequirement[]).entries()) {
+      assert.equal(requirement.type, types[index]);
+      assert.equal(requirement.catalogSnapshot?.catalogVersion, 1);
+      assert.equal(requirement.catalogSnapshot?.responsibleRole, ['NAMEPLATE', 'RECEPTION'].includes(requirement.type) ? 'FRONT_DESK' : 'SERVICE_COORDINATOR');
+      assert.deepEqual(requirement.fieldValues, requirements[index].fieldValues);
+      assert.deepEqual(approvalBooking.serviceRequirements[index].fieldValues, requirements[index].fieldValues);
+      assert.equal(approvalBooking.serviceRequirements[index].catalogSnapshot.name, requirement.catalogSnapshot?.name);
+    }
+
+    await expectJson(await approve(approver, structuredBookingId), 200);
+    await expectJson(await approve(admin, structuredBookingId), 200);
+    const approved = await readBooking(structuredBookingId);
+    assert.equal(approved.status, 'APPROVED');
+    assert.deepEqual(approved.serviceRequirements, created.booking.serviceRequirements);
+    await waitFor(async () => (await readCollection<WorkOrder>('workOrders')).filter(order => order.bookingId === structuredBookingId).length === 8);
+    let orders = (await readCollection<WorkOrder>('workOrders')).filter(order => order.bookingId === structuredBookingId);
+    assert.deepEqual(new Set(orders.map(order => order.type)), new Set(types));
+    for (const order of orders) {
+      const requirement = requirements.find(item => item.type === order.type)!;
+      assert.equal(order.scheduleVersion, 1);
+      assert.deepEqual(order.requirementSnapshot, approved.serviceRequirements?.find(item => item.type === order.type));
+      assert.deepEqual(order.fieldValues, requirement.fieldValues);
+      assert.equal(order.assigneeRole, order.requirementSnapshot?.catalogSnapshot?.responsibleRole);
+    }
+
+    const vehicleId = `wo-${structuredBookingId}-v1-VEHICLE`;
+    await expectJson(await call(`/api/work-orders/${vehicleId}/transitions`, 'POST', coordinator, { action: 'START' }), 200);
+    const completed = await expectJson(await call(`/api/work-orders/${vehicleId}/transitions`, 'POST', coordinator, {
+      action: 'COMPLETE', executionResult: '车辆已按冻结规格完成保障', costAmount: 720.5, costNote: '实际车辆租赁结算'
+    }), 200);
+    assert.equal(completed.order.status, 'DONE');
+    const furnitureId = `wo-${structuredBookingId}-v1-FURNITURE`;
+    const started = await expectJson(await call(`/api/work-orders/${furnitureId}/transitions`, 'POST', coordinator, {
+      action: 'START', costAmount: 45.5, costNote: '已发生的桌椅搬运成本'
+    }), 200);
+    assert.equal(started.order.status, 'IN_PROGRESS');
+    await expectJson(await call('/api/agent/action', 'POST', requester, {
+      action: { type: 'PROPOSE_CANCEL', bookingId: structuredBookingId, reason: 'GAP06取消联动核验', summary: '取消结构化会务预约' }
+    }), 200);
+    assert.equal((await readBooking(structuredBookingId)).status, 'CANCELLED');
+    orders = (await readCollection<WorkOrder>('workOrders')).filter(order => order.bookingId === structuredBookingId);
+    const orderByType = new Map(orders.map(order => [order.type, order]));
+    assert.equal(orderByType.get('VEHICLE')?.status, 'DONE');
+    assert.equal(orderByType.get('VEHICLE')?.executionResult, '车辆已按冻结规格完成保障');
+    assert.equal(orderByType.get('VEHICLE')?.costAmount, 720.5);
+    assert.equal(orderByType.get('VEHICLE')?.statusHistory.length, 3);
+    assert.equal(orderByType.get('FURNITURE')?.status, 'EXCEPTION');
+    assert.equal(orderByType.get('FURNITURE')?.costAmount, 45.5);
+    assert.match(orderByType.get('FURNITURE')?.exceptionReason || '', /GAP06取消联动核验/);
+    for (const type of types.filter(type => !['VEHICLE', 'FURNITURE'].includes(type))) {
+      assert.equal(orderByType.get(type)?.status, 'CANCELLED', type);
+      assert.equal(orderByType.get(type)?.cancellationReason, 'GAP06取消联动核验', type);
+    }
+
+    const query = `start=${encodeURIComponent(new Date(start.getTime() - 3600000).toISOString())}&end=${encodeURIComponent(new Date(end.getTime() + 3600000).toISOString())}`;
+    const report = await expectJson(await call(`/api/reports?${query}`, 'GET', admin), 200);
+    const serviceRows = report.services.filter((item: any) => item.bookingId === structuredBookingId);
+    assert.equal(serviceRows.length, 8);
+    assert.deepEqual(new Set(serviceRows.map((item: any) => item.type)), new Set(types));
+    assert.equal(report.bookings.find((item: any) => item.id === structuredBookingId).serviceOrderCount, 8);
+    assert.equal(report.bookings.find((item: any) => item.id === structuredBookingId).serviceCost, 766);
+    for (const row of serviceRows) {
+      const requirement = requirements.find(item => item.type === row.type)!;
+      assert.equal(row.quantity, requirement.fieldValues?.quantity);
+      assert.equal(row.unit, requirement.fieldValues?.unit);
+      assert.equal(row.specification, requirement.fieldValues?.specification);
+      assert.equal(row.serviceTime, requirement.fieldValues?.serviceTime);
+      assert.equal(row.serviceLocation, requirement.fieldValues?.serviceLocation);
+      assert.equal(row.estimatedCost, Number(requirement.fieldValues?.estimatedCost));
+      assert.match(row.requirementDetails, /数量：/);
+      assert.match(row.requirementDetails, /历史快照核验/);
+    }
+    assert.equal(serviceRows.find((item: any) => item.type === 'VEHICLE').costAmount, 720.5);
+    assert.equal(serviceRows.find((item: any) => item.type === 'VEHICLE').executionResult, '车辆已按冻结规格完成保障');
+    assert.equal(serviceRows.find((item: any) => item.type === 'FURNITURE').costAmount, 45.5);
+    assert.match(serviceRows.find((item: any) => item.type === 'FURNITURE').exceptionReason, /GAP06取消联动核验/);
+
+    const catalogIdByType = new Map(approved.serviceRequirements!.map(requirement => [requirement.type, requirement.catalogSnapshot!.catalogItemId]));
+    const meetingTimeSlot = report.bookings.find((item: any) => item.id === structuredBookingId).timeSlot;
+    const supplyRows = report.supplies.filter((item: any) => catalogIdByType.get(item.serviceType) === item.catalogItemId);
+    assert.equal(supplyRows.length, 8);
+    for (const [index, type] of types.entries()) {
+      const supply = supplyRows.find((item: any) => item.serviceType === type);
+      assert.ok(supply, type);
+      assert.equal(supply.catalogVersion, 1, type);
+      assert.equal(supply.quantityField, 'quantity', type);
+      assert.equal(supply.quantityLabel, '数量', type);
+      assert.equal(supply.quantity, index + 2, type);
+      assert.equal(supply.unit, units[index], type);
+      assert.equal(supply.timeSlot, meetingTimeSlot, type);
+      assert.equal(supply.orderCount, 1, type);
+      assert.equal(supply.todoCount, 0, type);
+      assert.equal(supply.pendingInfoCount, 0, type);
+      assert.equal(supply.inProgressCount, 0, type);
+      assert.equal(supply.doneCount, type === 'VEHICLE' ? 1 : 0, type);
+      assert.equal(supply.cancelledCount, !['VEHICLE', 'FURNITURE'].includes(type) ? 1 : 0, type);
+      assert.equal(supply.exceptionCount, type === 'FURNITURE' ? 1 : 0, type);
+    }
+
+    const xlsxResponse = await call(`/api/reports/export?format=xlsx&${query}`, 'GET', admin);
+    assert.equal(xlsxResponse.status, 200);
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(Buffer.from(await xlsxResponse.arrayBuffer()));
+    const xlsxOrders = new Map<string, ExcelJS.Row>();
+    workbook.getWorksheet('服务明细')!.eachRow(row => {
+      if (row.getCell(2).value === structuredBookingId) xlsxOrders.set(String(row.getCell(1).value), row);
+    });
+    assert.equal(xlsxOrders.size, 8);
+    for (const [orderId, row] of xlsxOrders) {
+      const type = orderId.slice(orderId.lastIndexOf('-') + 1) as ServiceType;
+      const requirement = requirements.find(item => item.type === type)!;
+      assert.equal(row.getCell(9).text, requirement.fieldValues?.quantity, orderId);
+      assert.equal(row.getCell(10).text, requirement.fieldValues?.unit, orderId);
+      assert.equal(row.getCell(11).text, requirement.fieldValues?.specification, orderId);
+      assert.equal(row.getCell(12).text, requirement.fieldValues?.serviceTime, orderId);
+      assert.equal(row.getCell(13).text, requirement.fieldValues?.serviceLocation, orderId);
+      assert.equal(row.getCell(14).value, Number(requirement.fieldValues?.estimatedCost), orderId);
+      assert.match(row.getCell(15).text, /历史快照核验/, orderId);
+    }
+    const xlsxSupplies = new Map<string, ExcelJS.Row>();
+    workbook.getWorksheet('备料统计')!.eachRow(row => {
+      const catalogItemId = String(row.getCell(3).value || '');
+      if ([...catalogIdByType.values()].includes(catalogItemId)) xlsxSupplies.set(catalogItemId, row);
+    });
+    assert.equal(xlsxSupplies.size, 8);
+    for (const type of types) {
+      const supply = supplyRows.find((item: any) => item.serviceType === type);
+      const row = xlsxSupplies.get(catalogIdByType.get(type)!)!;
+      assert.equal(row.getCell(4).value, supply.catalogVersion, type);
+      assert.equal(row.getCell(7).text, supply.unit, type);
+      assert.equal(row.getCell(8).text, supply.timeSlot, type);
+      assert.equal(row.getCell(9).value, supply.quantity, type);
+      assert.equal(row.getCell(10).value, supply.orderCount, type);
+      const statusCounts = [supply.todoCount, supply.pendingInfoCount, supply.inProgressCount, supply.doneCount, supply.cancelledCount, supply.exceptionCount];
+      statusCounts.forEach((count, index) => assert.equal(row.getCell(11 + index).value, count, type));
+    }
+    assert.equal(xlsxOrders.get(vehicleId)?.getCell(20).text, '车辆已按冻结规格完成保障');
+    assert.equal(xlsxOrders.get(vehicleId)?.getCell(22).value, 720.5);
+    assert.equal(xlsxOrders.get(furnitureId)?.getCell(7).text, 'EXCEPTION');
+    assert.equal(xlsxOrders.get(furnitureId)?.getCell(22).value, 45.5);
+    assert.match(xlsxOrders.get(furnitureId)?.getCell(24).text || '', /GAP06取消联动核验/);
+  });
+
+  it('新八类服务及冻结快照经备份恢复后不失真', async () => {
+    assert.ok(structuredBookingId);
+    const booking = await readBooking(structuredBookingId);
+    const orders = (await readCollection<WorkOrder>('workOrders')).filter(order => order.bookingId === structuredBookingId);
+    assert.equal(orders.length, 8);
+    const backup = await expectJson(await call('/api/backup', 'GET', admin), 200);
+    assert.equal(backup.collections.workOrders.filter((order: WorkOrder) => order.bookingId === structuredBookingId).length, 8);
+    assert.deepEqual(new Set(backup.collections.workOrders.filter((order: WorkOrder) => order.bookingId === structuredBookingId).map((order: WorkOrder) => order.type)), new Set(orders.map(order => order.type)));
+    await expectJson(await call('/api/backup/restore', 'POST', admin, backup), 200);
+    assert.deepEqual((await readBooking(structuredBookingId)).serviceRequirements, booking.serviceRequirements);
+    const restored = (await readCollection<WorkOrder>('workOrders')).filter(order => order.bookingId === structuredBookingId);
+    assert.equal(restored.length, 8);
+    for (const order of restored) {
+      const original = orders.find(item => item.id === order.id)!;
+      assert.equal(order.status, original.status);
+      assert.equal(order.costAmount, original.costAmount);
+      assert.equal(order.executionResult, original.executionResult);
+      assert.deepEqual(order.fieldValues, original.fieldValues);
+      assert.deepEqual(order.requirementSnapshot, original.requirementSnapshot);
+    }
   });
 });

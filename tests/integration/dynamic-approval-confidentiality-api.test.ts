@@ -182,12 +182,12 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     const exclusiveStart = new Date(Date.now() + 4 * 3600000);
     const exclusive = await createBooking(ids.requester, '专属资源规则', {
       resourceId: exclusiveResourceId, startTime: exclusiveStart.toISOString(), endTime: new Date(exclusiveStart.getTime() + 3600000).toISOString(),
-      exclusiveRequestReason: '公司领导临时会议'
+      hasLeader: true, exclusiveRequestReason: '公司领导临时会议'
     });
     const combinedStart = new Date(Date.now() + 5 * 3600000);
     const combined = await createBooking(ids.requester, '涉密专属重服务组合规则', {
       resourceId: exclusiveResourceId, startTime: combinedStart.toISOString(), endTime: new Date(combinedStart.getTime() + 3600000).toISOString(),
-      meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL', exclusiveRequestReason: '涉密专属临时使用',
+      meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL', hasLeader: true, exclusiveRequestReason: '涉密专属临时使用',
       serviceRequirements: [{ type: 'SECURITY', details: '保密保障' }]
     });
 
@@ -201,11 +201,14 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     assert.equal(combined.approvalRuleId, 'confidential');
     assert.match(combined.approvalRuleExplanation?.[0] || '', /涉密会议保密审批/);
     assert.deepEqual(combined.approvalWorkflow?.map(node => node.approverRole), ['APPROVAL_ADMIN', 'SECURITY_ADMIN', 'SYSTEM_ADMIN']);
+    assert.equal(normal.status, 'APPROVED');
+    assert.deepEqual(normal.approvalWorkflow, []);
+    assert.equal(normal.approvalHistory[0]?.nodeName, '系统自动核准');
     for (const booking of [normal, important, heavy, importantHeavy, exclusive, combined]) {
       assert.equal(booking.approvalRuleSetVersion, initialRuleSet.version);
       assert.ok(booking.workflowVersion && booking.ruleVersion && booking.approvalSubmittedAt);
-      assert.equal(booking.status, 'PENDING');
     }
+    for (const booking of [important, heavy, importantHeavy, exclusive, combined]) assert.equal(booking.status, 'PENDING');
     const relation = await queryTestDb<any[]>('SELECT workflow_version, approval_rule_set_version, approval_rule_id, approval_submitted_at FROM bookings WHERE id = ?', [combined.id]);
     assert.equal(relation[0].workflow_version, combined.workflowVersion);
     assert.equal(relation[0].approval_rule_set_version, combined.approvalRuleSetVersion);
@@ -213,15 +216,42 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     assert.ok(relation[0].approval_submitted_at);
 
     await publishDefaultWorkflow();
-    const afterPublish = await createBooking(ids.requester, '发布后默认规则新版本');
+    const afterPublish = await createBooking(ids.requester, '发布后通用特殊流程新版本', { meetingType: 'IMPORTANT' });
     assert.equal(afterPublish.approvalRuleSetVersion, initialRuleSet.version + 1);
     assert.notEqual(afterPublish.workflowVersion, normal.workflowVersion);
+    assert.equal(afterPublish.status, 'PENDING');
+    assert.deepEqual(afterPublish.approvalWorkflow?.map(node => node.id), ['mrp3-default-review', 'mrp3-default-final']);
     assert.equal((await readBooking(normal.id)).approvalRuleSetVersion, initialRuleSet.version);
     assert.deepEqual((await readBooking(combined.id)).approvalWorkflow, combined.approvalWorkflow);
   });
 
+  it('GAP-04 专属预约编辑和最终核准均重检领导参会标识', async () => {
+    const start = new Date(Date.now() + 6 * 3600000);
+    const booking = await createBooking(ids.requester, 'GAP04专属领导参会重检', {
+      resourceId: exclusiveResourceId, startTime: start.toISOString(), endTime: new Date(start.getTime() + 3600000).toISOString(),
+      hasLeader: true, exclusiveRequestReason: '公司领导临时会议'
+    });
+    const rejectedEdit = await editBooking(ids.requester, booking, { hasLeader: false });
+    assert.equal(rejectedEdit.status, 400);
+    assert.equal((await readJson(rejectedEdit)).error, 'EXCLUSIVE_LEADER_REQUIRED');
+    assert.equal((await readBooking(booking.id)).hasLeader, true);
+
+    assert.equal((await approve(ids.approver, booking.id)).status, 200);
+    const approvedNode = await readBooking(booking.id);
+    assert.equal(approvedNode.currentNodeIndex, 1);
+    assert.equal(approvedNode.approvalHistory.length, 1);
+    await queryTestDb('UPDATE bookings SET payload = ? WHERE id = ?', [JSON.stringify({ ...approvedNode, hasLeader: false }), booking.id]);
+    const rejectedFinal = await approve(ids.admin, booking.id);
+    assert.equal(rejectedFinal.status, 400, JSON.stringify(await readJson(rejectedFinal.clone())));
+    assert.equal((await readJson(rejectedFinal)).error, 'EXCLUSIVE_LEADER_REQUIRED');
+    const unchanged = await readBooking(booking.id);
+    assert.equal(unchanged.status, 'PENDING');
+    assert.equal(unchanged.currentNodeIndex, 1);
+    assert.equal(unchanged.approvalHistory.length, 1);
+  });
+
   it('七类角色在保密管理和默认审批节点上执行正向与反向权限控制', async () => {
-    const booking = await createBooking(ids.requester, '七角色审批权限矩阵');
+    const booking = await createBooking(ids.requester, '七角色审批权限矩阵', { meetingType: 'IMPORTANT' });
     const roleIds = [ids.admin, ids.approver, ids.requester, ids.security, ids.service, ids.frontDesk, ids.auditor];
     for (const userId of roleIds) {
       const expectedManager = userId === ids.admin || userId === ids.security;
@@ -275,7 +305,7 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
   });
 
   it('最终核准事务内重检资源冲突并保持原审批节点不变', async () => {
-    const booking = await createBooking(ids.requester, '最终核准资源竞争');
+    const booking = await createBooking(ids.requester, '最终核准资源竞争', { meetingType: 'IMPORTANT' });
     assert.equal((await approve(ids.approver, booking.id)).status, 200);
     await insertApprovedCompetitor(booking, `competitor-${booking.id}`, booking.startTime, booking.endTime);
     const response = await approve(ids.admin, booking.id);
@@ -292,17 +322,17 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     targetStart.setUTCHours(2, 0, 0, 0);
     const targetEnd = new Date(targetStart.getTime() + 180 * 60000);
     const target = await createBooking(ids.requester, '最终核准额度重检三小时申请', {
-      resourceId: 'r2', startTime: targetStart.toISOString(), endTime: targetEnd.toISOString()
+      resourceId: 'r2', startTime: targetStart.toISOString(), endTime: targetEnd.toISOString(), meetingType: 'IMPORTANT'
     });
     assert.equal((await approve(ids.approver, target.id)).status, 200);
     const competitorStart = new Date(targetStart.getTime() + 5 * 3600000);
-    await insertApprovedCompetitor(target, `quota-${target.id}`, competitorStart.toISOString(), new Date(competitorStart.getTime() + 120 * 60000).toISOString(), 'r1');
+    await insertApprovedCompetitor(target, `quota-${target.id}`, competitorStart.toISOString(), new Date(competitorStart.getTime() + 120 * 60000).toISOString(), 'r2');
     const quotaResponse = await approve(ids.admin, target.id);
     assert.equal(quotaResponse.status, 409);
     assert.equal((await readJson(quotaResponse)).error, 'DEPARTMENT_DAILY_QUOTA_EXCEEDED');
     assert.equal((await readBooking(target.id)).currentNodeIndex, 1);
 
-    const access = await createBooking(ids.requester, '最终核准资源准入重检', { resourceId: accessResourceId });
+    const access = await createBooking(ids.requester, '最终核准资源准入重检', { resourceId: accessResourceId, meetingType: 'IMPORTANT' });
     assert.equal((await approve(ids.approver, access.id)).status, 200);
     await mutateTestCollection<any>('resources', resources => resources.map(resource =>
       resource.id === accessResourceId ? { ...resource, status: 'MAINTENANCE' } : resource

@@ -6,7 +6,7 @@ import { mutateDb, readSnapshot } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
 import { DOOR_SNAPSHOT_MAX_AGE_MS } from '../utils/doorDisplay.ts';
-import { bookingDateKey } from '../utils/bookingRules.ts';
+import { bookingDateKey, getBookingDisplayStatus } from '../utils/bookingRules.ts';
 
 const text = (value: unknown, field: string, max = 100) => {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new DbError(`INVALID_DEVICE_${field}`, 400);
@@ -31,6 +31,7 @@ export const publicDevice = (device: DoorDevice) => ({
   updatedAt: device.updatedAt,
   lastHeartbeatAt: device.lastHeartbeatAt,
   lastSnapshotRevision: device.lastSnapshotRevision,
+  restartRequestedAt: device.restartRequestedAt,
   revokedAt: device.revokedAt
 });
 
@@ -75,6 +76,17 @@ export const rotateDevice = async (actor: User, id: string) => mutateDb(async (d
   return { device: publicDevice(next), token };
 });
 
+export const restartDevice = async (actor: User, id: string) => mutateDb(async (db, { audit }) => {
+  const current = (db.devices || []).find(item => item.id === id);
+  if (!current) throw new DbError('DEVICE_NOT_FOUND', 404);
+  if (current.status !== 'ACTIVE') throw new DbError('DEVICE_REVOKED', 409);
+  const now = new Date().toISOString();
+  const next = { ...current, restartRequestedAt: now, updatedAt: now };
+  db.devices = (db.devices || []).map(item => item.id === id ? next : item);
+  await audit({ actorId: actor.id, action: 'DEVICE_RESTART_REQUEST', entityType: 'DEVICE', entityId: id });
+  return publicDevice(next);
+});
+
 export const revokeDevice = async (actor: User, id: string) => mutateDb(async (db, { audit }) => {
   const current = (db.devices || []).find(item => item.id === id);
   if (!current) throw new DbError('DEVICE_NOT_FOUND', 404);
@@ -97,25 +109,30 @@ const authenticate = async (req: IncomingMessage) => {
   return { db, revision, device };
 };
 
-const scheduleItem = (booking: Booking) => ({
-  id: booking.id,
-  startTime: booking.startTime,
-  endTime: booking.actualEndTime || booking.endTime,
-  purpose: isConfidentialBooking(booking) ? '涉密会议' : booking.purpose,
-  status: Date.parse(booking.startTime) <= Date.now() && Date.parse(booking.actualEndTime || booking.endTime) > Date.now() ? 'IN_PROGRESS' : 'UPCOMING'
-});
+const scheduleItem = (booking: Booking, now: Date, requester?: User) => {
+  const confidential = isConfidentialBooking(booking);
+  return {
+    id: booking.id,
+    startTime: booking.startTime,
+    endTime: booking.actualEndTime || booking.endedEarlyAt || booking.endTime,
+    purpose: confidential ? '涉密会议' : booking.purpose,
+    department: confidential ? undefined : requester?.department,
+    confidential,
+    status: getBookingDisplayStatus(booking, now)
+  };
+};
 
 const deviceSnapshot = (db: OfficeDb, revision: number, device: DoorDevice) => {
   const resource = (db.resources || []).find(item => item.id === device.resourceId);
   if (!resource) throw new DbError('DEVICE_RESOURCE_NOT_FOUND', 410);
-  const start = Date.parse(`${bookingDateKey(Date.now())}T00:00:00+08:00`);
+  const generatedAt = Date.now();
+  const start = Date.parse(`${bookingDateKey(generatedAt)}T00:00:00+08:00`);
   const end = start + 86400000;
   const bookings = (db.bookings || []).filter(booking => booking.resourceId === resource.id
-    && ['APPROVED', 'COMPLETED'].includes(booking.status)
-    && Date.parse(booking.startTime) < end && Date.parse(booking.actualEndTime || booking.endTime) > start)
+    && ['APPROVED', 'COMPLETED', 'CANCELLED'].includes(booking.status)
+    && Date.parse(booking.startTime) < end && Date.parse(booking.actualEndTime || booking.endedEarlyAt || booking.endTime) > start)
     .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))
-    .map(scheduleItem);
-  const generatedAt = Date.now();
+    .map(booking => scheduleItem(booking, new Date(generatedAt), (db.users || []).find(user => user.id === booking.userId)));
   return {
     generatedAt: new Date(generatedAt).toISOString(),
     expiresAt: new Date(generatedAt + DOOR_SNAPSHOT_MAX_AGE_MS).toISOString(),
@@ -123,6 +140,7 @@ const deviceSnapshot = (db: OfficeDb, revision: number, device: DoorDevice) => {
     device: publicDevice(device),
     resource: {
       id: resource.id,
+      code: resource.code,
       name: resource.name,
       location: resource.location,
       building: resource.building,
@@ -169,6 +187,7 @@ export const validateDeviceBackup = (input: any, db: Pick<OfficeDb, 'resources' 
       || !(db.resources || []).some(resource => resource.id === item.resourceId && resource.type === 'ROOM')
       || !Number.isFinite(Date.parse(item.createdAt)) || !Number.isFinite(Date.parse(item.updatedAt))
       || (item.lastHeartbeatAt !== undefined && !Number.isFinite(Date.parse(item.lastHeartbeatAt)))
+      || (item.restartRequestedAt !== undefined && !Number.isFinite(Date.parse(item.restartRequestedAt)))
       || (item.lastSnapshotRevision !== undefined && (!Number.isSafeInteger(item.lastSnapshotRevision) || item.lastSnapshotRevision < 0))) {
       throw new DbError('INVALID_BACKUP_DEVICE', 400);
     }
@@ -177,7 +196,8 @@ export const validateDeviceBackup = (input: any, db: Pick<OfficeDb, 'resources' 
       status: item.status, tokenHash: item.tokenHash, tokenPrefix: text(item.tokenPrefix, 'TOKEN_PREFIX', 32),
       createdAt: new Date(item.createdAt).toISOString(), createdBy: text(item.createdBy, 'CREATED_BY', 128),
       updatedAt: new Date(item.updatedAt).toISOString(), lastHeartbeatAt: item.lastHeartbeatAt ? new Date(item.lastHeartbeatAt).toISOString() : undefined,
-      lastSnapshotRevision: item.lastSnapshotRevision, revokedAt: item.revokedAt ? new Date(item.revokedAt).toISOString() : undefined
+      lastSnapshotRevision: item.lastSnapshotRevision, restartRequestedAt: item.restartRequestedAt ? new Date(item.restartRequestedAt).toISOString() : undefined,
+      revokedAt: item.revokedAt ? new Date(item.revokedAt).toISOString() : undefined
     };
   });
   if (new Set(devices.map(item => item.id)).size !== devices.length) throw new DbError('INVALID_BACKUP_DEVICE', 400);

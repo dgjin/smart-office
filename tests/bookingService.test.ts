@@ -40,10 +40,32 @@ const validate = (db: OfficeDb, incoming: Booking[], editingId?: string) => vali
   db, incoming, requester: db.users![0], settings, ruleVersion: 3, editingId, now: NOW
 });
 
-const assertRule = (code: string, run: () => unknown) => assert.throws(run, (error: any) => {
+const assertRule = (code: string, run: () => unknown, status?: number) => assert.throws(run, (error: any) => {
   assert.ok(error instanceof BookingRuleError);
   assert.equal(error.code, code);
+  if (status !== undefined) assert.equal(error.status, status);
   return true;
+});
+
+test('服务端强制参会人数必填正整数并使用实际人数校验容量', () => {
+  const db = makeDb();
+  for (const participants of [undefined, 0, -1, 1.5, Number.NaN, '4', null]) {
+    assertRule('INVALID_PARTICIPANTS', () => validate(db, [makeBooking({ participants: participants as any })]), 400);
+  }
+  assertRule('CAPACITY_EXCEEDED', () => validate(db, [makeBooking({ participants: 11 })]), 409);
+  const [accepted] = validate(db, [makeBooking({ participants: 1 })]);
+  assert.equal(accepted.participants, 1);
+});
+
+test('服务端拒绝空白和纯通用词主题并保留 200 字上限', () => {
+  const db = makeDb();
+  for (const purpose of ['', ' ', '会议', '开会', ' 会 议 ', '开\n会', '会\t议', '项'.repeat(201)]) {
+    assertRule('INVALID_BOOKING_PURPOSE', () => validate(db, [makeBooking({ purpose })]), 400);
+  }
+  for (const purpose of ['项目评审会', '项目会议', '一对一沟通']) {
+    const [accepted] = validate(db, [makeBooking({ purpose })]);
+    assert.equal(accepted.purpose, purpose);
+  }
 });
 
 test('新预约必须显式选择会议类型与涉密属性且二者一致', () => {
@@ -106,13 +128,14 @@ test('开放窗口和专属资源临时申请窗口由统一规则阻断', () =>
     startTime: '2026-11-20T17:30:00+08:00', endTime: '2026-11-21T09:30:00+08:00'
   })]));
   Object.assign(db.resources![0], { openStart: undefined, openEnd: undefined, isExclusive: true });
-  assertRule('EXCLUSIVE_REQUEST_WINDOW_CLOSED', () => validate(db, [makeBooking({ exclusiveRequestReason: '临时接待' })]));
+  assertRule('EXCLUSIVE_REQUEST_WINDOW_CLOSED', () => validate(db, [makeBooking({ hasLeader: true, exclusiveRequestReason: '临时接待' })]));
   const withinWindow = makeBooking({
     startTime: '2026-11-20T06:00:00+08:00', endTime: '2026-11-20T07:00:00+08:00'
   });
-  assertRule('EXCLUSIVE_REQUEST_REASON_REQUIRED', () => validate(db, [withinWindow]));
+  assertRule('EXCLUSIVE_LEADER_REQUIRED', () => validate(db, [{ ...withinWindow, exclusiveRequestReason: '临时重要接待' }]));
+  assertRule('EXCLUSIVE_REQUEST_REASON_REQUIRED', () => validate(db, [{ ...withinWindow, hasLeader: true }]));
   const [accepted] = validate(db, [makeBooking({
-    startTime: withinWindow.startTime, endTime: withinWindow.endTime, exclusiveRequestReason: '临时重要接待'
+    startTime: withinWindow.startTime, endTime: withinWindow.endTime, hasLeader: true, exclusiveRequestReason: '临时重要接待'
   })]);
   assert.equal(accepted.exclusiveAccessType, 'TEMPORARY');
   assert.equal(accepted.exclusiveRequestReason, '临时重要接待');
@@ -144,20 +167,36 @@ test('普通多资源联合预约在统一入口被拒绝', () => {
   ]));
 });
 
-test('部门额度按中国自然日拆分，取消和驳回不占额度', () => {
+test('部门额度按会议室和中国自然日拆分，取消和驳回不占额度', () => {
   const db = makeDb();
   db.bookings = [
-    makeBooking({ id: 'used', userId: 'u2', resourceId: 'r2', startTime: '2026-11-20T09:00:00+08:00', endTime: '2026-11-20T10:00:00+08:00' }),
-    makeBooking({ id: 'cancelled', userId: 'u2', resourceId: 'r3', status: 'CANCELLED', startTime: '2026-11-20T10:00:00+08:00', endTime: '2026-11-20T13:00:00+08:00' }),
-    makeBooking({ id: 'rejected', userId: 'u2', resourceId: 'r3', status: 'REJECTED', startTime: '2026-11-20T13:00:00+08:00', endTime: '2026-11-20T16:00:00+08:00' })
+    makeBooking({ id: 'used', userId: 'u2', startTime: '2026-11-20T09:00:00+08:00', endTime: '2026-11-20T10:00:00+08:00' }),
+    makeBooking({ id: 'cancelled', userId: 'u2', status: 'CANCELLED', startTime: '2026-11-20T10:00:00+08:00', endTime: '2026-11-20T13:00:00+08:00' }),
+    makeBooking({ id: 'rejected', userId: 'u2', status: 'REJECTED', startTime: '2026-11-20T13:00:00+08:00', endTime: '2026-11-20T16:00:00+08:00' })
   ];
   const details = buildBookingQuotaDetails(db, makeBooking({
     startTime: '2026-11-20T23:00:00+08:00', endTime: '2026-11-21T01:00:00+08:00'
   }), settings);
   assert.deepEqual(details, [
-    { date: '2026-11-20', limitMinutes: 240, usedBeforeMinutes: 60, requestedMinutes: 60, remainingMinutes: 120 },
-    { date: '2026-11-21', limitMinutes: 240, usedBeforeMinutes: 0, requestedMinutes: 60, remainingMinutes: 180 }
+    { resourceId: 'r1', date: '2026-11-20', limitMinutes: 240, usedBeforeMinutes: 60, requestedMinutes: 60, remainingMinutes: 120 },
+    { resourceId: 'r1', date: '2026-11-21', limitMinutes: 240, usedBeforeMinutes: 0, requestedMinutes: 60, remainingMinutes: 180 }
   ]);
+});
+
+test('同一部门在A会议室达到额度后仍可预约B会议室', () => {
+  const db = makeDb();
+  db.bookings = [makeBooking({
+    id: 'room-a-full', userId: 'u2', startTime: '2026-11-20T08:00:00+08:00', endTime: '2026-11-20T12:00:00+08:00'
+  })];
+  assertRule('DEPARTMENT_DAILY_QUOTA_EXCEEDED', () => buildBookingQuotaDetails(db, makeBooking({
+    startTime: '2026-11-20T13:00:00+08:00', endTime: '2026-11-20T14:00:00+08:00'
+  }), settings));
+  const [roomB] = buildBookingQuotaDetails(db, makeBooking({
+    resourceId: 'r2', startTime: '2026-11-20T13:00:00+08:00', endTime: '2026-11-20T14:00:00+08:00'
+  }), settings);
+  assert.deepEqual(roomB, {
+    resourceId: 'r2', date: '2026-11-20', limitMinutes: 240, usedBeforeMinutes: 0, requestedMinutes: 60, remainingMinutes: 180
+  });
 });
 
 test('短会按实际分钟计量，系列逐期累计且超额不重复扣减', () => {

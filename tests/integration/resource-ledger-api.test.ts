@@ -200,8 +200,9 @@ describe('MRP1 资源规则与台账 API 集成验证', { skip: !integrationEnab
     assert.equal(audits.length, 1);
     assert.equal(audits[0].actor_id, adminId);
     const details = typeof audits[0].details === 'string' ? JSON.parse(audits[0].details) : audits[0].details;
-    assert.equal(details.code, 'DELETE-EMPTY-001');
-    assert.equal(details.name, '待删除空资源');
+    assert.equal(details.before.code, 'DELETE-EMPTY-001');
+    assert.equal(details.before.name, '待删除空资源');
+    assert.equal(details.after, null);
   });
 
   it('备份包含服务与使用事实，并兼容版本 2、3 和 4 恢复', async () => {

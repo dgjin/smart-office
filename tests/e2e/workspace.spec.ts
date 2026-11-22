@@ -94,6 +94,7 @@ test.describe('MySQL-only 浏览器验收', () => {
     const dialog = page.getByRole('dialog', { name: '预约Alpha 战略会议室' });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await dialog.getByLabel('参与人数', { exact: true }).fill('4');
     await dialog.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
     await dialog.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
     const date = new Date(Date.now() + 7 * 86400000);
@@ -126,7 +127,7 @@ test.describe('MySQL-only 浏览器验收', () => {
     const owner = await openWorkspace(browser, '李员工');
     await owner.page.getByRole('button', { name: '我的申请', exact: true }).click();
     await expect(owner.page.getByText(purpose, { exact: true })).toBeVisible();
-    await expect(owner.page.locator('.status-approved')).toHaveText('已通过');
+    await expect(owner.page.locator('.status-upcoming')).toHaveText('待开始');
     await owner.page.getByText(purpose, { exact: true }).click();
     const icsDownload = owner.page.waitForEvent('download');
     await owner.page.getByRole('button', { name: '下载 ICS 日历', exact: true }).click();
@@ -271,6 +272,8 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(resourceRow).toBeVisible();
     let roomCard = page.locator('.building-room').filter({ hasText: name });
     await expect(roomCard).toBeVisible();
+    await expect(roomCard.getByRole('button', { name: `编辑${name}基本信息`, exact: true })).toBeDisabled();
+    await roomCard.getByRole('button', { name: `解锁${name}管理操作`, exact: true }).click();
     await roomCard.getByRole('button', { name: `编辑${name}基本信息`, exact: true }).click();
     const editDialog = page.getByRole('dialog', { name: '编辑会议室', exact: true });
     await expect(editDialog).toBeVisible();
@@ -288,6 +291,8 @@ test.describe('MySQL-only 浏览器验收', () => {
     await page.getByLabel('快速选择1号楼楼层', { exact: true }).selectOption('10');
     roomCard = page.locator('.building-room').filter({ hasText: name });
     await expect(roomCard).toContainText('9 人');
+    await expect(roomCard.getByRole('button', { name: `删除${name}`, exact: true })).toBeDisabled();
+    await roomCard.getByRole('button', { name: `解锁${name}管理操作`, exact: true }).click();
 
     const employee = await openWorkspace(browser, '李员工');
     await employee.page.getByRole('button', { name: '空间资源库', exact: true }).click();
@@ -325,6 +330,8 @@ test.describe('MySQL-only 浏览器验收', () => {
 
     await page.getByRole('button', { name: '空间资源库', exact: true }).click();
     const resourceRow = page.locator('tr').filter({ hasText: 'Alpha 战略会议室' });
+    await expect(resourceRow.getByRole('button', { name: '编辑Alpha 战略会议室', exact: true })).toBeDisabled();
+    await resourceRow.getByRole('button', { name: '解锁Alpha 战略会议室', exact: true }).click();
     await resourceRow.getByRole('button', { name: '编辑Alpha 战略会议室', exact: true }).click();
     await page.getByLabel('资源所属园区', { exact: true }).fill(campus);
     await Promise.all([
@@ -372,6 +379,24 @@ test.describe('MySQL-only 浏览器验收', () => {
     await page.getByLabel('筛选审计记录', { exact: true }).fill('DELEGATION_CREATE');
     await expect(auditTable).toContainText('DELEGATION_CREATE');
     await expect(auditTable).toContainText('超级管理员');
+
+    await page.getByLabel('筛选审计记录', { exact: true }).fill('');
+    await page.getByLabel('审计操作人', { exact: true }).selectOption('1');
+    await page.getByLabel('审计动作', { exact: true }).fill('WORKFLOW_PUBLISH');
+    await page.getByLabel('审计对象类型', { exact: true }).selectOption('WORKFLOW');
+    await page.getByLabel('审计对象ID', { exact: true }).fill(String(latestWorkflowVersion));
+    const today = new Date();
+    const dateValue = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+    await page.getByLabel('审计开始日期', { exact: true }).fill(dateValue);
+    await page.getByLabel('审计结束日期', { exact: true }).fill(dateValue);
+    const combinedAuditResponse = page.waitForResponse(response => response.url().includes('/api/audit?') && response.ok());
+    await page.getByRole('button', { name: '查询审计', exact: true }).click();
+    const combinedAudit = await (await combinedAuditResponse).json();
+    expect(combinedAudit.events).toHaveLength(1);
+    expect(combinedAudit.events[0].details.before.nodes).toBeDefined();
+    expect(combinedAudit.events[0].details.after.nodes).toBeDefined();
+    await expect(auditTable.locator('tbody tr')).toHaveCount(1);
+    await expect(auditTable).toContainText(`WORKFLOW / ${latestWorkflowVersion}`);
 
     await page.getByRole('button', { name: '运营报表', exact: true }).click();
     await expect(page.getByRole('heading', { name: '利用率与审批效率', exact: true })).toBeVisible();

@@ -1,5 +1,5 @@
 import type { Booking, Resource } from '../types';
-import { getBookingRequiredFeatures, hasBookingConflict, validateBookingResource, type BookingResourceRequirements } from './bookingRules.ts';
+import { getBookingRequiredFeatures, hasBookingConflict, isValidBookingPurpose, validateBookingResource, type BookingResourceRequirements } from './bookingRules.ts';
 
 export type BookingDraftInput = BookingResourceRequirements & {
   resourceId: string;
@@ -12,7 +12,7 @@ export const validateBookingDraft = (
   bookings: Booking[],
   now = new Date()
 ): string | null => {
-  if (!draft.purpose.trim()) return '请填写申请用途';
+  if (!isValidBookingPurpose(draft.purpose)) return '请填写 200 字以内且有明确主题的申请用途，不能只填写“会议”或“开会”';
   const resource = resources.find(item => item.id === draft.resourceId);
   if (!resource) return '请选择有效资源';
   const start = new Date(draft.startTime);
@@ -21,7 +21,6 @@ export const validateBookingDraft = (
   if (resource.type === 'ROOM' && start.getTime() <= now.getTime()) return '开始时间已过，请选择未来时段';
   const resourceError = validateBookingResource(resource, {
     ...draft,
-    participants: draft.participants ?? 1,
     requiredFeatures: getBookingRequiredFeatures(draft)
   });
   if (resourceError === 'INVALID_PARTICIPANTS') return '参与人数必须为大于 0 的整数';

@@ -6,6 +6,7 @@ import type {
   OperationsBookingReport,
   OperationsReport,
   OperationsReportRow,
+  OperationsSupplyReport,
   Resource,
   User,
   WorkOrder
@@ -15,6 +16,8 @@ import { readSnapshot } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
 import { getResourceBuilding, getResourceFloor } from '../utils/resourceDomain.ts';
+import { SERVICE_TYPE_LABELS } from '../constants.ts';
+import { BOOKING_DISPLAY_STATUS_LABELS, getBookingDisplayStatus } from '../utils/bookingRules.ts';
 import {
   buildReportRow,
   generateReport,
@@ -24,7 +27,7 @@ import {
 } from '../utils/reports.ts';
 
 const MINUTE_MS = 60000;
-const SERVICE_LABELS: Record<WorkOrder['type'], string> = { TEA: '茶水服务', VIDEO: '视频会议', SIGNAGE: '指引标识', SECURITY: '现场安保', OTHER: '其他服务' };
+const SERVICE_LABELS = SERVICE_TYPE_LABELS;
 const DIMENSION_LABELS: Record<OperationsReportRow['dimension'], string> = {
   OVERALL: '整体', RESOURCE: '资源', BUILDING_FLOOR: '楼栋楼层', RESOURCE_TYPE: '资源类型', ROOM_CATEGORY: '会议室类型',
   TIME_SLOT: '时段', DEPARTMENT: '部门', SERVICE: '服务', USAGE: '实际使用'
@@ -79,6 +82,59 @@ const ordersFor = (orders: WorkOrder[], bookings: Booking[]) => {
   const ids = new Set(bookings.map(booking => booking.id));
   return orders.filter(order => ids.has(order.bookingId));
 };
+const buildSupplyRows = (orders: WorkOrder[], bookingById: Map<string, Booking>): OperationsSupplyReport[] => {
+  type SupplyGroup = Omit<OperationsSupplyReport, 'orderCount'> & { orderIds: Set<string> };
+  const groups = new Map<string, SupplyGroup>();
+  for (const order of orders) {
+    const booking = bookingById.get(order.bookingId);
+    const snapshot = order.requirementSnapshot;
+    const catalog = snapshot?.catalogSnapshot;
+    const fieldValues = snapshot?.fieldValues || {};
+    if (!booking || !catalog) continue;
+    for (const field of catalog.fields) {
+      if (field.type !== 'NUMBER' || field.key === 'estimatedCost') continue;
+      const raw = fieldValues[field.key]?.trim();
+      const quantity = raw ? Number(raw) : Number.NaN;
+      if (!Number.isFinite(quantity) || quantity < 0) continue;
+      const unit = field.key === 'quantity' ? fieldValues.unit || '未设置单位' : field.key === 'servings' ? '份' : '未设置单位';
+      const slot = timeSlot(booking.startTime);
+      const key = [order.type, catalog.catalogItemId, catalog.catalogVersion, field.key, unit, slot].join(':');
+      const current = groups.get(key) || {
+        serviceType: order.type,
+        serviceName: catalog.name,
+        catalogItemId: catalog.catalogItemId,
+        catalogVersion: catalog.catalogVersion,
+        quantityField: field.key,
+        quantityLabel: field.label,
+        unit,
+        timeSlot: slot,
+        quantity: 0,
+        orderIds: new Set<string>(),
+        todoCount: 0,
+        pendingInfoCount: 0,
+        inProgressCount: 0,
+        doneCount: 0,
+        cancelledCount: 0,
+        exceptionCount: 0
+      };
+      current.quantity += quantity;
+      current.orderIds.add(order.id);
+      if (order.status === 'TODO') current.todoCount += 1;
+      else if (order.status === 'PENDING_INFO') current.pendingInfoCount += 1;
+      else if (order.status === 'IN_PROGRESS') current.inProgressCount += 1;
+      else if (order.status === 'DONE') current.doneCount += 1;
+      else if (order.status === 'CANCELLED') current.cancelledCount += 1;
+      else current.exceptionCount += 1;
+      groups.set(key, current);
+    }
+  }
+  return [...groups.values()].map(({ orderIds, ...group }) => ({
+    ...group,
+    quantity: Number(group.quantity.toFixed(2)),
+    orderCount: orderIds.size
+  })).sort((a, b) => a.serviceName.localeCompare(b.serviceName, 'zh-CN')
+    || a.catalogVersion - b.catalogVersion || a.timeSlot.localeCompare(b.timeSlot) || a.unit.localeCompare(b.unit, 'zh-CN'));
+};
 const enrichRow = (base: ReportRow, bookings: OperationsBookingReport[], orders: WorkOrder[]): OperationsReportRow => ({
   ...base,
   scheduledHours: round(bookings.reduce((sum, booking) => sum + booking.scheduledMinutes, 0) / 60),
@@ -98,15 +154,25 @@ const csvCell = (value: unknown) => {
   return `"${text.replace(/"/g, '""')}"`;
 };
 
+const supplyHeaders = ['服务类型', '目录名称', '目录ID', '目录版本', '数量字段', '数量名称', '单位', '时段', '需求量', '工单数', '待办', '待补充', '进行中', '已完成', '已取消', '异常'];
+const supplyRow = (row: OperationsSupplyReport) => [
+  SERVICE_LABELS[row.serviceType], row.serviceName, row.catalogItemId, row.catalogVersion, row.quantityField, row.quantityLabel,
+  row.unit, row.timeSlot, row.quantity, row.orderCount, row.todoCount, row.pendingInfoCount, row.inProgressCount,
+  row.doneCount, row.cancelledCount, row.exceptionCount
+];
+
 export const operationsReportCsv = (report: OperationsReport) => {
   const rows = [report.overall, ...report.rows];
-  return '\uFEFF' + [
+  const output: unknown[][] = [
     ['维度', '名称', '预约数', '使用小时', '使用率(%)', '取消率(%)', 'No-show率(%)', '驳回率(%)', '平均审批时长(小时)', '计划小时', '实际小时', '签到预约数', '提前结束数', '服务工单数', '服务成本(元)'],
     ...rows.map(row => [DIMENSION_LABELS[row.dimension], row.name, row.bookingCount, row.usageHours, row.utilization, row.cancellationRate, row.noShowRate, row.rejectionRate, row.averageApprovalHours, row.scheduledHours, row.actualHours, row.checkedInCount, row.earlyEndCount, row.serviceOrderCount, row.serviceCost])
-  ].map(row => row.map(csvCell).join(',')).join('\r\n');
+  ];
+  if (report.supplies.length) output.push([], ['备料统计'], supplyHeaders, ...report.supplies.map(supplyRow));
+  return '\uFEFF' + output.map(row => row.map(csvCell).join(',')).join('\r\n');
 };
 
 export const buildOperationsReport = (db: OfficeDb, actor: User, startValue: string, endValue: string, revision = 0): OperationsReport => {
+  const generatedAt = new Date();
   const rangeStart = timeValue(startValue);
   const rangeEnd = timeValue(endValue);
   if (!Number.isFinite(rangeStart) || !Number.isFinite(rangeEnd) || rangeEnd <= rangeStart) throw new DbError('INVALID_REPORT_RANGE', 400);
@@ -168,7 +234,7 @@ export const buildOperationsReport = (db: OfficeDb, actor: User, startValue: str
     } else if (['CANCELLED', 'REJECTED'].includes(booking.status)) {
       reconciliationStatus = '无需使用事实';
       reconciliationNote = STATUS_LABELS[booking.status];
-    } else if (timeValue(booking.endTime) > Date.now()) {
+    } else if (timeValue(booking.endTime) > generatedAt.getTime()) {
       reconciliationStatus = '未到使用结算';
       reconciliationNote = '会议尚未到实际使用结算时点。';
     } else if (!fact) {
@@ -185,6 +251,7 @@ export const buildOperationsReport = (db: OfficeDb, actor: User, startValue: str
       resourceType: resource?.type === 'DESK' ? '工位' : '会议室',
       timeSlot: timeSlot(booking.startTime),
       status: booking.status,
+      displayStatus: getBookingDisplayStatus(booking, generatedAt),
       startTime: booking.startTime,
       endTime: booking.endTime,
       scheduledMinutes: Math.round(clippedMinutes(booking.startTime, booking.endTime, rangeStart, rangeEnd)),
@@ -259,20 +326,35 @@ export const buildOperationsReport = (db: OfficeDb, actor: User, startValue: str
   }));
   const services = allOrders.map(order => {
     const booking = relevantById.get(order.bookingId)!;
+    const confidential = isConfidentialBooking(booking);
+    const snapshot = order.requirementSnapshot;
+    const catalog = snapshot?.catalogSnapshot;
+    const fieldValues = confidential ? {} : { ...(snapshot?.fieldValues || order.fieldValues || {}) };
+    const fields = catalog?.fields || [];
+    const requirementDetails = Object.entries(fieldValues).map(([key, value]) => `${fields.find(field => field.key === key)?.label || key}：${value}`).join('；');
+    const estimatedCost = Number(fieldValues.estimatedCost);
     return {
       id: order.id, bookingId: order.bookingId, type: order.type,
-      title: isConfidentialBooking(booking) ? '涉密会议会务服务' : order.title,
+      title: confidential ? '涉密会议会务服务' : order.title,
       status: order.status, assigneeRole: order.assigneeRole, createdAt: order.createdAt,
       responseDueAt: order.responseDueAt, respondedAt: order.respondedAt, completedAt: order.completedAt,
+      catalogItemId: catalog?.catalogItemId, catalogVersion: catalog?.catalogVersion, catalogName: catalog?.name,
+      fieldValues, requirementDetails,
+      quantity: fieldValues.quantity, unit: fieldValues.unit, specification: fieldValues.specification,
+      serviceTime: fieldValues.serviceTime, serviceLocation: fieldValues.serviceLocation,
+      estimatedCost: fieldValues.estimatedCost !== undefined && Number.isFinite(estimatedCost) && estimatedCost >= 0 ? estimatedCost : undefined,
+      executionResult: confidential ? undefined : order.executionResult,
+      cancellationReason: order.cancellationReason,
       costAmount: order.costAmount || 0, costNote: order.costNote, exceptionReason: order.exceptionReason
     };
   });
   return {
-    start, end, generatedAt: new Date().toISOString(), revision, overall,
+    start, end, generatedAt: generatedAt.toISOString(), revision, overall,
     rows: [...resourceRows, ...floorRows, ...typeRows, ...categoryRows, ...timeRows, ...departmentRows, ...serviceRows, ...usageRows],
     bookings: details.sort((a, b) => timeValue(a.startTime) - timeValue(b.startTime)),
     checkIns: checkIns.sort((a, b) => timeValue(a.createdAt) - timeValue(b.createdAt)),
     services: services.sort((a, b) => timeValue(a.createdAt) - timeValue(b.createdAt)),
+    supplies: buildSupplyRows(allOrders, relevantById),
     differences: details.filter(detail => detail.reconciliationStatus !== '一致')
   };
 };
@@ -293,16 +375,18 @@ export const writeOperationsReportXlsx = async (report: OperationsReport, res: S
   const summaryHeaders = ['维度', '名称', '预约数', '使用小时', '使用率(%)', '取消率(%)', 'No-show率(%)', '驳回率(%)', '平均审批时长(小时)', '计划小时', '实际小时', '签到预约数', '提前结束数', '服务工单数', '服务成本(元)'];
   const summaryRow = (row: OperationsReportRow) => [DIMENSION_LABELS[row.dimension], row.name, row.bookingCount, row.usageHours, row.utilization, row.cancellationRate, row.noShowRate, row.rejectionRate, row.averageApprovalHours, row.scheduledHours, row.actualHours, row.checkedInCount, row.earlyEndCount, row.serviceOrderCount, row.serviceCost];
   addSheet('多维汇总', summaryHeaders, [report.overall, ...report.rows].map(summaryRow));
-  const bookingHeaders = ['预约ID', '会议主题', '申请人', '部门', '资源', '楼栋楼层', '资源类型', '时段', '状态', '计划开始', '计划结束', '计划分钟', '有效签到人数', '首次签到', '实际开始', '实际结束', '实际分钟', '提前结束分钟', '未签到', '释放类型', '服务工单数', '服务成本(元)', '对账状态', '对账说明'];
-  const bookingRow = (row: OperationsBookingReport) => [row.id, row.purpose, row.requester, row.department, row.resource, row.buildingFloor, row.resourceType, row.timeSlot, STATUS_LABELS[row.status], localDateTime(row.startTime), localDateTime(row.endTime), row.scheduledMinutes, row.checkInCount, localDateTime(row.firstCheckInAt), localDateTime(row.actualStartTime), localDateTime(row.actualEndTime), row.actualMinutes, row.earlyEndMinutes, row.noShow ? '是' : '否', row.releaseType || '', row.serviceOrderCount, row.serviceCost, row.reconciliationStatus, row.reconciliationNote];
+  const bookingHeaders = ['预约ID', '会议主题', '申请人', '部门', '资源', '楼栋楼层', '资源类型', '时段', '展示状态', '主状态', '计划开始', '计划结束', '计划分钟', '有效签到人数', '首次签到', '实际开始', '实际结束', '实际分钟', '提前结束分钟', '未签到', '释放类型', '服务工单数', '服务成本(元)', '对账状态', '对账说明'];
+  const bookingRow = (row: OperationsBookingReport) => [row.id, row.purpose, row.requester, row.department, row.resource, row.buildingFloor, row.resourceType, row.timeSlot, BOOKING_DISPLAY_STATUS_LABELS[row.displayStatus], STATUS_LABELS[row.status], localDateTime(row.startTime), localDateTime(row.endTime), row.scheduledMinutes, row.checkInCount, localDateTime(row.firstCheckInAt), localDateTime(row.actualStartTime), localDateTime(row.actualEndTime), row.actualMinutes, row.earlyEndMinutes, row.noShow ? '是' : '否', row.releaseType || '', row.serviceOrderCount, row.serviceCost, row.reconciliationStatus, row.reconciliationNote];
   addSheet('预约对账', bookingHeaders, report.bookings.map(bookingRow));
   addSheet('签到明细', ['事件ID', '预约ID', '签到成员', '操作人', '来源', '动作', '签到时间', '记录时间', '原因'], report.checkIns.map(row => [row.id, row.bookingId, row.subject, row.operator, row.source, row.action, localDateTime(row.checkedInAt), localDateTime(row.createdAt), row.reason || '']));
-  addSheet('服务明细', ['工单ID', '预约ID', '服务类型', '标题', '状态', '责任角色', '创建时间', '响应截止', '响应时间', '完成时间', '成本(元)', '成本说明', '异常原因'], report.services.map(row => [row.id, row.bookingId, SERVICE_LABELS[row.type], row.title, row.status, row.assigneeRole, localDateTime(row.createdAt), localDateTime(row.responseDueAt), localDateTime(row.respondedAt), localDateTime(row.completedAt), row.costAmount, row.costNote || '', row.exceptionReason || '']));
+  addSheet('备料统计', supplyHeaders, report.supplies.map(supplyRow));
+  addSheet('服务明细', ['工单ID', '预约ID', '服务类型', '目录ID', '目录版本', '标题', '状态', '责任角色', '数量', '单位', '规格', '服务时间', '服务地点', '预估成本(元)', '需求明细（目录快照）', '创建时间', '响应截止', '响应时间', '完成时间', '执行结果', '取消原因', '实际成本(元)', '成本说明', '异常原因'], report.services.map(row => [row.id, row.bookingId, row.catalogName || SERVICE_LABELS[row.type], row.catalogItemId || '', row.catalogVersion || '', row.title, row.status, row.assigneeRole, row.quantity || '', row.unit || '', row.specification || '', row.serviceTime || '', row.serviceLocation || '', row.estimatedCost ?? '', row.requirementDetails, localDateTime(row.createdAt), localDateTime(row.responseDueAt), localDateTime(row.respondedAt), localDateTime(row.completedAt), row.executionResult || '', row.cancellationReason || '', row.costAmount, row.costNote || '', row.exceptionReason || '']));
   addSheet('差异清单', bookingHeaders, report.differences.map(bookingRow));
   addSheet('导出说明', ['项目', '内容'], [
     ['统计开始', localDateTime(report.start)], ['统计结束', localDateTime(report.end)], ['生成时间', localDateTime(report.generatedAt)],
     ['快照版本', report.revision], ['预约行数', report.bookings.length], ['签到事件行数', report.checkIns.length], ['服务工单行数', report.services.length],
-    ['口径', '先按当前账号可读预约过滤，再聚合；实际分钟来自独立使用事实，计划分钟与实际分钟分别列示。']
+    ['备料统计行数', report.supplies.length],
+    ['口径', '先按当前账号可读预约过滤，再聚合；实际分钟来自独立使用事实，计划分钟与实际分钟分别列示；备料量仅取工单冻结目录快照中的数值字段，按数量字段、单位和会议时段汇总。']
   ]);
   await workbook.commit();
 };

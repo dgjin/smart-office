@@ -6,7 +6,9 @@ import type {
   User
 } from '../types.ts';
 import { getCurrentRuleSettings } from '../utils/resourceDomain.ts';
-import { canReadBookingDetails, isConfidentialBooking } from './confidentiality.ts';
+import { getBookingDisplayStatus } from '../utils/bookingRules.ts';
+import { canReadBookingDetails, getActorDbView, isConfidentialBooking } from './confidentiality.ts';
+import { buildExecutiveDashboard } from '../utils/dashboard.ts';
 import { mutateDb, readSnapshot } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
@@ -52,7 +54,7 @@ const currentExceptions = (db: OfficeDb, actor: User, now: Date): OperationalExc
         }));
       }
     }
-    if (booking.noShow || booking.releaseType === 'NO_SHOW') {
+    if (getBookingDisplayStatus(booking, now) === 'NO_SHOW') {
       const occurredAt = booking.releasedAt || booking.endTime;
       rows.push(baseException({
         id: `no-show:${booking.id}:${booking.scheduleVersion || 1}`,
@@ -147,10 +149,14 @@ export const getDashboard = async (actor: User): Promise<DashboardSnapshot> => {
     && (booking.userId === actor.id || (booking.attendeeIds || []).includes(actor.id)))
     .sort((a, b) => Date.parse(a.startTime) - Date.parse(b.startTime))[0];
   const exceptions = withActionRecords(currentExceptions(db, actor, now), db.exceptionActions || [], actor);
+  const scope = actor.role.includes('SYSTEM_ADMIN') ? 'ENTERPRISE'
+    : actor.role.some(role => ['APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK', 'SECURITY_ADMIN'].includes(role)) ? 'OPERATIONS' : 'PERSONAL';
+  const executive = actor.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN'].includes(role))
+    ? buildExecutiveDashboard(db.resources || [], getActorDbView(db, actor).bookings || [], now, getCurrentRuleSettings(db.ruleVersions))
+    : undefined;
   return {
-    generatedAt: now.toISOString(), revision,
-    scope: actor.role.includes('SYSTEM_ADMIN') ? 'ENTERPRISE'
-      : actor.role.some(role => ['APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK', 'SECURITY_ADMIN'].includes(role)) ? 'OPERATIONS' : 'PERSONAL',
+    generatedAt: now.toISOString(), revision, scope,
+    ...(executive ? { executive } : {}),
     stats: {
       totalResources: resources.length,
       availableRooms: resources.filter(resource => resource.type === 'ROOM' && resource.status === 'AVAILABLE').length,

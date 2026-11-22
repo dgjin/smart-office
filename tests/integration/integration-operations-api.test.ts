@@ -90,7 +90,7 @@ const createBooking = async (purpose: string, overrides: Record<string, unknown>
     booking: {
       id: crypto.randomUUID(), resourceId: 'r1', type: 'ROOM', startTime: start.toISOString(),
       endTime: new Date(start.getTime() + 3600000).toISOString(), purpose, participants: 2,
-      meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', attendeeIds: ['4'],
+      meetingType: 'IMPORTANT', confidentialityChoice: 'NON_CONFIDENTIAL', attendeeIds: ['4'],
       status: 'PENDING', createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [], ...overrides
     }
   });

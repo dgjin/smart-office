@@ -228,6 +228,7 @@ test.describe('MRP3 动态审批与保密控制真实 Chrome 验收', () => {
     const purpose = `MRP3涉密参会变更 ${Date.now()}`;
     const dialog = await openBooking(owner.page, 'Alpha 战略会议室');
     await dialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await dialog.getByLabel('参与人数', { exact: true }).fill('2');
     await dialog.getByLabel('会议类型', { exact: true }).selectOption('CONFIDENTIAL');
     await dialog.getByLabel('涉密确认', { exact: true }).selectOption('CONFIDENTIAL');
     await fillSchedule(dialog, 32);
@@ -316,9 +317,9 @@ test.describe('MRP3 动态审批与保密控制真实 Chrome 验收', () => {
     expect(authorizations).toHaveLength(2);
     expect(new Set(authorizations.map((item: any) => item.authorizedBy)).size).toBe(2);
     expect(authorizations.every((item: any) => Boolean(item.usedAt))).toBe(true);
-    await approve(ids.approver, booking.id);
-    await approve(ids.admin, booking.id);
-    expect((await readBooking(booking.id)).status).toBe('APPROVED');
+    expect(changed.status).toBe('APPROVED');
+    expect(changed.approvalRuleId).toBeUndefined();
+    expect(changed.approvalHistory.at(-1)?.nodeName).toBe('系统自动核准');
     expect(owner.errors).toEqual([]);
     await owner.context.close();
   });

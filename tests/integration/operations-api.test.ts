@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import ExcelJS from 'exceljs';
-import type { Booking } from '../../types.ts';
+import type { Booking, Resource } from '../../types.ts';
+import { addLocalDays, bookingEffectiveEnd, countsTowardOccupancy, localDateKey, startOfLocalDay } from '../../utils/dashboard.ts';
 import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
 
 const server = new TestServer();
@@ -59,7 +60,7 @@ before(async () => {
   }));
   await insertBooking(booking({
     id: 'mrp6-no-show', userId: '3', resourceId: 'r1', purpose: '未签到复核', status: 'CANCELLED', noShow: true, releaseType: 'NO_SHOW', releasedAt: new Date(now - 60000).toISOString(),
-    startTime: new Date(now - 7200000).toISOString(), endTime: new Date(now - 3600000).toISOString()
+    startTime: `${chinaToday}T06:00:00+08:00`, endTime: `${chinaToday}T07:00:00+08:00`
   }));
 });
 
@@ -86,6 +87,46 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     assert.ok(enterprise.generatedAt);
   });
 
+  it('领导驾驶舱按全量脱敏预约聚合八项指标，普通员工不返回领导读模型', async () => {
+    const own = await expectJson(await call('/api/dashboard', 'GET', requester), 200);
+    const otherView = await expectJson(await call('/api/dashboard', 'GET', other), 200);
+    assert.equal(own.executive, undefined);
+    assert.equal(otherView.executive, undefined);
+
+    const approver = await server.login('2');
+    const operations = await expectJson(await call('/api/dashboard', 'GET', approver), 200);
+    assert.equal(operations.scope, 'OPERATIONS');
+    assert.ok(operations.executive);
+
+    const enterprise = await expectJson(await call('/api/dashboard', 'GET', admin), 200);
+    const executive = enterprise.executive;
+    assert.ok(executive);
+    const generatedAt = new Date(enterprise.generatedAt);
+    const dayStart = startOfLocalDay(generatedAt);
+    const dayEnd = addLocalDays(dayStart, 1);
+    const [resourceRows, bookingRows] = await Promise.all([
+      queryTestDb<any[]>('SELECT payload FROM office_state WHERE state_key = ?', ['resources']),
+      queryTestDb<any[]>('SELECT payload FROM bookings')
+    ]);
+    const parse = (row: any) => typeof row.payload === 'string' ? JSON.parse(row.payload) : row.payload;
+    const resources = (parse(resourceRows[0]) as Resource[]).filter(item => item.type === 'ROOM' && ['AVAILABLE', 'OCCUPIED'].includes(item.status));
+    const bookings = bookingRows.map(row => parse(row) as Booking);
+    const expectedTodayCount = bookings.filter(item => countsTowardOccupancy(item, generatedAt)
+      && Date.parse(item.startTime) < dayEnd.getTime() && Date.parse(bookingEffectiveEnd(item)) > dayStart.getTime()).length;
+
+    assert.equal(executive.roomCount, resources.length);
+    assert.equal(executive.todayBookingCount, expectedTodayCount);
+    assert.equal(executive.todayNoShowCount, 1);
+    assert.equal(executive.week[0].utilization, executive.todayUtilization);
+    assert.ok(executive.todayUtilization > 0);
+    assert.ok(executive.weekAverageUtilization > 0);
+    assert.ok(executive.currentInUse >= 0 && executive.currentInUse <= executive.roomCount);
+    assert.ok(executive.currentIdle >= 0 && executive.currentIdle <= executive.roomCount);
+    assert.ok(executive.overdueReleaseCount >= 0);
+    assert.deepEqual(executive.week.map((item: any) => item.date), Array.from({ length: 7 }, (_, index) => localDateKey(addLocalDays(dayStart, index))));
+    assert.equal(JSON.stringify(executive).includes('机密项目真实名称'), false);
+  });
+
   it('报表 API 与 CSV/XLSX 下载共用权限快照并保护涉密内容', async () => {
     const query = `start=${encodeURIComponent(new Date(Date.now() - 86400000).toISOString())}&end=${encodeURIComponent(new Date(Date.now() + 172800000).toISOString())}`;
     await expectJson(await call(`/api/reports?${query}`, 'GET', requester), 403);
@@ -94,6 +135,9 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     assert.equal(report.rows.some((item: any) => item.dimension === 'BUILDING_FLOOR'), true);
     assert.equal(report.rows.some((item: any) => item.dimension === 'USAGE'), true);
     assert.equal(JSON.stringify(report).includes('机密项目真实名称'), false);
+    const noShowReport = report.bookings.find((item: any) => item.id === 'mrp6-no-show');
+    assert.equal(noShowReport.status, 'CANCELLED');
+    assert.equal(noShowReport.displayStatus, 'NO_SHOW');
 
     const csvResponse = await call(`/api/reports/export?format=csv&${query}`, 'GET', admin);
     assert.equal(csvResponse.status, 200);
@@ -110,7 +154,7 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     assert.match(xlsxResponse.headers.get('content-type') || '', /spreadsheetml\.sheet/);
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await xlsxResponse.arrayBuffer()));
-    assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['多维汇总', '预约对账', '签到明细', '服务明细', '差异清单', '导出说明']);
+    assert.deepEqual(workbook.worksheets.map(sheet => sheet.name), ['多维汇总', '预约对账', '签到明细', '备料统计', '服务明细', '差异清单', '导出说明']);
     assert.equal(workbook.getWorksheet('预约对账')!.rowCount, 4);
     assert.equal(JSON.stringify(workbook.worksheets.map(sheet => sheet.getSheetValues())).includes('机密项目真实名称'), false);
   });
@@ -148,12 +192,26 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     await expectJson(await server.request('/api/device/snapshot'), 401);
     const snapshot = await expectJson(await server.request('/api/device/snapshot', { headers: { Authorization: `Bearer ${token}` } }), 200);
     assert.equal(snapshot.resource.id, 'r1');
+    assert.equal(snapshot.resource.code, 'R1');
     assert.equal(snapshot.device.tokenHash, undefined);
     assert.equal(snapshot.bookings.some((item: any) => item.id === 'mrp6-other'), false);
     const confidential = snapshot.bookings.find((item: any) => item.id === 'mrp6-confidential');
     assert.equal(confidential.purpose, '涉密会议');
+    assert.equal(confidential.department, undefined);
+    assert.equal(confidential.confidential, true);
+    const noShowSchedule = snapshot.bookings.find((item: any) => item.id === 'mrp6-no-show');
+    assert.equal(noShowSchedule.department, '市场部');
+    assert.equal(noShowSchedule.status, 'NO_SHOW');
     assert.equal(JSON.stringify(snapshot).includes('机密项目真实名称'), false);
     assert.equal(snapshot.bookings.every((item: any) => item.userId === undefined && item.attendeeIds === undefined), true);
+
+    await expectJson(await call(`/api/devices/${created.device.id}/restart`, 'POST', requester, {}), 403);
+    const restarted = await expectJson(await call(`/api/devices/${created.device.id}/restart`, 'POST', admin, {}), 200);
+    assert.ok(Number.isFinite(Date.parse(restarted.device.restartRequestedAt)));
+    const restartSnapshot = await expectJson(await server.request('/api/device/snapshot', { headers: { Authorization: `Bearer ${token}` } }), 200);
+    assert.equal(restartSnapshot.device.restartRequestedAt, restarted.device.restartRequestedAt);
+    const restartAudit = await queryTestDb<any[]>("SELECT action FROM audit_events WHERE entity_type = 'DEVICE' AND entity_id = ? ORDER BY created_at", [created.device.id]);
+    assert.equal(restartAudit.some(item => item.action === 'DEVICE_RESTART_REQUEST'), true);
 
     const heartbeat = await fetch(`${server.baseUrl}/api/device/heartbeat`, {
       method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ lastSnapshotRevision: snapshot.revision })

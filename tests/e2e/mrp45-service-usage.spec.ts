@@ -255,7 +255,7 @@ test.describe('MRP4-5 真实 Chrome 会务与使用闭环', () => {
       requester.page.waitForResponse(response => response.url().endsWith('/complete') && response.status() === 200),
       requester.page.getByRole('button', { name: '提前结束并释放', exact: true }).click()
     ]);
-    await expect(requester.page.getByText('结束', { exact: true })).toBeVisible();
+    await expect(requester.page.getByText('提前结束', { exact: true })).toBeVisible();
     const completed = await readBooking(bookingId);
     expect(completed.status).toBe('COMPLETED');
     expect(completed.actualStartTime).toBeTruthy();
@@ -310,5 +310,134 @@ test.describe('MRP4-5 真实 Chrome 会务与使用闭环', () => {
     expect(restored.scheduleVersion).toBe(2);
     expect(approver.errors).toEqual([]);
     await approver.context.close();
+  });
+
+  test('审批卡片展示车辆服务冻结字段，核准后工单保留相同数量与成本口径', async ({ browser }) => {
+    const bookingId = `browser-gap06-${crypto.randomUUID()}`;
+    const purpose = 'Chrome GAP06 车辆服务冻结核验';
+    const start = new Date(Date.now() + 4 * 86400000);
+    start.setUTCHours(2, 0, 0, 0);
+    const created = await api('/api/bookings', 'POST', ids.requester, {
+      booking: {
+        id: bookingId, userId: ids.requester, resourceId: 'r1', type: 'ROOM',
+        startTime: start.toISOString(), endTime: new Date(start.getTime() + 3600000).toISOString(),
+        status: 'PENDING', purpose, participants: 4, createdAt: new Date().toISOString(),
+        currentNodeIndex: 0, approvalHistory: [], attendeeIds: [], meetingType: 'IMPORTANT',
+        confidentialityChoice: 'NON_CONFIDENTIAL', requesterDepartmentId: 'dpt3',
+        serviceRequirements: [{
+          type: 'VEHICLE',
+          fieldValues: {
+            quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟',
+            serviceLocation: '北门', estimatedCost: '680', notes: '嘉宾往返保障'
+          }
+        }]
+      }
+    });
+    expect(created.status, JSON.stringify(await created.clone().json())).toBe(201);
+
+    const approver = await openWorkspace(browser, ids.approver);
+    await approver.page.getByRole('button', { name: '审批工作台', exact: true }).click();
+    const card = approver.page.locator('div').filter({ has: approver.page.getByText(purpose, { exact: false }) })
+      .filter({ has: approver.page.getByRole('button', { name: '通过审批', exact: true }) }).last();
+    await expect(card).toBeVisible();
+    const requirements = card.getByLabel('结构化会务需求', { exact: true });
+    await expect(requirements).toContainText('车辆服务 · 目录 V1');
+    for (const text of ['数量：2', '单位：辆', '规格：七座商务车', '服务时间：会前 60 分钟', '服务地点：北门', '预估成本（元）：680', '补充说明：嘉宾往返保障']) {
+      await expect(requirements).toContainText(text);
+    }
+    await Promise.all([
+      approver.page.waitForResponse(response => response.url().endsWith('/api/agent/action') && response.status() === 200),
+      card.getByRole('button', { name: '通过审批', exact: true }).click()
+    ]);
+    expect(approver.errors).toEqual([]);
+    await approver.context.close();
+
+    const approved = await api('/api/agent/action', 'POST', ids.admin, {
+      action: { type: 'PROPOSE_APPROVAL', bookingId, decision: 'APPROVE', comment: 'GAP06 浏览器复核通过', summary: '通过审批' }
+    });
+    expect(approved.status, JSON.stringify(await approved.clone().json())).toBe(200);
+    await waitFor(async () => (await readCollection<WorkOrder>('workOrders')).some(order => order.id === `wo-${bookingId}-v1-VEHICLE`));
+
+    const coordinator = await openWorkspace(browser, ids.coordinator);
+    await openService(coordinator.page);
+    const order = coordinator.page.locator('article').filter({ hasText: purpose });
+    await expect(order).toContainText('车辆服务 · 目录 v1');
+    for (const text of ['数量', '2', '单位', '辆', '规格', '七座商务车', '服务时间', '会前 60 分钟', '服务地点', '北门', '预估成本（元）', '680', '补充说明', '嘉宾往返保障']) {
+      await expect(order).toContainText(text);
+    }
+    expect(coordinator.errors).toEqual([]);
+    await coordinator.context.close();
+  });
+
+  test('ChatDock 修订车辆服务数量规格地点和预估成本，刷新后仍从 MySQL 恢复', async ({ browser }) => {
+    const purpose = `Chrome GAP06 草案修订 ${crypto.randomUUID()}`;
+    const start = new Date(Date.now() + 9 * 86400000);
+    start.setHours(14, 0, 0, 0);
+    const seeded = await api('/api/agent/conversation', 'PUT', ids.requester, {
+      revision: 0,
+      state: {
+        turns: [
+          { role: 'user', content: '请准备带车辆服务的会议草案' },
+          { role: 'assistant', content: '草案已生成，请核对。', actions: [{
+            type: 'PROPOSE_BOOKING', summary: '待确认申请',
+            draft: {
+              resourceId: 'r1', startTime: start.toISOString(), endTime: new Date(start.getTime() + 3600000).toISOString(),
+              purpose, participants: 4, meetingType: 'IMPORTANT',
+              serviceRequirements: [{
+                type: 'VEHICLE',
+                fieldValues: {
+                  quantity: '2', unit: '辆', specification: '七座商务车', serviceTime: '会前 60 分钟',
+                  serviceLocation: '北门', estimatedCost: '680', notes: '嘉宾往返保障'
+                }
+              }]
+            }
+          }] }
+        ],
+        handled: {}, input: ''
+      }
+    });
+    expect(seeded.status, JSON.stringify(await seeded.clone().json())).toBe(200);
+
+    const requester = await openWorkspace(browser, ids.requester);
+    await requester.page.getByRole('button', { name: '打开智能助手', exact: true }).click();
+    const draft = requester.page.getByRole('region', { name: '待确认申请草案' });
+    await expect(draft).toBeVisible();
+    for (const text of ['车辆服务：', '数量：2', '单位：辆', '规格：七座商务车']) await expect(draft).toContainText(text);
+    await draft.getByRole('button', { name: '修订申请', exact: true }).click();
+    await draft.getByLabel('数量（必填）', { exact: true }).fill('3');
+    await draft.getByLabel('规格（必填）', { exact: true }).fill('九座商务车');
+    await draft.getByLabel('服务地点（必填）', { exact: true }).fill('南门');
+    await draft.getByLabel('预估成本（元）（可选）', { exact: true }).fill('880');
+    await Promise.all([
+      requester.page.waitForResponse(response => response.url().endsWith('/api/agent/conversation') && response.request().method() === 'PUT' && response.ok()),
+      draft.getByRole('button', { name: '保存修订', exact: true }).click()
+    ]);
+    for (const text of ['数量：3', '单位：辆', '规格：九座商务车', '服务时间：会前 60 分钟', '服务地点：南门', '预估成本（元）：880', '补充说明：嘉宾往返保障']) {
+      await expect(draft).toContainText(text);
+    }
+
+    await requester.page.reload();
+    await expect(requester.page.locator('.studio-app')).toBeVisible();
+    await requester.page.getByRole('button', { name: '打开智能助手', exact: true }).click();
+    const restored = requester.page.getByRole('region', { name: '待确认申请草案' });
+    await expect(restored).toContainText('数量：3');
+    await expect(restored).toContainText('规格：九座商务车');
+    await expect(restored).toContainText('服务地点：南门');
+    await expect(restored).toContainText('预估成本（元）：880');
+    const rows = await queryTestDb<any[]>('SELECT payload FROM chatdock_conversations WHERE user_id = ?', [ids.requester]);
+    expect(rows).toHaveLength(1);
+    const state = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+    const savedRequirement = state.turns[1].actions[0].draft.serviceRequirements[0];
+    expect(savedRequirement).toEqual({
+      type: 'VEHICLE',
+      fieldValues: {
+        quantity: '3', unit: '辆', specification: '九座商务车', serviceTime: '会前 60 分钟',
+        serviceLocation: '南门', estimatedCost: '880', notes: '嘉宾往返保障'
+      }
+    });
+    const bookings = await queryTestDb<any[]>("SELECT id FROM bookings WHERE JSON_UNQUOTE(JSON_EXTRACT(payload, '$.purpose')) = ?", [purpose]);
+    expect(bookings).toHaveLength(0);
+    expect(requester.errors).toEqual([]);
+    await requester.context.close();
   });
 });

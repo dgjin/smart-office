@@ -1,10 +1,12 @@
 import type { Booking, BookingQuotaDetail, BookingRuleSettings, BookingServiceRequirement, Resource, User } from '../types.ts';
+import { isServiceType } from '../constants.ts';
 import {
   bookingDateKey,
   bookingLocalTime,
   findAttendeeOverlaps,
   findBookingConflicts,
   findRequesterConflicts,
+  isValidBookingPurpose,
   splitBookingByNaturalDay,
   validateBookingResource
 } from '../utils/bookingRules.ts';
@@ -52,7 +54,7 @@ const serviceRequirements = (booking: Booking): BookingServiceRequirement[] => {
   const supplied = booking.serviceRequirements || [];
   if (!Array.isArray(supplied) || supplied.length > 20) throw new BookingRuleError('INVALID_SERVICE_REQUIREMENTS', 400);
   const normalized = supplied.map(requirement => {
-    if (!requirement || !['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(requirement.type)
+    if (!requirement || !isServiceType(requirement.type)
       || (requirement.fieldValues !== undefined && (!requirement.fieldValues || typeof requirement.fieldValues !== 'object' || Array.isArray(requirement.fieldValues)))) {
       throw new BookingRuleError('INVALID_SERVICE_REQUIREMENTS', 400);
     }
@@ -72,7 +74,7 @@ const serviceRequirements = (booking: Booking): BookingServiceRequirement[] => {
 };
 
 const assertMeetingAttributes = (booking: Booking) => {
-  if (!booking.purpose?.trim() || booking.purpose.trim().length > 200) throw new BookingRuleError('INVALID_BOOKING_PURPOSE', 400);
+  if (!isValidBookingPurpose(booking.purpose)) throw new BookingRuleError('INVALID_BOOKING_PURPOSE', 400);
   if (!['NORMAL', 'IMPORTANT', 'CONFIDENTIAL'].includes(booking.meetingType || '')) {
     throw new BookingRuleError('MEETING_TYPE_REQUIRED', 400);
   }
@@ -102,6 +104,7 @@ const assertOpenHours = (resource: Resource, booking: Booking) => {
 
 const assertExclusiveAccess = (resource: Resource, booking: Booking, settings: BookingRuleSettings, now: Date) => {
   if (!resource.isExclusive) return { exclusiveRequestReason: undefined, exclusiveAccessType: undefined };
+  if (booking.hasLeader !== true) throw new BookingRuleError('EXCLUSIVE_LEADER_REQUIRED', 400);
   const leadTimeMs = new Date(booking.startTime).getTime() - now.getTime();
   if (leadTimeMs > settings.exclusiveRequestOpenHours * 3600000) {
     throw new BookingRuleError('EXCLUSIVE_REQUEST_WINDOW_CLOSED', 409, {
@@ -144,13 +147,14 @@ export const buildBookingQuotaDetails = (
   const departmentId = departmentIdFor(booking, db);
   if (!departmentId) throw new BookingRuleError('REQUESTER_DEPARTMENT_NOT_FOUND', 400);
   const occupied = [...(db.bookings || []), ...accepted].filter(item => item.id !== editingId
-    && departmentIdFor(item, db) === departmentId && countsForQuota(item));
+    && item.resourceId === booking.resourceId && departmentIdFor(item, db) === departmentId && countsForQuota(item));
   return splitBookingByNaturalDay(booking.startTime, booking.endTime).map(segment => {
     const usedBeforeMinutes = occupied.reduce((total, item) => total + splitBookingByNaturalDay(item.startTime, item.endTime)
       .filter(day => day.date === segment.date)
       .reduce((sum, day) => sum + day.minutes, 0), 0);
     const remainingMinutes = settings.departmentDailyNetMinutes - usedBeforeMinutes - segment.minutes;
     const detail = {
+      resourceId: booking.resourceId,
       date: segment.date,
       limitMinutes: settings.departmentDailyNetMinutes,
       usedBeforeMinutes,

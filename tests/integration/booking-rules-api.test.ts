@@ -40,6 +40,11 @@ const readBooking = async (id: string): Promise<Booking> => {
   assert.equal(rows.length, 1);
   return typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
 };
+const readCollection = async <T>(key: string): Promise<T[]> => {
+  const rows = await queryTestDb<any[]>('SELECT payload FROM office_state WHERE state_key = ?', [key]);
+  assert.equal(rows.length, 1);
+  return typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+};
 const cancelBooking = (session: Awaited<ReturnType<TestServer['login']>>, bookingId: string) =>
   call('/api/agent/action', 'POST', session, { action: { type: 'PROPOSE_CANCEL', bookingId, summary: '取消预约' } });
 
@@ -148,6 +153,29 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.deepEqual(redacted.attendeeWarnings, []);
   });
 
+  it('GAP-01 人数与主题异常输入均返回 400 且不落库，合法申请保持不变', async () => {
+    const beforeRows = await queryTestDb<any[]>('SELECT COUNT(*) AS count FROM bookings');
+    const invalidParticipants = [undefined, 0, -1, 1.5, 'four', null];
+    for (const [index, participants] of invalidParticipants.entries()) {
+      const response = await createBooking(requester, makeBooking(mainResourceId, at(127, 2), at(127, 3), { purpose: `GAP01人数${index}`, participants }));
+      assert.equal(response.status, 400, JSON.stringify(await readJson(response.clone())));
+      assert.equal((await readJson(response)).error, 'INVALID_PARTICIPANTS');
+    }
+    for (const purpose of ['', ' ', '会议', '开会', ' 会 议 ', '开\n会', '项'.repeat(201)]) {
+      const response = await createBooking(requester, makeBooking(mainResourceId, at(127, 4), at(127, 5), { purpose, participants: 2 }));
+      assert.equal(response.status, 400, JSON.stringify(await readJson(response.clone())));
+      assert.equal((await readJson(response)).error, 'INVALID_BOOKING_PURPOSE');
+    }
+    const afterRows = await queryTestDb<any[]>('SELECT COUNT(*) AS count FROM bookings');
+    assert.equal(Number(afterRows[0].count), Number(beforeRows[0].count));
+
+    const response = await createBooking(requester, makeBooking(mainResourceId, at(130, 6), at(130, 7), { purpose: 'GAP01合法项目评审', participants: 1 }));
+    assert.equal(response.status, 201, JSON.stringify(await readJson(response.clone())));
+    const created = (await readJson(response)).booking as Booking;
+    assert.equal(created.participants, 1);
+    assert.equal(created.purpose, 'GAP01合法项目评审');
+  });
+
   it('礼堂布置和完整服务需求通过同一提交规则保存', async () => {
     const response = await createBooking(requester, makeBooking(auditoriumResourceId, at(121, 2), at(121, 4), {
       meetingType: 'IMPORTANT',
@@ -165,20 +193,28 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.deepEqual(created.serviceRequirements?.map(item => item.type), ['VIDEO', 'SECURITY', 'OTHER']);
   });
 
-  it('专属资源仅开放会前窗口内临时申请并记录授权审计', async () => {
+  it('专属资源强制领导参会、临时理由和开放窗口并记录授权审计', async () => {
     const tooEarly = await createBooking(requester, makeBooking(exclusiveResourceId, at(122, 2), at(122, 3), {
-      exclusiveRequestReason: '临时重要接待'
+      hasLeader: true, exclusiveRequestReason: '临时重要接待'
     }));
     assert.equal(tooEarly.status, 409);
     assert.equal((await readJson(tooEarly)).error, 'EXCLUSIVE_REQUEST_WINDOW_CLOSED');
 
     const start = new Date(Date.now() + 12 * 3600000);
-    const missingReason = await createBooking(requester, makeBooking(exclusiveResourceId, start, new Date(start.getTime() + 3600000)));
+    const missingLeader = await createBooking(requester, makeBooking(exclusiveResourceId, start, new Date(start.getTime() + 3600000), {
+      exclusiveRequestReason: '临时重要接待'
+    }));
+    assert.equal(missingLeader.status, 400);
+    assert.equal((await readJson(missingLeader)).error, 'EXCLUSIVE_LEADER_REQUIRED');
+
+    const missingReason = await createBooking(requester, makeBooking(exclusiveResourceId, start, new Date(start.getTime() + 3600000), {
+      hasLeader: true
+    }));
     assert.equal(missingReason.status, 400);
     assert.equal((await readJson(missingReason)).error, 'EXCLUSIVE_REQUEST_REASON_REQUIRED');
 
     const response = await createBooking(requester, makeBooking(exclusiveResourceId, start, new Date(start.getTime() + 3600000), {
-      exclusiveRequestReason: '临时重要接待'
+      hasLeader: true, exclusiveRequestReason: '临时重要接待'
     }));
     assert.equal(response.status, 201, JSON.stringify(await readJson(response.clone())));
     const created = (await readJson(response)).booking as Booking;
@@ -213,9 +249,9 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.equal(rows.length, 1);
   });
 
-  it('并发提交不能绕过部门每日净额度且失败请求不产生部分落库', async () => {
+  it('并发提交不能绕过部门在同一会议室的每日净额度且失败请求不产生部分落库', async () => {
     const first = makeBooking(mainResourceId, at(125, 0), at(125, 3), { purpose: '并发额度三小时' });
-    const second = makeBooking(otherResourceId, at(125, 5), at(125, 7), { purpose: '并发额度两小时' });
+    const second = makeBooking(mainResourceId, at(125, 5), at(125, 7), { purpose: '并发额度两小时' });
     const responses = await Promise.all([createBooking(requester, first), createBooking(requester, second)]);
     assert.deepEqual(responses.map(response => response.status).sort(), [201, 409]);
     const rejected = responses.find(response => response.status === 409)!;
@@ -224,6 +260,27 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.equal(rows.length, 1);
     const saved = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
     assert.ok([120, 180].includes(saved.quotaDetails[0].usedBeforeMinutes + saved.quotaDetails[0].requestedMinutes));
+  });
+
+  it('部门在A会议室达到额度后不能继续预约A但可预约B', async () => {
+    const fullResponse = await createBooking(requester, makeBooking(mainResourceId, at(134, 0), at(134, 4), { purpose: 'GAP02-A会议室额度已满' }));
+    assert.equal(fullResponse.status, 201, JSON.stringify(await readJson(fullResponse.clone())));
+    const full = (await readJson(fullResponse)).booking as Booking;
+    assert.deepEqual(full.quotaDetails?.[0], {
+      resourceId: mainResourceId, date: full.quotaDetails?.[0].date, limitMinutes: 240,
+      usedBeforeMinutes: 0, requestedMinutes: 240, remainingMinutes: 0
+    });
+
+    const exceeded = await createBooking(requester, makeBooking(mainResourceId, at(134, 5), at(134, 6), { purpose: 'GAP02-A会议室超额' }));
+    assert.equal(exceeded.status, 409);
+    assert.equal((await readJson(exceeded)).error, 'DEPARTMENT_DAILY_QUOTA_EXCEEDED');
+
+    const roomBResponse = await createBooking(requester, makeBooking(otherResourceId, at(134, 7), at(134, 8), { purpose: 'GAP02-B会议室独立额度' }));
+    assert.equal(roomBResponse.status, 201, JSON.stringify(await readJson(roomBResponse.clone())));
+    const roomB = (await readJson(roomBResponse)).booking as Booking;
+    assert.equal(roomB.quotaDetails?.[0].resourceId, otherResourceId);
+    assert.equal(roomB.quotaDetails?.[0].usedBeforeMinutes, 0);
+    assert.equal(roomB.quotaDetails?.[0].remainingMinutes, 180);
   });
 
   it('跨日额度按自然日拆分，改期排除原预约且取消后返还额度', async () => {
@@ -252,7 +309,7 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.equal(edited.quotaDetails?.[0].requestedMinutes, 240);
     assert.equal(edited.quotaDetails?.[0].remainingMinutes, 0);
 
-    const additional = makeBooking(mainResourceId, at(128, 5), at(128, 6), { purpose: '取消后返还的一小时' });
+    const additional = makeBooking(otherResourceId, at(128, 5), at(128, 6), { purpose: '取消后返还的一小时' });
     const exceeded = await createBooking(requester, additional);
     assert.equal(exceeded.status, 409);
     assert.equal((await readJson(exceeded)).error, 'DEPARTMENT_DAILY_QUOTA_EXCEEDED');
@@ -277,6 +334,64 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.ok(!created.attendeeWarnings?.some(item => item.includes('不应泄露')));
   });
 
+  it('GAP-03 普通预约在事务内自动核准并生成工单通知Outbox审计，失败不产生部分落库', async () => {
+    const legacyResponse = await createBooking(requester, makeBooking(otherResourceId, at(150, 4), at(150, 5), {
+      purpose: 'GAP03历史在途申请保持原流程', meetingType: 'IMPORTANT'
+    }));
+    assert.equal(legacyResponse.status, 201);
+    const legacy = (await readJson(legacyResponse)).booking as Booking;
+    assert.equal(legacy.status, 'PENDING');
+
+    const response = await createBooking(requester, makeBooking(otherResourceId, at(150, 2), at(150, 3), {
+      purpose: 'GAP03普通自动核准', serviceRequirements: [{ type: 'TEA' }], attendeeIds: [outsiderId]
+    }));
+    assert.equal(response.status, 201, JSON.stringify(await readJson(response.clone())));
+    const created = (await readJson(response)).booking as Booking;
+    assert.equal(created.status, 'APPROVED');
+    assert.equal(created.approvalRuleId, undefined);
+    assert.deepEqual(created.approvalWorkflow, []);
+    assert.equal(created.currentNodeIndex, 0);
+    assert.equal(created.approvalHistory.length, 1);
+    assert.equal(created.approvalHistory[0].approverId, 'system');
+    assert.equal(created.approvalHistory[0].nodeName, '系统自动核准');
+    assert.match(created.approvalRuleExplanation?.[0] || '', /普通预约自动核准/);
+
+    const orders = await readCollection<any>('workOrders');
+    const teaOrder = orders.find(order => order.bookingId === created.id && order.type === 'TEA');
+    assert.ok(teaOrder);
+    const notifications = await queryTestDb<any[]>('SELECT user_id, title FROM notifications WHERE content LIKE ?', ['%GAP03普通自动核准%']);
+    assert.ok(notifications.some(item => item.user_id === requesterId && item.title === '预约已自动核准'));
+    assert.ok(notifications.some(item => item.user_id === outsiderId && item.title === '受邀会议已核准'));
+    for (const key of [`calendar:${created.id}:v1:UPSERT`, `access:${created.id}:v1:GRANT:ALL`]) {
+      assert.equal((await queryTestDb<any[]>('SELECT event_key FROM outbox_events WHERE event_key = ?', [key])).length, 1);
+    }
+    const audits = await queryTestDb<any[]>('SELECT action, details FROM audit_events WHERE entity_id IN (?, ?)', [created.id, teaOrder.id]);
+    assert.ok(audits.some(item => item.action === 'BOOKING_CREATE'));
+    assert.ok(audits.some(item => item.action === 'WORK_ORDER_AUTO_CREATE'));
+    const autoAudit = audits.find(item => item.action === 'BOOKING_AUTO_APPROVE');
+    assert.ok(autoAudit);
+    const auditDetails = typeof autoAudit.details === 'string' ? JSON.parse(autoAudit.details) : autoAudit.details;
+    assert.equal(auditDetails.ruleVersion, created.ruleVersion);
+    assert.equal(auditDetails.approvalRuleSetVersion, created.approvalRuleSetVersion);
+
+    const unchangedLegacy = await readBooking(legacy.id);
+    assert.equal(unchangedLegacy.status, 'PENDING');
+    assert.deepEqual(unchangedLegacy.approvalHistory, legacy.approvalHistory);
+    assert.deepEqual(unchangedLegacy.approvalWorkflow, legacy.approvalWorkflow);
+
+    const rejectedBooking = makeBooking(otherResourceId, at(150, 2), at(150, 3), {
+      purpose: 'GAP03冲突回滚', serviceRequirements: [{ type: 'TEA' }]
+    });
+    const rejected = await createBooking(requester, rejectedBooking);
+    assert.equal(rejected.status, 409);
+    assert.equal((await readJson(rejected)).error, 'CONFLICT');
+    const rejectedId = String(rejectedBooking.id);
+    assert.equal((await readCollection<any>('workOrders')).some(order => order.bookingId === rejectedId), false);
+    assert.equal((await queryTestDb<any[]>('SELECT event_key FROM outbox_events WHERE event_key LIKE ?', [`%${rejectedId}%`])).length, 0);
+    assert.equal((await queryTestDb<any[]>('SELECT id FROM audit_events WHERE entity_id = ?', [rejectedId])).length, 0);
+    assert.equal((await queryTestDb<any[]>('SELECT id FROM notifications WHERE content LIKE ?', ['%GAP03冲突回滚%'])).length, 0);
+  });
+
   it('长期系列保存规则版本，超限不落库，续期重新审批且不能重复提交', async () => {
     const overLimit = [
       makeBooking(mainResourceId, at(140, 2), at(140, 3), { seriesId: 's-mrp2-over-limit', seriesKind: 'LONG_TERM', recurrenceIndex: 0 }),
@@ -291,8 +406,8 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.equal(publishInitial.status, 200);
     const initialVersion = (await readJson(publishInitial)).ruleVersion.version;
     const initial = [
-      makeBooking(mainResourceId, at(130, 2), at(130, 3), { seriesId: 's-mrp2-initial', seriesKind: 'LONG_TERM', recurrenceIndex: 0 }),
-      makeBooking(mainResourceId, at(131, 2), at(131, 3), { seriesId: 's-mrp2-initial', seriesKind: 'LONG_TERM', recurrenceIndex: 1 })
+      makeBooking(mainResourceId, at(130, 2), at(130, 3), { seriesId: 's-mrp2-initial', seriesKind: 'LONG_TERM', recurrenceIndex: 0, meetingType: 'IMPORTANT' }),
+      makeBooking(mainResourceId, at(131, 2), at(131, 3), { seriesId: 's-mrp2-initial', seriesKind: 'LONG_TERM', recurrenceIndex: 1, meetingType: 'IMPORTANT' })
     ];
     const initialResponse = await createBatch(requester, initial);
     assert.equal(initialResponse.status, 201, JSON.stringify(await readJson(initialResponse.clone())));
@@ -305,11 +420,11 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     const renewalVersion = (await readJson(publishRenewal)).ruleVersion.version;
     const renewal = [
       makeBooking(mainResourceId, at(132, 2), at(132, 3), {
-        seriesId: 's-mrp2-renewal', seriesKind: 'LONG_TERM', recurrenceIndex: 0,
+        seriesId: 's-mrp2-renewal', seriesKind: 'LONG_TERM', recurrenceIndex: 0, meetingType: 'IMPORTANT',
         renewalOfSeriesId: 's-mrp2-initial', rootSeriesId: 's-mrp2-initial'
       }),
       makeBooking(mainResourceId, at(133, 2), at(133, 3), {
-        seriesId: 's-mrp2-renewal', seriesKind: 'LONG_TERM', recurrenceIndex: 1,
+        seriesId: 's-mrp2-renewal', seriesKind: 'LONG_TERM', recurrenceIndex: 1, meetingType: 'IMPORTANT',
         renewalOfSeriesId: 's-mrp2-initial', rootSeriesId: 's-mrp2-initial'
       })
     ];
@@ -325,5 +440,43 @@ describe('MRP2 核心预约规则真实 API 集成验证', { skip: !integrationE
     assert.equal(duplicate.status, 409);
     assert.equal((await readJson(duplicate)).error, 'RENEWAL_EXISTS');
     assert.equal((await queryTestDb<any[]>('SELECT id FROM bookings WHERE JSON_UNQUOTE(JSON_EXTRACT(payload, "$.renewalOfSeriesId")) = ?', ['s-mrp2-initial'])).length, 2);
+  });
+
+  it('GAP-03 恰好三天自动核准，超过三天进入审批且短会系列不按累计时长触发', async () => {
+    const publishHighQuota = await call('/api/rules', 'PUT', admin, { settings: { departmentDailyNetMinutes: 525600 } });
+    assert.equal(publishHighQuota.status, 200);
+    try {
+      const exactResponse = await createBooking(requester, makeBooking(otherResourceId, at(180, 2), at(183, 2), {
+        purpose: 'GAP03恰好七十二小时'
+      }));
+      assert.equal(exactResponse.status, 201, JSON.stringify(await readJson(exactResponse.clone())));
+      const exact = (await readJson(exactResponse)).booking as Booking;
+      assert.equal(exact.status, 'APPROVED');
+      assert.equal(exact.approvalRuleId, undefined);
+      assert.equal(exact.approvalHistory[0].approverId, 'system');
+
+      const continuousEnd = new Date(at(193, 2).getTime() + 60000);
+      const continuousResponse = await createBooking(requester, makeBooking(otherResourceId, at(190, 2), continuousEnd, {
+        purpose: 'GAP03连续超过七十二小时'
+      }));
+      assert.equal(continuousResponse.status, 201, JSON.stringify(await readJson(continuousResponse.clone())));
+      const continuous = (await readJson(continuousResponse)).booking as Booking;
+      assert.equal(continuous.status, 'PENDING');
+      assert.equal(continuous.approvalRuleId, 'continuous-over-3-days');
+      assert.deepEqual(continuous.approvalWorkflow?.map(node => node.approverRole), ['APPROVAL_ADMIN', 'SYSTEM_ADMIN']);
+      assert.deepEqual(continuous.approvalHistory, []);
+      assert.match(continuous.approvalRuleExplanation?.[0] || '', /连续超过3天预约审批/);
+
+      const seriesResponse = await createBatch(requester, [0, 1, 2, 3].map(index => makeBooking(otherResourceId, at(200 + index, 2), at(200 + index, 3), {
+        purpose: `GAP03短会系列第${index + 1}期`, seriesId: 's-gap03-short', seriesKind: 'LONG_TERM', recurrenceIndex: index
+      })));
+      assert.equal(seriesResponse.status, 201, JSON.stringify(await readJson(seriesResponse.clone())));
+      const series = (await readJson(seriesResponse)).bookings as Booking[];
+      assert.ok(series.every(booking => booking.status === 'APPROVED' && booking.approvalRuleId === undefined));
+      assert.ok(series.every(booking => booking.approvalHistory.length === 1 && booking.approvalHistory[0].approverId === 'system'));
+    } finally {
+      const restore = await call('/api/rules', 'PUT', admin, { settings: { departmentDailyNetMinutes: 240 } });
+      assert.equal(restore.status, 200);
+    }
   });
 });

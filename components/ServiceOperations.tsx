@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { AlertTriangle, CheckCircle, Clock, Coffee, Edit2, MapPin, Plus, QrCode, ShieldCheck, Video } from 'lucide-react';
 import type { Booking, BookingUsageFact, CheckInEvent, Resource, RoleDefinition, ServiceArea, ServiceCatalogItem, ServiceFieldTemplate, ServiceInspection, ServiceShift, UsageAppeal, User, WorkOrder } from '../types';
 import { toLocalDateTimeString, toLocalTimeString } from '../utils/dateTime';
+import { SERVICE_TYPE_LABELS } from '../constants';
 
 type Notify = (title: string, content: string, type?: 'INFO' | 'SUCCESS' | 'WARNING') => void;
 type ApiRequest = (path: string, method: string, body?: any) => Promise<any>;
@@ -11,7 +12,7 @@ const statusLabels: Record<string, string> = {
   APPROVED: '已核准', CANCELLED: '已取消', EXCEPTION: '异常', PENDING: '待处理',
   RESTORED: '已恢复', REJECTED: '已驳回', IN_USE: '正常使用', UNUSED: '确认未使用'
 };
-const serviceLabels: Record<string, string> = { TEA: '茶水服务', VIDEO: '视频会议', SIGNAGE: '指引标识', SECURITY: '现场安保', OTHER: '其他服务' };
+const serviceLabels: Record<string, string> = SERVICE_TYPE_LABELS;
 const actionLabels: Record<string, string> = { REQUEST_INFO: '要求补充', PROVIDE_INFO: '补充信息', START: '开始执行', COMPLETE: '执行完成', CANCEL: '取消工单', EXCEPTION: '登记异常', RESUME: '恢复执行' };
 const allowedActions: Record<string, string[]> = {
   TODO: ['START', 'REQUEST_INFO', 'CANCEL', 'EXCEPTION'],

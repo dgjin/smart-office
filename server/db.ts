@@ -272,7 +272,7 @@ export const saveResource = async (incoming: Resource, actorId: string, editingI
   if (resources.some(item => item.id !== resource.id && item.name === resource.name)) throw new DbError('DUPLICATE_RESOURCE_NAME', 409);
   if (current) assertResourceUpdate(current, resource, db.bookings || []);
   db.resources = editingId ? resources.map(item => item.id === editingId ? resource : item) : [...resources, resource];
-  await audit({ actorId, action: editingId ? 'RESOURCE_UPDATE' : 'RESOURCE_CREATE', entityType: 'RESOURCE', entityId: resource.id, details: { code: resource.code, building: resource.building, floor: resource.floor, roomCategory: resource.roomCategory } });
+  await audit({ actorId, action: editingId ? 'RESOURCE_UPDATE' : 'RESOURCE_CREATE', entityType: 'RESOURCE', entityId: resource.id, details: { before: current || null, after: resource } });
   return resource;
 });
 
@@ -289,7 +289,7 @@ export const deleteResource = async (id: string, actorId: string) => mutateDb(as
     action: 'RESOURCE_DELETE',
     entityType: 'RESOURCE',
     entityId: id,
-    details: { code: resource.code, name: resource.name, type: resource.type, location: resource.location }
+    details: { before: resource, after: null }
   });
   return { ok: true };
 });
@@ -343,6 +343,10 @@ export const saveBookings = async (incoming: Booking[], actor: User, editingId?:
     return {
       ...candidate,
       status: policy.nodes.length ? 'PENDING' as const : 'APPROVED' as const,
+      approvalHistory: policy.nodes.length ? [] : [{
+        nodeName: '系统自动核准', approverName: '预约规则引擎', approverId: 'system', status: 'APPROVED' as const,
+        comment: policy.explanation.join('；'), timestamp: candidate.approvalSubmittedAt!
+      }],
       workflowVersion: policy.workflowVersion,
       approvalWorkflow: policy.nodes,
       approvalRuleSetVersion: policy.ruleSetVersion,
@@ -417,7 +421,7 @@ export const saveBookings = async (incoming: Booking[], actor: User, editingId?:
   if (editingId) db.bookings = existing.map(booking => booking.id === editingId ? accepted[0] : booking);
   else db.bookings = [...accepted, ...existing];
   rebuildConfidentialAccessGrants(db, accepted, actor.id);
-  const status = accepted[0].status;
+  const autoApproved = accepted.every(booking => booking.status === 'APPROVED');
   for (const booking of accepted) {
     if (booking.status !== 'PENDING') continue;
     const submittedAt = new Date(booking.approvalSubmittedAt || booking.createdAt);
@@ -434,10 +438,11 @@ export const saveBookings = async (incoming: Booking[], actor: User, editingId?:
   const first = accepted[0];
   const confidential = isConfidentialBooking(first);
   const purpose = bookingNoticePurpose(first);
-  const notifications: Notification[] = [notice(actor.id, editingId ? '预约已修改' : '预约申请已提交',
-    editingId ? `${purpose}已更新并重新进入审批流程。` : `已提交 ${accepted.length} 次${purpose}预约。`)];
+  const notifications: Notification[] = [notice(actor.id, autoApproved ? '预约已自动核准' : editingId ? '预约已修改' : '预约申请已提交',
+    autoApproved ? `${accepted.length} 次${purpose}预约已通过全部规则校验并自动核准。` : editingId ? `${purpose}已更新并重新进入审批流程。` : `已提交 ${accepted.length} 次${purpose}预约。`)];
   const attendeeIds = [...new Set(accepted.flatMap(booking => booking.attendeeIds || []))].filter(id => id !== actor.id);
-  attendeeIds.forEach(userId => notifications.push(notice(userId, '会议邀请', confidential ? '您有一项涉密会议邀请，请在授权工作区查看。' : `${actor.name} 邀请您参加${purpose}。`)));
+  attendeeIds.forEach(userId => notifications.push(notice(userId, autoApproved ? '受邀会议已核准' : '会议邀请',
+    confidential ? '您有一项涉密会议邀请，请在授权工作区查看。' : autoApproved ? `${purpose}已核准，请按时参加。` : `${actor.name} 邀请您参加${purpose}。`)));
   const approvalContext = {
     users: db.users || [], resources: db.resources || [], departments: db.departments || [],
     delegates: db.approvalDelegates || []
@@ -445,19 +450,24 @@ export const saveBookings = async (incoming: Booking[], actor: User, editingId?:
   getApprovalRecipients(first, db.workflow || [], approvalContext).forEach(user => {
     notifications.push(notice(user.id, '新预约待审批', confidential ? '一项涉密会议申请已进入您的审批节点，请在授权工作区处理。' : `${actor.name} 提交了${purpose}，请处理审批。`));
   });
-  if (status === 'APPROVED') {
-    for (const booking of accepted) {
-      const orders = await createBookingWorkOrders(db, booking, { audit, scheduleJob });
-      orders.forEach(order => (db.users || []).filter(user => user.role.includes(order.assigneeRole)).forEach(user => {
-        notifications.push(notice(user.id, '新服务工单待处理', order.title));
-      }));
-    }
+  for (const booking of accepted.filter(item => item.status === 'APPROVED')) {
+    const orders = await createBookingWorkOrders(db, booking, { audit, scheduleJob });
+    orders.forEach(order => (db.users || []).filter(user => user.role.includes(order.assigneeRole)).forEach(user => {
+      notifications.push(notice(user.id, '新服务工单待处理', order.title));
+    }));
   }
   db.notifications = [...notifications, ...(db.notifications || [])].slice(0, 1000);
   for (const booking of accepted) {
     await audit({
       actorId: actor.id, action: editingId ? 'BOOKING_UPDATE' : 'BOOKING_CREATE', entityType: 'BOOKING', entityId: booking.id,
       details: { status: booking.status, workflowVersion: booking.workflowVersion, approvalRuleSetVersion: booking.approvalRuleSetVersion, approvalRuleId: booking.approvalRuleId, ruleVersion: booking.ruleVersion, meetingType: booking.meetingType, seriesId: booking.seriesId }
+    });
+    if (booking.status === 'APPROVED' && !booking.approvalRuleId) await audit({
+      actorId: actor.id, action: 'BOOKING_AUTO_APPROVE', entityType: 'BOOKING', entityId: booking.id,
+      details: {
+        status: booking.status, ruleVersion: booking.ruleVersion, approvalRuleSetVersion: booking.approvalRuleSetVersion,
+        workflowVersion: booking.workflowVersion, checks: ['RESOURCE', 'CONFLICT', 'QUOTA', 'CONFIDENTIALITY', 'CONSISTENCY']
+      }
     });
     if (securityAuthorizations.length) await audit({
       actorId: actor.id, action: 'CONFIDENTIALITY_CHANGE_AUTHORIZED', entityType: 'BOOKING', entityId: booking.id,

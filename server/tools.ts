@@ -1,6 +1,7 @@
 import type { ApprovalDelegate, ApprovalRuleSetVersion, AuditoriumSetup, Booking, BookingServiceRequirement, BookingUsageFact, CheckInEvent, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, DoorDevice, ExceptionActionRecord, OrganizationSyncBatch, Resource, ServiceArea, ServiceCatalogItem, ServiceInspection, ServiceShift, UsageAppeal, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion, RuleVersion, ResourceImportBatch, ExternalCallback, ExternalCompensation, AccessAuthorizationFact, IntegrationDelivery } from '../types.ts';
-import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, validateBookingResource } from '../utils/bookingRules.ts';
+import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, isValidBookingPurpose, validateBookingResource } from '../utils/bookingRules.ts';
 import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
+import { SERVICE_TYPES, isServiceType } from '../constants.ts';
 
 export interface OfficeDb {
   roles?: RoleDefinition[];
@@ -369,8 +370,8 @@ export const TOOLS = [
           resourceName: { type: 'string', description: '资源名称，必须来自 find_available_resources 的结果' },
           startTime: { type: 'string', description: 'ISO 8601 本地时间' },
           endTime: { type: 'string', description: 'ISO 8601 本地时间' },
-          purpose: { type: 'string', description: '会议用途' },
-          participants: { type: 'number' },
+          purpose: { type: 'string', description: '明确会议用途，200 字以内，不能只填写“会议”或“开会”' },
+          participants: { type: 'number', description: '参会人数，必填且为大于 0 的整数' },
           meetingType: { type: 'string', enum: ['NORMAL', 'IMPORTANT'], description: '仅普通或重要会议草案；涉密属性必须由用户在正式表单中选择' },
           needsTea: { type: 'boolean', description: '用户明确要求时需要茶水服务' },
           needsVideo: { type: 'boolean', description: '用户明确要求时需要视频会议支持' },
@@ -380,8 +381,13 @@ export const TOOLS = [
             items: {
               type: 'object',
               properties: {
-                type: { type: 'string', enum: ['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'] },
-                details: { type: 'string', description: '服务补充说明；OTHER 必填' }
+                type: { type: 'string', enum: SERVICE_TYPES },
+                details: { type: 'string', description: '服务补充说明；OTHER 必填' },
+                fieldValues: {
+                  type: 'object',
+                  description: '用户明确提供的目录字段值，如 quantity、unit、specification、serviceTime、serviceLocation、estimatedCost；最终仍由正式表单校验',
+                  additionalProperties: { type: 'string' }
+                }
               },
               required: ['type']
             }
@@ -404,7 +410,7 @@ export const TOOLS = [
           repeatFrequency: { type: 'string', enum: ['NONE', 'WEEKLY', 'BIWEEKLY'], description: '重复频率，默认 NONE' },
           repeatCount: { type: 'number', description: '含首次在内的总次数，2、3、4、6、8 或 12' }
         },
-        required: ['resourceName', 'startTime', 'endTime', 'purpose']
+        required: ['resourceName', 'startTime', 'endTime', 'purpose', 'participants']
       }
     }
   },
@@ -698,22 +704,27 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
           candidates: (candidates || []).map(r => ({ name: r.name, capacity: r.capacity, location: r.location }))
         };
       }
-      const participants = Number(args?.participants) || 1;
+      const participants = args?.participants === undefined ? undefined : Number(args.participants);
       if (args?.meetingType !== undefined && !['NORMAL', 'IMPORTANT'].includes(args.meetingType)) {
         return { ok: false, error: '助手只能生成普通或重要会议草案；涉密属性请在正式表单中明确选择。' };
       }
+      if (!isValidBookingPurpose(args?.purpose)) return { ok: false, error: '请提供 200 字以内且有明确主题的申请用途，不能只填写“会议”或“开会”。' };
       const rawServices = args?.serviceRequirements === undefined ? [] : args.serviceRequirements;
       if (!Array.isArray(rawServices) || rawServices.length > 20) return { ok: false, error: '服务需求格式无效，请修订后重试。' };
       const serviceRequirements: BookingServiceRequirement[] = [];
       for (const item of rawServices) {
-        if (!item || !['TEA', 'VIDEO', 'SIGNAGE', 'SECURITY', 'OTHER'].includes(item.type)
+        if (!item || !isServiceType(item.type)
           || serviceRequirements.some(service => service.type === item.type)
-          || (item.details !== undefined && (typeof item.details !== 'string' || item.details.length > 500))) {
+          || (item.details !== undefined && (typeof item.details !== 'string' || item.details.length > 500))
+          || (item.fieldValues !== undefined && (!item.fieldValues || typeof item.fieldValues !== 'object' || Array.isArray(item.fieldValues)
+            || Object.entries(item.fieldValues).length > 20
+            || Object.entries(item.fieldValues).some(([key, value]) => !/^[A-Za-z][A-Za-z0-9_]*$/.test(key) || key.length > 50 || typeof value !== 'string' || value.length > 500)))) {
           return { ok: false, error: '服务需求格式无效或存在重复项，请修订后重试。' };
         }
         const details = item.details?.trim() || undefined;
         if (item.type === 'OTHER' && !details) return { ok: false, error: '其他服务需要填写具体说明。' };
-        serviceRequirements.push({ type: item.type, details });
+        const fieldValues = item.fieldValues === undefined ? undefined : Object.fromEntries(Object.entries(item.fieldValues).map(([key, value]) => [key, (value as string).trim()]));
+        serviceRequirements.push({ type: item.type, ...(details ? { details } : {}), ...(fieldValues ? { fieldValues } : {}) });
       }
       if (args?.needsTea && !serviceRequirements.some(item => item.type === 'TEA')) serviceRequirements.push({ type: 'TEA' });
       if (args?.needsVideo && !serviceRequirements.some(item => item.type === 'VIDEO')) serviceRequirements.push({ type: 'VIDEO' });
@@ -749,6 +760,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       if (resourceError === 'RESOURCE_MAINTENANCE' || resourceError === 'RESOURCE_UNAVAILABLE') {
         return { ok: false, error: `${resource.name} 当前状态为 ${resource.status}，不可预订。` };
       }
+      if (resourceError === 'INVALID_PARTICIPANTS') return { ok: false, error: '参与人数必填，且必须为大于 0 的整数。' };
       if (resourceError === 'CAPACITY_EXCEEDED') {
         return { ok: false, error: `${resource.name} 只能容纳 ${resource.capacity || 1} 人，无法满足 ${participants} 人。` };
       }
@@ -782,7 +794,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         type: resource.type,
         startTime: start.toISOString(),
         endTime: end.toISOString(),
-        purpose: String(args?.purpose || '会议'),
+        purpose: String(args.purpose).trim(),
         participants,
         status: 'PENDING',
         currentNodeIndex: 0,
