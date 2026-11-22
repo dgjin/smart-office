@@ -5,7 +5,7 @@ import { readFile, stat } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { handleApiRequest } from './api.ts';
 import { closeDbPool, databaseHealth } from './db.ts';
-import { send, setSecurityHeaders } from './http.ts';
+import { securityProfileFor, send, setSecurityHeaders } from './http.ts';
 import { METRICS_TOKEN, SERVER_HOST, SERVER_PORT } from './config.ts';
 import { startJobWorker, stopJobWorker } from './jobs.ts';
 import { logEvent, metricsText, observeRequest, requestIdFor } from './observability.ts';
@@ -65,8 +65,10 @@ const metricsAllowed = (req: http.IncomingMessage) => {
 };
 
 const server = http.createServer(async (req, res) => {
-  setSecurityHeaders(res);
   const url = new URL(req.url || '/', 'http://localhost');
+  // 3D 楼层图与它的 Three.js 依赖走 embedded 档（允许同源内嵌 + 内联脚本），
+  // 其余一律 strict。必须在 serveStatic / handleApiRequest 之前定下来。
+  setSecurityHeaders(res, securityProfileFor(url.pathname));
   observeRequest(req, res, url.pathname);
   try {
     if (url.pathname === '/livez') return send(res, 200, { ok: true });

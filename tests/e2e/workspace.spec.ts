@@ -236,6 +236,7 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(navigation).toBeVisible();
     await navigation.getByRole('button', { name: '资源', exact: true }).click();
     await expect(page.getByRole('heading', { name: '空间资源库', exact: true })).toBeVisible();
+    await expect(page.locator('.building-room').first().getByRole('button', { name: /^编辑.+基本信息$/ })).toBeVisible();
     await navigation.getByRole('button', { name: '更多', exact: true }).click();
     const moreSheet = page.getByRole('dialog', { name: '更多功能', exact: true });
     await expect(moreSheet).toBeVisible();
@@ -246,6 +247,75 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(navigation).toBeVisible();
     await page.getByRole('button', { name: '关闭', exact: true }).click();
     await expect(navigation).toBeVisible();
+    await context.close();
+  });
+
+  test('管理员在ROOM INDEX维护并删除会议室，普通员工无管理入口且结果跨刷新持久化', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '超级管理员');
+    const suffix = Date.now();
+    const code = `E2E-DELETE-${suffix}`;
+    const resourceId = `r-e2e-delete-${suffix}`;
+    const name = `浏览器待删除资源 ${suffix}`;
+
+    await page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    await page.getByRole('button', { name: '新增资源', exact: true }).click();
+    await page.getByLabel('资源永久编码', { exact: true }).fill(code);
+    await page.getByLabel('资源名称', { exact: true }).fill(name);
+    await page.getByLabel('资源楼层', { exact: true }).selectOption('10');
+    await page.getByLabel('资源房间号', { exact: true }).fill(`D${String(suffix).slice(-4)}`);
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/resources') && response.request().method() === 'POST' && response.status() === 201),
+      page.getByRole('button', { name: '保存', exact: true }).click()
+    ]);
+    const resourceRow = page.locator('tr').filter({ hasText: name });
+    await expect(resourceRow).toBeVisible();
+    let roomCard = page.locator('.building-room').filter({ hasText: name });
+    await expect(roomCard).toBeVisible();
+    await roomCard.getByRole('button', { name: `编辑${name}基本信息`, exact: true }).click();
+    const editDialog = page.getByRole('dialog', { name: '编辑会议室', exact: true });
+    await expect(editDialog).toBeVisible();
+    await editDialog.getByLabel('资源容量', { exact: true }).fill('9');
+    await editDialog.getByLabel('资源备注', { exact: true }).fill('ROOM INDEX 基本信息维护验收');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/api/resources/${resourceId}`) && response.request().method() === 'PUT' && response.ok()),
+      editDialog.getByRole('button', { name: '保存', exact: true }).click()
+    ]);
+    await expect(roomCard).toContainText('9 人');
+
+    await page.reload();
+    await expect(page.locator('.studio-app')).toBeVisible();
+    await page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    await page.getByLabel('快速选择1号楼楼层', { exact: true }).selectOption('10');
+    roomCard = page.locator('.building-room').filter({ hasText: name });
+    await expect(roomCard).toContainText('9 人');
+
+    const employee = await openWorkspace(browser, '李员工');
+    await employee.page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    await employee.page.getByLabel('快速选择1号楼楼层', { exact: true }).selectOption('10');
+    const employeeRoomCard = employee.page.locator('.building-room').filter({ hasText: name });
+    await expect(employeeRoomCard).toBeVisible();
+    await expect(employeeRoomCard.getByRole('button', { name: `编辑${name}基本信息`, exact: true })).toHaveCount(0);
+    await expect(employeeRoomCard.getByRole('button', { name: `删除${name}`, exact: true })).toHaveCount(0);
+    await employee.context.close();
+
+    page.once('dialog', dialog => dialog.accept());
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/api/resources/${resourceId}`) && response.request().method() === 'DELETE' && response.ok()),
+      roomCard.getByRole('button', { name: `删除${name}`, exact: true }).click()
+    ]);
+    await expect(page.getByText('删除成功', { exact: true })).toBeVisible();
+    await expect(roomCard).toHaveCount(0);
+    await expect(resourceRow).toHaveCount(0);
+    await page.reload();
+    await expect(page.locator('.studio-app')).toBeVisible();
+    await page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    await expect(page.locator('tr').filter({ hasText: name })).toHaveCount(0);
+
+    const resourceState = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'resources'");
+    const resources = typeof resourceState[0].payload === 'string' ? JSON.parse(resourceState[0].payload) : resourceState[0].payload;
+    expect(resources.some((resource: any) => resource.id === resourceId)).toBe(false);
+    const audits = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id = ?', ['RESOURCE_DELETE', resourceId]);
+    expect(audits).toHaveLength(1);
     await context.close();
   });
 

@@ -46,8 +46,11 @@ const insertDueApprovalJob = async (bookingId: string, type: 'APPROVAL_REMINDER'
   const token = String(Date.parse(payload.submittedAt));
   const suffix = type === 'APPROVAL_CLOSE' ? '' : `:${payload.nodeIndex}`;
   const keyPrefix = type === 'APPROVAL_REMINDER' ? 'approval-reminder' : type === 'APPROVAL_ESCALATION' ? 'approval-escalation' : 'approval-close';
-  await queryTestDb(`INSERT IGNORE INTO scheduled_jobs (id, job_key, job_type, payload, run_at)
-    VALUES (?, ?, ?, ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))`,
+  await queryTestDb(`INSERT INTO scheduled_jobs (id, job_key, job_type, payload, run_at)
+    VALUES (?, ?, ?, ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))
+    ON DUPLICATE KEY UPDATE job_type = VALUES(job_type), payload = VALUES(payload),
+      run_at = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND), status = 'PENDING', attempts = 0,
+      lease_owner = NULL, lease_expires_at = NULL, last_error = NULL, completed_at = NULL`,
     [crypto.randomUUID(), `${keyPrefix}:${bookingId}:${token}${suffix}`, type, JSON.stringify({ bookingId, ...payload })]);
 };
 
@@ -85,7 +88,10 @@ describe('MySQL Job Worker 与 Outbox', { skip: !integrationEnabled, concurrency
     await insertApprovedBooking({ id: noShowId, resourceId: resource.id, start: new Date(Date.now() - 21 * 60000), end: new Date(Date.now() + 39 * 60000), purpose: '双 Worker no-show', tea: true });
     await insertApprovedBooking({ id: exclusiveId, resourceId: resource.id, start: new Date(Date.now() - 21 * 60000), end: new Date(Date.now() + 39 * 60000), purpose: '专属预约 no-show 豁免', exclusive: true });
     await queryTestDb(`INSERT INTO scheduled_jobs (id, job_key, job_type, payload, run_at, status, attempts, lease_owner, lease_expires_at)
-      VALUES (?, ?, 'BOOKING_REMINDER', ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 MINUTE), 'RUNNING', 1, 'crashed-worker', DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))`,
+      VALUES (?, ?, 'BOOKING_REMINDER', ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 MINUTE), 'RUNNING', 1, 'crashed-worker', DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))
+      ON DUPLICATE KEY UPDATE job_type = VALUES(job_type), payload = VALUES(payload), run_at = VALUES(run_at),
+        status = 'RUNNING', attempts = 1, lease_owner = 'crashed-worker', lease_expires_at = DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND),
+        last_error = NULL, completed_at = NULL`,
       [crypto.randomUUID(), `reminder:${reminderId}:v1`, JSON.stringify({ bookingId: reminderId, scheduleVersion: 1 })]);
 
     await waitFor(async () => {

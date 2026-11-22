@@ -559,6 +559,12 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .building-room-capacity { display: flex; align-items: center; flex-wrap: wrap; gap: 5px; margin-top: 10px; color: var(--muted); font-size: 9px; }
 .building-room-features { display: block; margin-top: 10px; color: var(--ink-soft); font-size: 9px; line-height: 1.6; }
 .building-room-current { display: block; margin-top: 10px; overflow: hidden; color: var(--danger); font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.building-room-admin { display: grid; grid-template-columns: 1fr auto; border-top: 1px solid var(--line); background: var(--accent-soft); }
+.building-room-admin button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 16px; border: 0; background: transparent; color: var(--ink-soft); font-size: 10px; font-weight: 600; cursor: pointer; }
+.building-room-admin button:first-child { justify-content: flex-start; }
+.building-room-admin button:last-child { border-left: 1px solid var(--line); color: var(--danger); }
+.building-room-admin button:hover { background: var(--paper); color: var(--accent); }
+.building-room-admin .building-room-delete:hover { color: var(--danger); }
 .building-room footer { display: grid; grid-template-columns: 1fr 1fr; border-top: 1px solid var(--line); }
 .building-room footer button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; border: 0; border-right: 1px solid var(--line); background: transparent; color: var(--ink-soft); font-size: 10px; cursor: pointer; }
 .building-room footer button:last-child { border-right: 0; background: var(--ink); color: #fffaf1; }

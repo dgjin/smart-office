@@ -44,6 +44,24 @@ npm run db:verify
 
 `db:seed` 只允许写入空业务数据库。迁移按文件名顺序执行，记录 SHA-256 校验和；已执行迁移的内容发生变化时会拒绝继续。不要手工修改已应用迁移，应新增迁移文件。
 
+楼层 3D 分布图的布局基线单独初始化（可重复执行，事务内 UPSERT 并差异停用已移除空间）：
+
+```bash
+npm run db:seed:hq3d
+```
+
+它把 `server/data/hq3d-floorplan.json`（主楼 20 层 332 间 + 南配楼 4 层 95 间）写进 `hq3d_building / hq3d_floor / hq3d_room`。427 间空间均使用布局中显式声明且全局唯一的持久 uid，不再按名称或顺序动态生成。重复初始化会更新现有空间；从布局移除的空间只做差异停用，保留房间资料和维护记录，后续恢复时沿用原 uid。
+
+## 总部楼层 3D 分布图
+
+独立的单页应用，`public/hq3d.html`，通过导航「总部楼层 3D」以同源 iframe 嵌入主应用。
+
+- **数据**：布局基线（楼栋/楼层/房间坐标）与业务覆盖（房间资料、维护记录、楼层面积）全部落在 MySQL，页面不再自带数据。启动时 `GET /api/hq3d/snapshot` 一次取全量（约 94KB），取不到就停在提示页而不是用旧数据硬撑。
+- **写入**：`PUT /api/hq3d/rooms/:uid`（改房间资料）、`POST/PATCH/DELETE /api/hq3d/...`（维护记录）、`PUT /api/hq3d/floors/:building/:tag/area`（楼层面积合计）。写操作要求管理员、`SERVICE_COORDINATOR` 或 `FRONT_DESK` 角色，并各自写 `audit_events`。
+- **为什么不用 `mutateDb`**：那套是整库 JSON 快照重写，一次写入会全量 upsert 20+ 集合。3D 的改动粒度是「一间房一条记录」，走快照会白写几百 KB，也会和排班/预订的乐观锁互相打架。
+- **Three.js**：`public/vendor/three/`（0.160.0，来自 `node_modules/three`）。不引 CDN，一是内网/离线可用，二是主应用的 CSP 不允许外域脚本。升级时 `npm i three@<版本>` 后重新拷贝 `build/three.module.js`、`examples/jsm/controls/OrbitControls.js`、`examples/jsm/environments/RoomEnvironment.js`。
+- **安全头分档**：`server/http.ts` 的 `securityProfileFor()` 只给 `/hq3d.html` 与 `/vendor/three/` 放宽（`X-Frame-Options: SAMEORIGIN`、`frame-ancestors 'self'`、允许内联脚本），因为该页是行内 module 写法；其余路径仍是 `DENY` + `frame-ancestors 'none'`。
+
 ## 绑定企业身份
 
 数据库已有用户但尚无任何身份绑定时，可为已有系统管理员执行一次引导：

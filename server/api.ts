@@ -1,5 +1,5 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import { databaseHealth, DbError, readDb, saveBookings, saveResource } from './db.ts';
+import { databaseHealth, DbError, deleteResource, readDb, saveBookings, saveResource } from './db.ts';
 import { HttpError, readBody, readJson, send, setSecurityHeaders, validateWriteRequest } from './http.ts';
 import { handleAgentChat, handleAgentStatus } from './agent.ts';
 import { listNotifications, markNotificationsRead } from './notifications.ts';
@@ -29,6 +29,15 @@ import { getOperationsReport, operationsReportCsv, writeOperationsReportXlsx } f
 import { applyOrganizationSync, listOrganizationSyncBatches, previewOrganizationSync } from './organizationSync.ts';
 import { handleOaCallback } from './oaCallbacks.ts';
 import { getIntegrationOperations, reconcileIntegrations, recordIntegrationCompensation, replayIntegrationEvent } from './integrationOperations.ts';
+import {
+  addHq3dMaintenance,
+  deleteHq3dMaintenance,
+  getHq3dSnapshot,
+  resetHq3dRoomProfile,
+  saveHq3dRoomProfile,
+  setHq3dFloorArea,
+  updateHq3dMaintenanceStatus
+} from './hq3d.ts';
 
 const requireAdmin = (actor: User) => {
   if (!actor.role.includes('SYSTEM_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
@@ -36,6 +45,13 @@ const requireAdmin = (actor: User) => {
 
 const requireConfidentialityManager = (actor: User) => {
   if (!actor.role.includes('SYSTEM_ADMIN') && !actor.role.includes('SECURITY_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
+};
+
+// 楼层图的房间资料（人名、部门、面积）属于空间台账，普通员工只读；
+// 改台账的权限收在管理员与行政/前台运营角色上。
+const SPACE_EDITOR_ROLES = ['SYSTEM_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'];
+const requireSpaceEditor = (actor: User) => {
+  if (!actor.role.some(role => SPACE_EDITOR_ROLES.includes(role))) throw new HttpError(403, 'FORBIDDEN');
 };
 
 export async function handleApiRequest(req: IncomingMessage, res: ServerResponse, url: URL): Promise<boolean> {
@@ -286,6 +302,65 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 200, await updatePreferences(actor.id, await readJson(req)));
       return true;
     }
+
+    /* ---------- 总部楼层 3D 分布图 ----------
+       读：一次拿全量快照（2 栋 24 层 427 间，约 200KB），比按层轮询省往返。
+       写：房间资料、维护记录、楼层面积分开三组，
+            各走自己的表与事务，不碰 bookings/resources 的乐观锁。 */
+    if (url.pathname === '/api/hq3d/snapshot' && req.method === 'GET') {
+      send(res, 200, await getHq3dSnapshot());
+      return true;
+    }
+    if (url.pathname === '/api/hq3d/rooms' && req.method === 'GET') {
+      send(res, 200, await getHq3dSnapshot());
+      return true;
+    }
+    const hqRoomMatch = url.pathname.match(/^\/api\/hq3d\/rooms\/([^/]+)$/);
+    if (hqRoomMatch && req.method === 'PUT') {
+      requireSpaceEditor(actor);
+      const uid = decodeURIComponent(hqRoomMatch[1]);
+      const { profile } = await readJson(req);
+      send(res, 200, { profile: await saveHq3dRoomProfile(actor, uid, profile || {}) });
+      return true;
+    }
+    if (hqRoomMatch && req.method === 'DELETE') {
+      requireSpaceEditor(actor);
+      const uid = decodeURIComponent(hqRoomMatch[1]);
+      await resetHq3dRoomProfile(actor, uid);
+      send(res, 200, { reset: true });
+      return true;
+    }
+    const hqMaintenanceMatch = url.pathname.match(/^\/api\/hq3d\/rooms\/([^/]+)\/maintenance$/);
+    if (hqMaintenanceMatch && req.method === 'POST') {
+      requireSpaceEditor(actor);
+      const uid = decodeURIComponent(hqMaintenanceMatch[1]);
+      const { record } = await readJson(req);
+      send(res, 201, { record: await addHq3dMaintenance(actor, uid, record || {}) });
+      return true;
+    }
+    const hqMaintenanceItemMatch = url.pathname.match(/^\/api\/hq3d\/maintenance\/([^/]+)$/);
+    if (hqMaintenanceItemMatch && req.method === 'PATCH') {
+      requireSpaceEditor(actor);
+      const id = decodeURIComponent(hqMaintenanceItemMatch[1]);
+      const { status } = await readJson(req);
+      send(res, 200, { record: await updateHq3dMaintenanceStatus(actor, id, status) });
+      return true;
+    }
+    if (hqMaintenanceItemMatch && req.method === 'DELETE') {
+      requireSpaceEditor(actor);
+      await deleteHq3dMaintenance(actor, decodeURIComponent(hqMaintenanceItemMatch[1]));
+      send(res, 200, { deleted: true });
+      return true;
+    }
+    const hqFloorMatch = url.pathname.match(/^\/api\/hq3d\/floors\/([^/]+)\/([^/]+)\/area$/);
+    if (hqFloorMatch && req.method === 'PUT') {
+      requireSpaceEditor(actor);
+      const buildingId = decodeURIComponent(hqFloorMatch[1]);
+      const floorTag = decodeURIComponent(hqFloorMatch[2]);
+      const { areaTotal } = await readJson(req);
+      send(res, 200, { areaTotal: await setHq3dFloorArea(actor, buildingId, floorTag, areaTotal) });
+      return true;
+    }
     if (url.pathname === '/api/resources' && req.method === 'POST') {
       requireAdmin(actor);
       const { resource } = await readJson(req);
@@ -302,6 +377,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       const id = decodeURIComponent(resourceEditMatch[1]);
       const saved = await saveResource(resource, actor.id, id);
       send(res, 200, { resource: saved, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (resourceEditMatch && req.method === 'DELETE') {
+      requireAdmin(actor);
+      await deleteResource(decodeURIComponent(resourceEditMatch[1]), actor.id);
+      send(res, 200, { ok: true, workspace: await getWorkspace(actor) });
       return true;
     }
     if (url.pathname === '/api/confidential-whitelist' && req.method === 'POST') {

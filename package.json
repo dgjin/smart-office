@@ -17,6 +17,7 @@
     "db:status": "node --env-file-if-exists=.env scripts/db/status.ts",
     "db:verify": "node --env-file-if-exists=.env scripts/db/verify.ts",
     "db:seed": "node --env-file-if-exists=.env scripts/db/seed.ts",
+    "db:seed:hq3d": "node --env-file-if-exists=.env scripts/db/seed-hq3d.ts",
     "db:backup": "node --env-file-if-exists=.env scripts/db/native-backup.ts",
     "db:restore": "node --env-file-if-exists=.env scripts/db/native-restore.ts",
     "db:drill": "node --env-file-if-exists=.env scripts/db/native-drill.ts",
@@ -30,7 +31,8 @@
     "mysql2": "^3.24.6",
     "openid-client": "^6.9.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "three": "0.160.0"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.1",

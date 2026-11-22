@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowUpRight, Building2, CalendarDays, MapPin, Users } from 'lucide-react';
+import { ArrowUpRight, Building2, CalendarDays, Edit2, MapPin, Trash2, Users } from 'lucide-react';
 import type { Booking, Resource, ResourceStatus } from '../types';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { BUILDING_FLOORS, getResourceBuilding, getResourceFloor, parseResourceBuilding, parseResourceFloor } from '../utils/resourceDomain';
@@ -36,6 +36,9 @@ type BuildingExplorerProps = {
   onDetails: (resource: Resource) => void;
   onCalendar: (resource: Resource) => void;
   onBook: (resource: Resource) => void;
+  canManage?: boolean;
+  onEdit: (resource: Resource) => void;
+  onDelete: (resource: Resource) => void;
   resultContext?: { label: string; matchCount: number; totalRoomCount: number } | null;
 };
 
@@ -48,7 +51,7 @@ const STATUS_LABELS: Record<DisplayStatus, string> = {
 export const parseBuilding = parseResourceBuilding;
 export const parseFloor = parseResourceFloor;
 
-const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, resultContext }: BuildingExplorerProps) => {
+const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, canManage = false, onEdit, onDelete, resultContext }: BuildingExplorerProps) => {
   const explorerRef = useRef<HTMLElement>(null);
   const [selectedBuildingId, setSelectedBuildingId] = useState<BuildingId>('MAIN');
   const [selectedFloorState, setSelectedFloorState] = useState<Record<BuildingId, number | null>>({ MAIN: null, ANNEX: null });
@@ -263,6 +266,10 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
                       <span className="building-room-features">{room.resource.features.slice(0, 3).join(' · ') || '基础会议空间'}</span>
                       {room.currentBooking && <span className="building-room-current">当前会议 · {room.currentBooking.purpose}</span>}
                     </button>
+                    {canManage && <div className="building-room-admin" role="group" aria-label={`${room.resource.name}管理操作`}>
+                      <button type="button" onClick={() => onEdit(room.resource)} aria-label={`编辑${room.resource.name}基本信息`} title="编辑基本信息"><Edit2 size={14} />编辑信息</button>
+                      <button type="button" className="building-room-delete" onClick={() => onDelete(room.resource)} aria-label={`删除${room.resource.name}`} title="删除资源"><Trash2 size={14} />删除</button>
+                    </div>}
                     <footer>
                       <button type="button" onClick={() => onCalendar(room.resource)} aria-label={`查看${room.resource.name}排期`}><CalendarDays size={14} />排期</button>
                       <button type="button" onClick={() => onBook(room.resource)} disabled={!isResourceAcceptingBookings(room.resource)}>预约<ArrowUpRight size={14} /></button>
@@ -270,7 +277,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
                   </article>
                 ))}
               </div>
-              <p className="building-plan-note">房间按资源名录顺序排列，状态来自资源信息与已通过的实时会议。</p>
+              <p className="building-plan-note">房间按资源名录顺序排列，状态来自资源信息与已通过的实时会议。{canManage ? '管理员可在卡片中维护基本信息；仅无预约及设备关联的资源可删除。' : ''}</p>
             </div>
           ) : (
             <div className="building-empty">

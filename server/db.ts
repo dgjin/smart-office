@@ -274,6 +274,23 @@ export const saveResource = async (incoming: Resource, actorId: string, editingI
   return resource;
 });
 
+export const deleteResource = async (id: string, actorId: string) => mutateDb(async (db, { audit }) => {
+  const resource = (db.resources || []).find(item => item.id === id);
+  if (!resource) throw new DbError('RESOURCE_NOT_FOUND', 404);
+  if ((db.bookings || []).some(booking => booking.resourceId === id)) throw new DbError('RESOURCE_HAS_BOOKINGS', 409);
+  if ((db.devices || []).some(device => device.resourceId === id)) throw new DbError('RESOURCE_HAS_DEVICES', 409);
+  db.resources = (db.resources || []).filter(item => item.id !== id);
+  db.serviceAreas = (db.serviceAreas || []).map(area => ({ ...area, resourceIds: area.resourceIds.filter(resourceId => resourceId !== id) }));
+  await audit({
+    actorId,
+    action: 'RESOURCE_DELETE',
+    entityType: 'RESOURCE',
+    entityId: id,
+    details: { code: resource.code, name: resource.name, type: resource.type, location: resource.location }
+  });
+  return { ok: true };
+});
+
 export const saveBookings = async (incoming: Booking[], actor: User, editingId?: string) => mutateDb(async (db, { audit, scheduleJob }) => {
   const existing = db.bookings || [];
   const editing = editingId ? existing.find(booking => booking.id === editingId) : undefined;

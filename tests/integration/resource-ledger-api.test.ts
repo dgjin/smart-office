@@ -144,6 +144,66 @@ describe('MRP1 资源规则与台账 API 集成验证', { skip: !integrationEnab
     assert.equal((await readCollection<ResourceImportBatch>('resourceImportBatches')).length, 1);
   });
 
+  it('管理员仅可删除无预约和无设备记录的资源，并保留完整审计', async () => {
+    const definitions = [
+      mainResource({ id: 'r-delete-empty', code: 'DELETE-EMPTY-001', name: '待删除空资源' }),
+      mainResource({ id: 'r-delete-booked', code: 'DELETE-BOOKED-001', name: '有预约不可删除资源' }),
+      mainResource({ id: 'r-delete-device', code: 'DELETE-DEVICE-001', name: '有设备不可删除资源' })
+    ];
+    for (const resource of definitions) {
+      const created = await call('/api/resources', 'POST', admin, { resource });
+      assert.equal(created.status, 201, JSON.stringify(await readJson(created)));
+    }
+
+    assert.equal((await call('/api/resources/r-delete-empty', 'DELETE', employee)).status, 403);
+    const missing = await call('/api/resources/r-delete-missing', 'DELETE', admin);
+    assert.equal(missing.status, 404);
+    assert.equal((await readJson(missing)).error, 'RESOURCE_NOT_FOUND');
+
+    const start = new Date(Date.now() + 12 * 86400000);
+    start.setUTCHours(10, 0, 0, 0);
+    const booking = {
+      id: crypto.randomUUID(), userId: employeeId, resourceId: 'r-delete-booked', type: 'ROOM',
+      startTime: start.toISOString(), endTime: new Date(start.getTime() + 3600000).toISOString(),
+      status: 'PENDING', purpose: '验证资源历史关联保护', participants: 2, meetingType: 'NORMAL',
+      confidentialityChoice: 'NON_CONFIDENTIAL', createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: []
+    };
+    const booked = await call('/api/bookings', 'POST', employee, { booking });
+    assert.equal(booked.status, 201, JSON.stringify(await readJson(booked)));
+    const bookingConflict = await call('/api/resources/r-delete-booked', 'DELETE', admin);
+    assert.equal(bookingConflict.status, 409);
+    assert.equal((await readJson(bookingConflict)).error, 'RESOURCE_HAS_BOOKINGS');
+
+    const deviceCreated = await call('/api/devices', 'POST', admin, { name: '删除保护门口屏', resourceId: 'r-delete-device' });
+    assert.equal(deviceCreated.status, 201, JSON.stringify(await readJson(deviceCreated.clone())));
+    const device = (await readJson(deviceCreated)).device;
+    assert.equal((await call(`/api/devices/${device.id}/revoke`, 'POST', admin, {})).status, 200);
+    const deviceConflict = await call('/api/resources/r-delete-device', 'DELETE', admin);
+    assert.equal(deviceConflict.status, 409);
+    assert.equal((await readJson(deviceConflict)).error, 'RESOURCE_HAS_DEVICES');
+
+    const deleted = await call('/api/resources/r-delete-empty', 'DELETE', admin);
+    assert.equal(deleted.status, 200, JSON.stringify(await readJson(deleted.clone())));
+    const result = await readJson(deleted);
+    assert.equal(result.ok, true);
+    assert.equal(result.workspace.resources.some((resource: Resource) => resource.id === 'r-delete-empty'), false);
+    const resources = await readCollection<Resource>('resources');
+    assert.equal(resources.some(resource => resource.id === 'r-delete-empty'), false);
+    assert.equal(resources.some(resource => resource.id === 'r-delete-booked'), true);
+    assert.equal(resources.some(resource => resource.id === 'r-delete-device'), true);
+    const serviceAreas = await readCollection<{ resourceIds: string[] }>('serviceAreas');
+    assert.equal(serviceAreas.every(area => !area.resourceIds.includes('r-delete-empty')), true);
+    assert.equal((await queryTestDb<any[]>('SELECT id FROM bookings WHERE resource_id = ?', ['r-delete-booked'])).length, 1);
+    const devices = await readCollection<{ resourceId: string }>('devices');
+    assert.equal(devices.filter(item => item.resourceId === 'r-delete-device').length, 1);
+    const audits = await queryTestDb<any[]>('SELECT actor_id, details FROM audit_events WHERE action = ? AND entity_id = ?', ['RESOURCE_DELETE', 'r-delete-empty']);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].actor_id, adminId);
+    const details = typeof audits[0].details === 'string' ? JSON.parse(audits[0].details) : audits[0].details;
+    assert.equal(details.code, 'DELETE-EMPTY-001');
+    assert.equal(details.name, '待删除空资源');
+  });
+
   it('备份包含服务与使用事实，并兼容版本 2、3 和 4 恢复', async () => {
     const backupResponse = await call('/api/backup', 'GET', admin);
     assert.equal(backupResponse.status, 200);

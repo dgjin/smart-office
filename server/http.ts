@@ -12,16 +12,33 @@ export class HttpError extends Error {
   }
 }
 
-export const setSecurityHeaders = (res: ServerResponse) => {
+/*
+ * 安全头分两档：
+ *  · strict（默认）—— 主应用与所有 API，禁止被任何页面内嵌。
+ *  · embedded —— 只给总部 3D 楼层图（/hq3d.html）与它的 Three.js 静态依赖。
+ *    这一档允许「同源」内嵌，并放开内联脚本：该页是早期单文件实现，
+ *    importmap / 场景初始化都写在行内 module 里，没有 nonce 机制可用。
+ *    页面本身不渲染任何用户输入，也不加载第三方脚本（Three.js 已随包自带），
+ *    所以这里放开的是内联与同源，不是通配。
+ */
+export type SecurityProfile = 'strict' | 'embedded';
+
+export const securityProfileFor = (pathname: string): SecurityProfile =>
+  pathname === '/hq3d.html' || pathname.startsWith('/vendor/three/') ? 'embedded' : 'strict';
+
+export const setSecurityHeaders = (res: ServerResponse, profile: SecurityProfile = 'strict') => {
+  const embedded = profile === 'embedded';
   res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-Frame-Options', embedded ? 'SAMEORIGIN' : 'DENY');
   res.setHeader('Referrer-Policy', 'same-origin');
   res.setHeader('Permissions-Policy', 'camera=(self), microphone=(), geolocation=()');
   res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    "script-src 'self' https://cdn.tailwindcss.com",
+    embedded
+      ? "script-src 'self' 'unsafe-inline'"
+      : "script-src 'self' https://cdn.tailwindcss.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
     "img-src 'self' data: blob:",
     "font-src 'self' data: https://fonts.gstatic.com",
@@ -30,7 +47,7 @@ export const setSecurityHeaders = (res: ServerResponse) => {
     "object-src 'none'",
     "base-uri 'self'",
     "form-action 'self'",
-    "frame-ancestors 'none'",
+    embedded ? "frame-ancestors 'self'" : "frame-ancestors 'none'",
     "worker-src 'self' blob:"
   ].join('; '));
   if (IS_PRODUCTION) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');

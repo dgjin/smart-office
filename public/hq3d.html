@@ -1,0 +1,4430 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>3D 楼层分布图</title>
+<style>
+  :root{
+    --ink:#16263a; --ink2:#5a6c83; --ink3:#8798ac;
+    --line:rgba(146,168,198,.3);
+    --panel:rgba(255,255,255,.88);
+    --accent:#3a6fd8;
+    --shadow:0 18px 52px rgba(33,60,102,.14);
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    margin:0; overflow:hidden;
+    font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+    color:var(--ink);
+    background:radial-gradient(120% 100% at 50% -8%, #f6faff 0%, #dfeaf8 42%, #c3d4e8 100%);
+    -webkit-font-smoothing:antialiased;
+  }
+  canvas{display:block;position:fixed;inset:0}
+
+  /* 建筑外观模式：按照片实测的天空 —— 左 #96C6EA 雾感浅蓝 → 右 #2A60BA 深蓝 */
+  body.sky-real{
+    background:
+      linear-gradient(100deg, #96C6EA 0%, #7CB5E2 22%, #5FA0D8 45%, #397BD1 72%, #2A60BA 100%),
+      linear-gradient(to bottom, #2A60BA 0%, #4B8FD6 55%, #ABCAE6 100%);
+    background-blend-mode: normal;
+  }
+  body.sky-real #vignette{
+    background:
+      radial-gradient(120% 100% at 50% 8%, rgba(255,255,255,0) 42%, rgba(12,26,54,.26) 100%),
+      linear-gradient(to bottom, rgba(255,255,255,.06), rgba(10,22,48,.16));
+  }
+
+  #side{
+    /* 宽度由 --side-w 驱动：可拖拽调整（300~560），默认 358 比原 302 宽出一截，
+       房间名、使用人、面积才不至于被挤成一串省略号 */
+    position:fixed;left:18px;top:18px;bottom:18px;width:var(--side-w,358px);min-width:264px;
+    display:flex;flex-direction:column;gap:10px;padding:17px 15px;
+    background:var(--panel);
+    backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
+    border:1px solid rgba(255,255,255,.9);border-radius:20px;box-shadow:var(--shadow);
+    overflow:hidden;z-index:20;
+  }
+  /* 右缘拖拽手柄：贴在面板内侧，命中区 10px，视觉上只是一条细线 */
+  .side-grip{
+    position:absolute;top:56px;bottom:56px;right:0;width:10px;cursor:col-resize;
+    background:transparent;border-radius:3px;z-index:6;
+  }
+  .side-grip::after{
+    content:'';position:absolute;top:0;bottom:0;right:4px;width:2px;border-radius:2px;
+    background:rgba(150,175,205,.0);transition:background .18s;
+  }
+  .side-grip:hover::after,.side-grip.drag::after{background:var(--accent)}
+  body.side-dragging{cursor:col-resize;user-select:none}
+  body.side-dragging #canvas,body.side-dragging canvas{pointer-events:none}
+
+  .brand{display:flex;gap:11px;align-items:center;flex:none}
+  .logo{
+    width:42px;height:42px;border-radius:12px;flex:none;
+    background:linear-gradient(150deg,#4d86e8,#2c58bd);color:#fff;
+    display:grid;place-items:center;font-size:11px;font-weight:700;line-height:1.2;
+    letter-spacing:.5px;box-shadow:0 6px 15px rgba(58,111,216,.34);text-align:center;
+  }
+  .brand h1{margin:0;font-size:14px;letter-spacing:.2px}
+  .brand p{margin:3px 0 0;font-size:10.5px;color:var(--ink3);letter-spacing:.2px}
+
+  .bldg{display:flex;gap:5px;flex:none}
+  .bldg button{
+    flex:1;border:1px solid rgba(176,196,222,.55);background:rgba(255,255,255,.72);
+    border-radius:11px;padding:8px 4px;cursor:pointer;font-family:inherit;
+    font-size:12px;color:var(--ink2);transition:.2s;line-height:1.25;
+  }
+  .bldg button b{display:block;font-size:12.5px;font-weight:600;color:var(--ink)}
+  .bldg button span{font-size:9.5px;color:var(--ink3);letter-spacing:.3px}
+  .bldg button:hover{background:#fff;border-color:rgba(58,111,216,.45)}
+  .bldg button.on{
+    background:linear-gradient(150deg,#eaf1fd,#f7faff);border-color:var(--accent);
+    box-shadow:0 3px 12px rgba(58,111,216,.16);
+  }
+  .bldg button.on b{color:#2c58bd}
+
+  .seg{display:flex;gap:4px;background:rgba(229,238,250,.9);padding:4px;border-radius:11px;flex:none}
+  .seg button{
+    flex:1;border:0;background:transparent;border-radius:8px;padding:7px 0;
+    font-size:12px;color:var(--ink2);cursor:pointer;font-family:inherit;transition:.2s;font-weight:500;
+  }
+  .seg button:hover{color:var(--ink)}
+  .seg button.on{background:#fff;color:var(--accent);font-weight:600;box-shadow:0 2px 8px rgba(58,111,216,.16)}
+
+  /* 副控件：只在整栋模式出现 */
+  .seg.sub{
+    background:transparent;padding:0;gap:0;height:0;overflow:hidden;
+    transition:height .22s, margin .22s;margin-top:-12px;flex:none;
+  }
+  .seg.sub.on{
+    height:26px;margin-top:0;background:rgba(228,238,250,.75);
+    padding:3px;border-radius:9px;
+  }
+  .seg.sub button{font-size:10.5px;padding:3px 0;border-radius:6px}
+  .seg.sub button.on{box-shadow:0 1px 5px rgba(58,111,216,.16)}
+
+  .search{position:relative;flex:none}
+  .search input{
+    width:100%;border:1px solid rgba(176,196,222,.6);background:rgba(255,255,255,.92);
+    border-radius:10px;padding:8px 30px;font-size:12.5px;font-family:inherit;
+    color:var(--ink);outline:none;transition:.18s;
+  }
+  .search input:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(58,111,216,.12)}
+  .search input::placeholder{color:#a6b5c8}
+  .search .ico{position:absolute;left:9px;top:50%;transform:translateY(-50%);font-size:12px;color:#9babc0;pointer-events:none}
+  .search .clr{
+    position:absolute;right:6px;top:50%;transform:translateY(-50%);border:0;background:transparent;
+    color:#a6b5c8;font-size:15px;cursor:pointer;line-height:1;padding:2px 5px;display:none;border-radius:5px;
+  }
+  .search .clr:hover{background:rgba(230,238,249,.9);color:var(--ink)}
+  #results{
+    position:absolute;left:0;right:0;top:calc(100% + 5px);z-index:40;
+    background:#fff;border-radius:12px;box-shadow:0 12px 32px rgba(30,56,96,.16);
+    border:1px solid rgba(206,220,238,.9);max-height:262px;overflow-y:auto;display:none;
+  }
+  #results.show{display:block}
+  #results .r{
+    padding:7px 11px;cursor:pointer;border-bottom:1px solid rgba(232,239,248,.9);
+    display:flex;align-items:center;gap:6px;font-size:12px;
+  }
+  #results .r:last-child{border-bottom:0}
+  #results .r:hover,#results .r.hl{background:rgba(232,241,252,.95)}
+  #results .r b{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #results .r i{
+    font-style:normal;font-size:9.5px;color:#fff;background:#9dadc2;border-radius:4px;
+    padding:1px 4px;flex:none;min-width:26px;text-align:center;
+  }
+  #results .r i.b2{background:#e09a4a}
+  #results .r em{font-style:normal;color:var(--ink3);font-size:10.5px;margin-left:auto;flex:none;max-width:88px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #results .empty{padding:12px;font-size:12px;color:var(--ink3);text-align:center}
+
+  .glabel{font-size:9.5px;font-weight:600;letter-spacing:1.4px;color:var(--ink3);text-transform:uppercase;flex:none}
+  .group{display:flex;flex-direction:column;gap:6px;flex:none;min-height:0}
+  .group.grow{flex:1 1 auto;min-height:96px}
+
+  .floors{display:flex;flex-direction:column;gap:1px;overflow-y:auto;min-height:0;padding-right:3px}
+  .floors::-webkit-scrollbar{width:6px}
+  .floors::-webkit-scrollbar-thumb{background:rgba(148,170,200,.42);border-radius:3px}
+  .fitem{
+    display:flex;align-items:center;gap:8px;border:1px solid transparent;background:transparent;
+    border-radius:9px;padding:3px 8px 3px;cursor:pointer;font-family:inherit;font-size:12px;
+    color:var(--ink2);text-align:left;transition:.15s;width:100%;
+  }
+  .fitem:hover{background:rgba(232,240,251,.92);color:var(--ink)}
+  .fitem.on{background:linear-gradient(90deg,rgba(58,111,216,.14),rgba(58,111,216,.02));border-color:rgba(58,111,216,.3);color:var(--ink)}
+  .fitem .tag{
+    font-size:9.5px;font-weight:700;color:#fff;background:#9dadc2;border-radius:5px;
+    padding:2px 0;min-width:30px;text-align:center;flex:none;letter-spacing:.2px;
+  }
+  .fitem.on .tag{background:var(--accent)}
+  .fitem .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fitem.on .nm{font-weight:600}
+  .fitem .ct{font-size:10px;color:var(--ink3);flex:none}
+
+  .legend{display:grid;grid-template-columns:1fr 1fr;gap:1px 5px}
+  .lg{
+    display:flex;align-items:center;gap:5px;font-size:10.5px;color:var(--ink2);
+    cursor:pointer;border-radius:6px;padding:2px 3px;transition:.15s;border:1px solid transparent;
+  }
+  .lg:hover{background:rgba(232,240,251,.9)}
+  .lg.off{opacity:.3}
+  .lg i{width:8px;height:8px;border-radius:2.5px;flex:none;display:block}
+  .lg-note{
+    grid-column:1/-1;margin-top:4px;font-size:9.5px;line-height:1.5;color:var(--ink3);
+    border-top:1px dashed var(--line);padding-top:6px;
+  }
+
+  /* 图例与统计：默认收起成一行摘要。
+     原来这两块常驻占 367px，而 20 层的列表只剩 139px（能看到 3 层）；
+     收进托盘后列表拿到 ~520px，摘要行照样给到关键数字。 */
+  .tray{flex:none;border-top:1px solid var(--line);padding-top:9px;margin-top:auto}
+  .tray-head{
+    display:flex;align-items:center;gap:8px;width:100%;border:0;background:transparent;
+    font-family:inherit;padding:1px 2px;cursor:pointer;color:var(--ink2);border-radius:7px;
+  }
+  .tray-head:hover{background:rgba(232,240,251,.9)}
+  .tray-sum{
+    margin-left:auto;font-size:10px;color:var(--ink3);white-space:nowrap;
+    overflow:hidden;text-overflow:ellipsis;font-variant-numeric:tabular-nums;
+  }
+  .tray .chev{flex:none;font-size:9px;color:var(--ink3);transition:transform .2s;line-height:1}
+  .tray.open .chev{transform:rotate(180deg)}
+  .tray-body{display:none;margin-top:9px;max-height:42vh;overflow-y:auto;padding-right:3px}
+  .tray-body::-webkit-scrollbar{width:6px}
+  .tray-body::-webkit-scrollbar-thumb{background:rgba(148,170,200,.42);border-radius:3px}
+  .tray.open .tray-body{display:block}
+
+  .stats{
+    margin-top:12px;padding-top:10px;border-top:1px solid rgba(200,214,232,.55);
+    display:grid;grid-template-columns:repeat(4,1fr);gap:6px;flex:none;
+  }
+  .st b{display:block;font-size:13.5px;letter-spacing:.2px;font-variant-numeric:tabular-nums}
+  .st span{font-size:9px;color:var(--ink3);line-height:1.35;display:block}
+  .foot{font-size:9.5px;color:var(--ink3);line-height:1.55;flex:none;margin-top:9px;
+    padding-top:8px;border-top:1px dashed rgba(200,214,232,.7)}
+
+  #detail{
+    position:fixed;right:18px;top:18px;width:302px;padding:19px;z-index:20;
+    max-height:calc(100vh - 36px);overflow-y:auto;overscroll-behavior:contain;
+    background:var(--panel);
+    backdrop-filter:blur(22px) saturate(1.4);-webkit-backdrop-filter:blur(22px) saturate(1.4);
+    border:1px solid rgba(255,255,255,.9);border-radius:20px;box-shadow:var(--shadow);
+    transform:translateX(24px);opacity:0;pointer-events:none;
+    transition:transform .34s cubic-bezier(.22,1,.36,1),opacity .26s;
+  }
+  #detail.show{transform:none;opacity:1;pointer-events:auto}
+  #detail::-webkit-scrollbar{width:5px}
+  #detail::-webkit-scrollbar-thumb{background:rgba(148,170,200,.42);border-radius:3px}
+  #detail .x{
+    position:absolute;right:11px;top:9px;border:0;background:transparent;font-size:19px;
+    line-height:1;color:var(--ink3);cursor:pointer;padding:4px;font-family:inherit;border-radius:6px;
+  }
+  #detail .x:hover{background:rgba(230,238,249,.9);color:var(--ink)}
+  .chip{display:inline-flex;align-items:center;gap:6px;font-size:11px;font-weight:600;padding:4px 9px;border-radius:20px;background:rgba(58,111,216,.1);color:#2f5ec4}
+  .chip i{width:7px;height:7px;border-radius:50%;display:block}
+  #dNo{font-size:10.5px;color:var(--ink3);margin:9px 0 0;letter-spacing:.6px;font-weight:600}
+  #dName{margin:3px 0 4px;font-size:19px;letter-spacing:.2px;line-height:1.3}
+  #dSub{font-size:11.5px;color:var(--ink3);margin-bottom:13px;line-height:1.5}
+  dl{margin:0;display:flex;flex-direction:column;gap:1px;background:rgba(226,235,247,.55);border-radius:12px;overflow:hidden}
+  dl>div{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:8px 11px;background:rgba(255,255,255,.74)}
+  dt{font-size:11.5px;color:var(--ink3);margin:0;flex:none}
+  dd{margin:0;font-size:12.5px;font-weight:600;text-align:right;line-height:1.45}
+  .bar{margin-top:11px}
+  .bar .t{display:flex;justify-content:space-between;font-size:10.5px;color:var(--ink3);margin-bottom:4px}
+  .bar .tr{height:5px;border-radius:3px;background:rgba(214,226,241,.9);overflow:hidden}
+  .bar .fi{height:100%;border-radius:3px;background:linear-gradient(90deg,#5b91e8,#3a6fd8);transition:width .3s}
+  .raw{margin-top:11px;font-size:10.5px;color:var(--ink3);line-height:1.6;border-top:1px dashed rgba(180,198,220,.7);padding-top:8px}
+
+  #vignette{
+    position:fixed;inset:0;pointer-events:none;z-index:9;
+    background:
+      radial-gradient(115% 92% at 52% 42%, rgba(255,255,255,0) 38%, rgba(58,92,138,.10) 100%),
+      linear-gradient(to bottom, rgba(255,255,255,.05), rgba(60,95,140,.05));
+  }
+  #labels{position:fixed;inset:0;pointer-events:none;z-index:10}
+  .lbl{
+    position:absolute;left:0;top:0;transform:translate(-50%,-50%);
+    font-size:10px;padding:2px 6px;border-radius:6px;
+    background:rgba(255,255,255,.93);border:1px solid rgba(158,180,212,.55);
+    color:#21354d;white-space:nowrap;box-shadow:0 2px 6px rgba(38,66,110,.09);
+    transition:opacity .18s;
+  }
+  .lbl.sm{font-size:9px;padding:1px 4px}
+
+  #tip{
+    position:fixed;z-index:30;pointer-events:none;padding:5px 9px;border-radius:8px;
+    background:rgba(26,42,66,.92);color:#fff;font-size:11.5px;letter-spacing:.2px;
+    opacity:0;transform:translate(-50%,-140%);transition:opacity .15s;white-space:nowrap;
+  }
+  #tip.show{opacity:1}
+
+  #hint{
+    position:fixed;left:50%;bottom:15px;transform:translateX(-50%);
+    font-size:11px;color:#7a8ca2;letter-spacing:.3px;z-index:15;
+    background:rgba(255,255,255,.74);padding:6px 13px;border-radius:20px;
+    border:1px solid rgba(255,255,255,.92);backdrop-filter:blur(10px);white-space:nowrap;
+  }
+  /* 整栋模式的楼层刻度导航 */
+  #floorTicks{
+    position:fixed;right:20px;top:0;bottom:0;width:46px;
+    z-index:16;display:none;pointer-events:none;
+  }
+  #floorTicks.on{display:block}
+  #floorTicks button{
+    position:absolute;right:0;
+    display:flex;align-items:center;justify-content:flex-end;gap:5px;
+    border:0;background:transparent;
+    font-family:inherit;font-size:9.5px;color:#93a4b8;cursor:pointer;
+    padding:0;line-height:1;height:13px;transition:color .14s,transform .14s;
+    letter-spacing:.2px;pointer-events:auto;
+  }
+  #floorTicks button:hover{transform:translateX(-2px)}
+  #floorTicks button:hover{color:var(--accent)}
+  #floorTicks button i{
+    display:block;width:11px;height:1.5px;background:currentColor;border-radius:1px;
+    transition:.16s;
+  }
+  #floorTicks button.on{color:var(--accent);font-weight:700}
+  #floorTicks button.on i{width:22px;height:2.5px}
+  #floorTicks button.vacant-dot::after{
+    content:'';width:4px;height:4px;border-radius:50%;background:#2f9e6b;margin-left:-1px;
+  }
+
+  #compass{
+    position:fixed;right:26px;bottom:20px;z-index:15;width:46px;height:46px;border-radius:50%;
+    background:rgba(255,255,255,.8);border:1px solid rgba(255,255,255,.95);
+    box-shadow:0 6px 16px rgba(33,60,102,.12);backdrop-filter:blur(10px);
+    display:grid;place-items:center;
+  }
+  #compass .needle{
+    width:2px;height:22px;border-radius:2px;position:relative;
+    background:linear-gradient(to bottom,#3a6fd8 0%,#3a6fd8 48%,#cfd9e6 48%,#cfd9e6 100%);
+  }
+  #compass .needle::before{
+    content:'';position:absolute;top:-4px;left:-3px;
+    border-left:4px solid transparent;border-right:4px solid transparent;border-bottom:6px solid #3a6fd8;
+  }
+  #compass b{position:absolute;top:-14px;font-size:8.5px;font-weight:700;color:#6b7d93;letter-spacing:.5px}
+  #bldgTag{position:fixed;right:26px;top:22px;z-index:15;text-align:right}
+  #bldgTag b{display:block;font-size:12px;color:#41556e;letter-spacing:.4px}
+  #bldgTag span{font-size:10px;color:#8d9db1}
+
+  /* 本层面积合计设置条 */
+  .areabar{
+    display:flex;align-items:center;gap:5px;flex:none;
+    padding:5px 7px;margin-bottom:4px;border-radius:8px;
+    background:rgba(240,246,253,.92);border:1px solid rgba(206,220,238,.8);
+    font-size:10px;color:var(--ink3);line-height:1.4;
+  }
+  .areabar input{
+    width:56px;font-family:inherit;font-size:11px;color:var(--ink);
+    border:1px solid rgba(176,196,222,.8);background:#fff;border-radius:5px;
+    padding:2px 5px;outline:none;text-align:right;font-variant-numeric:tabular-nums;
+  }
+  .areabar input:focus{border-color:var(--accent);box-shadow:0 0 0 2px rgba(58,111,216,.12)}
+  .areabar .cov{margin-left:auto;flex:none;font-size:9.5px;color:#7c8da1}
+  .areabar .cov b{color:#2f9e6b;font-weight:700}
+
+  .rm .ar{
+    font-size:10px;color:var(--ink2);flex:none;width:52px;text-align:right;
+    font-variant-numeric:tabular-nums;
+  }
+  .rm .ar.est{color:#9aabbd}
+  .rm .ar.none{color:#c3ccd8}
+
+  /* 房间资料编辑 */
+  .editbtn{
+    position:absolute;right:44px;top:9px;border:1px solid rgba(176,196,222,.75);
+    background:rgba(255,255,255,.9);color:var(--ink2);font-family:inherit;font-size:10.5px;
+    border-radius:7px;padding:3px 8px;cursor:pointer;transition:.15s;
+  }
+  .editbtn:hover{border-color:var(--accent);color:var(--accent);background:#fff}
+  .edited{
+    font-size:9px;font-weight:700;color:#8a6d1f;background:rgba(217,155,58,.16);
+    border-radius:4px;padding:1px 5px;margin-left:5px;vertical-align:2px;
+  }
+  .editform{display:none;flex-direction:column;gap:7px;margin:10px 0 4px;
+            background:rgba(240,246,253,.97);border:1px solid rgba(190,212,238,.95);
+            border-radius:12px;padding:11px}
+  .editform.on{display:flex}
+  .editform .fl{font-size:9.5px;font-weight:600;color:var(--ink3);letter-spacing:.6px;
+                text-transform:uppercase;margin-bottom:-3px}
+  .editform input,.editform select,.editform textarea{
+    font-family:inherit;font-size:12px;color:var(--ink);
+    border:1px solid rgba(176,196,222,.8);background:#fff;border-radius:7px;
+    padding:6px 8px;outline:none;width:100%;transition:.15s;
+  }
+  .editform input:focus,.editform select:focus,.editform textarea:focus{
+    border-color:var(--accent);box-shadow:0 0 0 2px rgba(58,111,216,.12)}
+  .editform textarea{resize:vertical;min-height:40px;line-height:1.5}
+  .editform .hintline{font-size:9.5px;color:var(--ink3);line-height:1.5}
+  .editform .acts{display:flex;gap:6px;margin-top:2px}
+  .editform .acts button{
+    flex:1;border:0;border-radius:7px;padding:7px 0;font-family:inherit;
+    font-size:11.5px;font-weight:600;cursor:pointer;transition:.15s;
+  }
+  .editform .acts .ok{background:linear-gradient(150deg,#4d86e8,#2f5ec4);color:#fff;
+                      box-shadow:0 3px 10px rgba(58,111,216,.28)}
+  .editform .acts .ok:hover{filter:brightness(1.06)}
+  .editform .acts .no{background:rgba(226,235,247,.95);color:var(--ink2);flex:0 0 64px}
+  .editform .acts .rst{background:rgba(255,246,235,.95);color:#a06c17;flex:0 0 74px}
+
+  .histbox{margin-top:9px;border-top:1px dashed rgba(180,198,220,.7);padding-top:8px}
+  .histbox .h{font-size:9.5px;letter-spacing:.8px;color:var(--ink3);font-weight:600;
+              text-transform:uppercase;margin-bottom:5px}
+  .histrow{display:flex;gap:6px;font-size:10px;color:var(--ink2);line-height:1.6;
+           padding:3px 0;border-bottom:1px solid rgba(232,239,248,.7)}
+  .histrow:last-child{border-bottom:0}
+  .histrow .t{color:var(--ink3);flex:none;font-variant-numeric:tabular-nums}
+  .histrow .c{flex:1;min-width:0}
+  .histrow .c b{font-weight:600;color:var(--ink)}
+  .histrow .c s{color:#a9b6c5;text-decoration:line-through}
+
+  /* 维护记录 */
+  .mntblock{margin-top:12px;border-top:1px dashed rgba(180,198,220,.7);padding-top:10px}
+  .mnthead{display:flex;align-items:center;gap:6px;margin-bottom:7px}
+  .mnthead .t{font-size:10px;font-weight:600;letter-spacing:1px;color:var(--ink3);text-transform:uppercase}
+  .mnthead .add{
+    margin-left:auto;border:1px solid rgba(58,111,216,.42);background:rgba(58,111,216,.06);
+    color:#2f5ec4;font-family:inherit;font-size:11px;font-weight:600;border-radius:7px;
+    padding:3px 9px;cursor:pointer;transition:.15s;
+  }
+  .mnthead .add:hover{background:rgba(58,111,216,.14)}
+  .mnthead .add:active{transform:scale(.97)}
+  .mntpill{
+    display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;
+    padding:3px 8px;border-radius:20px;letter-spacing:.2px;
+  }
+  .mntpill i{width:6px;height:6px;border-radius:50%;display:block}
+  .mntpill.open{background:rgba(214,84,64,.13);color:#b8432c}
+  .mntpill.doing{background:rgba(217,155,58,.16);color:#9a6712}
+  .mntpill.done{background:rgba(47,158,107,.13);color:#1f7d52}
+  .mntpill.none{background:rgba(140,160,185,.12);color:#7c8da1}
+
+  .mrec{
+    display:flex;flex-direction:column;gap:3px;padding:7px 9px;border-radius:9px;
+    background:rgba(244,248,253,.9);border:1px solid rgba(206,220,238,.75);
+    margin-bottom:5px;
+  }
+  .mrec .top{display:flex;align-items:center;gap:6px}
+  .mrec .ty{
+    font-size:9.5px;font-weight:700;padding:1px 5px;border-radius:4px;
+    background:rgba(58,111,216,.1);color:#2f5ec4;flex:none;
+  }
+  .mrec .ti{font-size:11.5px;font-weight:600;color:var(--ink);flex:1;
+            overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mrec .meta{font-size:9.5px;color:var(--ink3);line-height:1.5}
+  .mrec .note{font-size:10.5px;color:var(--ink2);line-height:1.55;
+              background:rgba(255,255,255,.75);border-radius:6px;padding:4px 6px;margin-top:1px}
+  .mrec .ops{display:flex;gap:4px;margin-top:2px}
+  .mrec .ops button{
+    border:1px solid rgba(176,196,222,.7);background:rgba(255,255,255,.85);
+    font-family:inherit;font-size:10px;color:var(--ink2);border-radius:6px;
+    padding:2px 7px;cursor:pointer;transition:.14s;
+  }
+  .mrec .ops button:hover{border-color:var(--accent);color:var(--accent);background:#fff}
+  .mrec .ops button.del:hover{border-color:#c9603f;color:#b8432c}
+
+  .mform{display:none;flex-direction:column;gap:6px;margin-bottom:8px;
+         background:rgba(240,246,253,.96);border:1px solid rgba(190,212,238,.9);
+         border-radius:11px;padding:9px}
+  .mform.on{display:flex}
+  .mform .row{display:flex;gap:6px}
+  .mform select,.mform input,.mform textarea{
+    font-family:inherit;font-size:11.5px;color:var(--ink);
+    border:1px solid rgba(176,196,222,.8);background:#fff;border-radius:7px;
+    padding:5px 7px;outline:none;width:100%;transition:.15s;
+  }
+  .mform select:focus,.mform input:focus,.mform textarea:focus{
+    border-color:var(--accent);box-shadow:0 0 0 2px rgba(58,111,216,.12)}
+  .mform textarea{resize:vertical;min-height:38px;line-height:1.5}
+  .mform .acts{display:flex;gap:6px}
+  .mform .acts button{
+    flex:1;border:0;border-radius:7px;padding:6px 0;font-family:inherit;
+    font-size:11.5px;font-weight:600;cursor:pointer;transition:.15s;
+  }
+  .mform .acts .ok{background:linear-gradient(150deg,#4d86e8,#2f5ec4);color:#fff;
+                   box-shadow:0 3px 10px rgba(58,111,216,.28)}
+  .mform .acts .ok:hover{filter:brightness(1.06)}
+  .mform .acts .no{background:rgba(226,235,247,.95);color:var(--ink2)}
+  .mform .acts .no:hover{background:rgba(214,226,241,.95)}
+
+  /* 房间行里的维护标记 */
+  .rm .wrench{
+    font-size:9px;font-weight:700;color:#b8432c;background:rgba(214,84,64,.13);
+    border-radius:4px;padding:0 4px;flex:none;line-height:1.7;
+  }
+  .rm.mnt{background:linear-gradient(90deg,rgba(214,84,64,.07),rgba(214,84,64,.01))}
+  .rm .edot{
+    width:5px;height:5px;border-radius:50%;background:#d99b3a;flex:none;
+    box-shadow:0 0 0 2px rgba(217,155,58,.2);
+  }
+
+  /* 三标签面板 */
+  .tabs3{
+    display:flex;gap:3px;background:rgba(229,238,250,.9);padding:3px;border-radius:10px;flex:none;
+  }
+  .tabs3 button{
+    flex:1;border:0;background:transparent;border-radius:7px;padding:6px 2px;
+    font-size:11.5px;color:var(--ink2);cursor:pointer;font-family:inherit;
+    transition:.18s;font-weight:500;position:relative;white-space:nowrap;
+  }
+  .tabs3 button:hover{color:var(--ink)}
+  .tabs3 button.on{background:#fff;color:var(--accent);font-weight:600;box-shadow:0 2px 7px rgba(58,111,216,.15)}
+  .tabs3 button b.mnt{background:#d65440}
+  .tabs3 button b{
+    display:inline-block;min-width:15px;padding:0 4px;margin-left:3px;border-radius:20px;
+    font-size:9.5px;font-weight:700;background:#2f9e6b;color:#fff;line-height:1.5;vertical-align:1px;
+  }
+  .pane{display:none;flex:1 1 auto;min-height:0;overflow-y:auto;padding-right:3px}
+  .pane.on{display:flex;flex-direction:column;gap:4px}
+  .pane::-webkit-scrollbar{width:6px}
+  .pane::-webkit-scrollbar-thumb{background:rgba(148,170,200,.42);border-radius:3px}
+
+  /* 房间清单行 */
+  .rm{
+    display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:8px;
+    cursor:pointer;font-size:12px;color:var(--ink2);border:1px solid transparent;
+    transition:.14s;
+  }
+  .rm:hover{background:rgba(232,240,251,.95);color:var(--ink)}
+  .rm.on{background:linear-gradient(90deg,rgba(58,111,216,.15),rgba(58,111,216,.02));border-color:rgba(58,111,216,.32);color:var(--ink);font-weight:600}
+  .rm .sw{width:7px;height:7px;border-radius:2px;flex:none}
+  .rm .no{
+    font-size:10px;font-weight:700;color:#8b9cb0;flex:none;min-width:34px;
+    font-variant-numeric:tabular-nums;
+  }
+  .rm.on .no{color:var(--accent)}
+  .rm .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+  .rm .pc{font-size:10px;color:var(--ink3);flex:none;font-variant-numeric:tabular-nums}
+  .rm .sub{font-style:normal;color:#9aabbd;font-size:10px}
+
+  /* 状态徽标 */
+  .bdg{
+    font-size:9px;font-weight:700;padding:1px 4px;border-radius:4px;flex:none;
+    letter-spacing:.3px;line-height:1.5;
+  }
+  .bdg.vacant{background:rgba(47,158,107,.14);color:#1f7d52}
+  .bdg.pending{background:rgba(217,155,58,.16);color:#a06c17}
+  .bdg.borrowed{background:rgba(194,112,63,.14);color:#a35a2b}
+
+  .rmhead{
+    display:flex;align-items:center;gap:6px;padding:2px 7px 4px;
+    font-size:9.5px;color:var(--ink3);letter-spacing:.4px;flex:none;
+    border-bottom:1px solid rgba(200,214,232,.6);margin-bottom:2px;
+  }
+  .rmhead b{font-weight:600}
+  .rmhead .sp{margin-left:auto;font-size:9px}
+  .rmhead .badge-inline{
+    font-size:9px;font-weight:600;color:#1f7d52;background:rgba(47,158,107,.12);
+    padding:1px 5px;border-radius:4px;margin-left:2px;
+  }
+
+  /* 空置分组 */
+  .vgrp{margin-bottom:2px}
+  .vgh{
+    display:flex;align-items:center;gap:6px;padding:5px 4px 3px;
+    font-size:9.5px;font-weight:700;letter-spacing:.8px;color:var(--ink3);
+    text-transform:uppercase;
+  }
+  .vgh i{width:6px;height:6px;border-radius:50%;display:block}
+  .vgh span{margin-left:auto;font-weight:600;letter-spacing:0;text-transform:none}
+  .vempty{padding:16px 8px;text-align:center;font-size:11.5px;color:var(--ink3);line-height:1.7}
+
+  /* 楼层条目里的空置标记 */
+  .fitem .mini{
+    display:flex;height:4px;border-radius:2px;overflow:hidden;flex:none;
+    width:100%;margin-top:2px;opacity:.9;
+  }
+  .fitem .mini i{display:block;height:100%;flex:none}
+  .fitem{flex-wrap:wrap}
+  .fitem .row1{display:flex;align-items:center;gap:8px;width:100%;}
+  .fitem.on .mini{opacity:1}
+  .fitem .vnum{
+    font-size:9px;font-weight:700;color:#1f7d52;background:rgba(47,158,107,.15);
+    border-radius:4px;padding:0 4px;flex:none;line-height:1.6;letter-spacing:.2px;
+  }
+  .fitem.on .vnum{background:rgba(47,158,107,.24)}
+
+  /* 矮屏（笔记本 768 高）：原来让整个面板滚动，列表就失去独立滚动区，
+     20 层要点着滚轮一路翻。改为收紧间距、压缩头部，列表仍自己滚。 */
+  @media (max-height:780px) and (min-width:901px){
+    #side{padding:12px 13px;gap:8px}
+    .brand .logo{width:34px;height:34px;border-radius:10px;font-size:10px}
+    .brand p{display:none}
+    .bldg button{padding:6px 3px}
+    .seg button{padding:6px 0}
+    .fitem{padding:2px 7px}
+    .rm{padding:5px 7px}
+  }
+
+  @media (max-width:900px){
+    /* 手机上侧栏变成底部抽屉：整体可滚，避免内容一多就被裁掉 */
+    #side{width:calc(100% - 24px);left:12px;top:auto;bottom:12px;height:auto;
+          max-height:52vh;padding:11px 12px;gap:9px;overflow-y:auto}
+    #side::-webkit-scrollbar{width:5px}
+    #side::-webkit-scrollbar-thumb{background:rgba(148,170,200,.42);border-radius:3px}
+    .group.grow{min-height:44px}
+    .bldg button{padding:6px 3px}
+    .tabs3 button{padding:5px 2px;font-size:11px}
+    .areabar{padding:4px 6px;font-size:9.5px;gap:4px}
+    .areabar input{width:48px;font-size:10.5px}
+    .rm .ar{min-width:36px;font-size:9.5px}
+    .stats,.foot,#compass,#bldgTag{display:none}
+    #detail{width:calc(100% - 24px);right:12px;top:12px}
+    #hint{display:none}
+  }
+</style>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="vignette"></div>
+<div id="labels"></div>
+<div id="tip"></div>
+
+<aside id="side">
+  <div class="side-grip" id="sideGrip" title="拖动可调整面板宽度，双击复位"></div>
+  <div class="brand">
+    <div class="logo" id="logo">总部<br>楼层</div>
+    <div>
+      <h1 id="appTitle">3D 楼层分布图</h1>
+      <p id="brandSub"></p>
+    </div>
+  </div>
+
+  <div class="bldg" id="bldgTabs"></div>
+
+  <div class="seg" id="segMode">
+    <button data-mode="one" class="on">单层</button>
+    <button data-mode="all">整栋</button>
+    <button data-mode="plan">平面</button>
+  </div>
+  <div class="seg sub" id="segFacade">
+    <button data-facade="solid" class="on">建筑外观</button>
+    <button data-facade="xray">楼层剖切</button>
+  </div>
+
+  <div class="search">
+    <span class="ico">⌕</span>
+    <input id="q" type="text" placeholder="搜房号 / 部门 / 人员" autocomplete="off" />
+    <button class="clr" id="qClr">×</button>
+    <div id="results"></div>
+  </div>
+
+  <div class="tabs3" id="paneTabs">
+    <button data-pane="floors" class="on">楼层</button>
+    <button data-pane="rooms">房间</button>
+    <button data-pane="vacant">空置<b id="vacBadge">0</b></button>
+    <button data-pane="mnt">维护<b id="mntBadge" class="mnt">0</b></button>
+  </div>
+
+  <div class="pane on" id="paneFloors">
+    <div class="floors" id="floorList"></div>
+  </div>
+  <div class="pane" id="paneRooms">
+    <div class="rmhead" id="roomHead"></div>
+    <div id="roomList"></div>
+  </div>
+  <div class="pane" id="paneVacant">
+    <div id="vacantList"></div>
+  </div>
+  <div class="pane" id="paneMnt">
+    <div id="mntList"></div>
+  </div>
+
+  <div class="tray" id="tray">
+    <button class="tray-head" id="trayToggle" type="button" aria-expanded="false" aria-controls="trayBody">
+      <span class="glabel" style="margin:0">图例与统计</span>
+      <span class="tray-sum" id="traySum"></span>
+      <span class="chev">▾</span>
+    </button>
+    <div class="tray-body" id="trayBody">
+      <div class="legend" id="legend"></div>
+      <div class="stats" id="stats"></div>
+      <div class="foot">数据源：smart-office 楼层台账（MySQL）。房间尺度按原图格子比例还原，仅作分布示意；坐标改动需重新导入。</div>
+    </div>
+  </div>
+</aside>
+
+<section id="detail">
+  <button class="x" id="detailClose">×</button>
+  <button class="editbtn" id="dEdit">编辑资料</button>
+  <div class="chip" id="dChip"><i></i><span></span></div>
+  <div id="dNo"></div>
+  <h2 id="dName">—</h2>
+  <div id="dSub">—</div>
+  <div class="editform" id="dEditForm"></div>
+  <dl id="dList"></dl>
+  <div class="bar">
+    <div class="t"><span>本层面积占比</span><span id="dFrac">—</span></div>
+    <div class="tr"><div class="fi" id="dBar" style="width:0"></div></div>
+  </div>
+  <div class="raw" id="dRaw"></div>
+  <div id="dHist"></div>
+  <div class="mntblock" id="dMnt"></div>
+</section>
+
+<div id="bldgTag"><b id="tagName">楼层</b><span id="tagSub"></span></div>
+<div id="floorTicks"></div>
+<div id="compass"><div class="needle" id="needle"></div><b>北</b></div>
+<div id="hint">拖拽旋转 · 滚轮缩放 · 点击房间看详情 · 双击房间行直接编辑 · ↑↓ 切楼层 · 数字键切楼栋</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three/three.module.js",
+    "three/addons/": "./vendor/three/addons/"
+  }
+}
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+/* =========================================================
+   数据
+   ========================================================= */
+/* =========================================================
+   数据来源：smart-office 的 MySQL
+   —— 布局基线（楼栋/楼层/房间）与业务覆盖（房间资料、维护记录、
+      楼层面积）都由 /api/hq3d/snapshot 一次取回，页面不再自带数据。
+   —— 取不到就停在错误页，绝不用内嵌的旧数据假装"正常"：
+      那样两边的房间号一旦不一致，改的东西会写到一个不存在的房间上。
+   ========================================================= */
+const FALLBACK_KEY = 'hq3d.snapshot.cache.v1';
+
+function degradedNotice(text){
+  let el = document.getElementById('bootError');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'bootError';
+    el.style.cssText = 'position:fixed;inset:0;z-index:9999;display:flex;align-items:center;justify-content:center;' +
+      'background:linear-gradient(160deg,#eef4fc,#d9e6f6);font:14px/1.7 -apple-system,"PingFang SC",sans-serif;color:#22364f;padding:32px;text-align:center';
+    document.body.appendChild(el);
+  }
+  el.innerHTML = '<div style="max-width:520px">' +
+    '<div style="font-size:17px;font-weight:700;margin-bottom:10px">楼层数据暂时取不到</div>' +
+    '<div style="color:#4e6178;margin-bottom:14px">' + text + '</div>' +
+    '<div style="font-size:12.5px;color:#7b8da3">请确认已登录智慧办公系统、服务端可访问，然后刷新页面。</div>' +
+    '</div>';
+}
+
+async function loadSnapshot(){
+  const res = await fetch('/api/hq3d/snapshot', { credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  if (res.status === 401) throw new Error('未登录或登录已过期');
+  if (!res.ok) throw new Error(`接口返回 ${res.status}`);
+  const data = await res.json();
+  if (!data || !Array.isArray(data.buildings) || !data.buildings.length) throw new Error('返回数据为空');
+  try { localStorage.setItem(FALLBACK_KEY, JSON.stringify({ at: Date.now(), buildings: data.buildings.length })); } catch (e) {}
+  return data;
+}
+
+const SNAPSHOT = await loadSnapshot().catch(err => {
+  degradedNotice(String(err && err.message || err));
+  throw err;
+});
+
+/* 还原成渲染层期望的形状：buildings[].floors[].rooms[] */
+const DATA = {
+  buildings: SNAPSHOT.buildings.map(b => ({
+    id: b.id,
+    name: b.name,
+    aspect: b.aspect,
+    aspAll: b.aspAll,
+    floors: b.floors.map(f => ({
+      sheet: f.sheet,
+      rooms: f.rooms.map(r => ({
+        no: r.no || '',
+        cat: r.cat,
+        label: r.label,
+        dept: r.dept || '',
+        person: r.person || '',
+        notes: r.notes || '',
+        lines: r.lines && r.lines.length ? r.lines : [r.label],
+        nx: r.nx, nz: r.nz, nw: r.nw, nd: r.nd, frac: r.frac,
+        uid: r.uid                       // 服务端下发的稳定键，直接沿用，不再本地推导
+      }))
+    }))
+  }))
+};
+/* ---------- 写接口：统一入口 ----------
+   同源 fetch 会自动带会话 cookie；服务端对写请求校验 Origin + JSON，
+   所以这里必须显式带 Content-Type，不能用表单编码。 */
+let apiSeq = 0;
+async function apiSend(method, path, body){
+  const res = await fetch(path, {
+    method,
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body)
+  });
+  let payload = {};
+  try { payload = await res.json(); } catch (e) {}
+  if (!res.ok){
+    const msg = payload && (payload.error || payload.detail) || `HTTP ${res.status}`;
+    toastSaveError(msg);
+    throw new Error(msg);
+  }
+  return payload;
+}
+
+/* 保存失败提示：角落浮一条，3.6 秒后自己消失。
+   不打断当前操作 —— 房间编辑是连续动作，弹模态会让人丢掉上下文 */
+let saveErrTimer = 0;
+function toastSaveError(text){
+  let el = document.getElementById('saveErr');
+  if (!el){
+    el = document.createElement('div');
+    el.id = 'saveErr';
+    el.style.cssText = 'position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:9998;' +
+      'background:rgba(180,48,32,.96);color:#fff;font:12.5px/1.5 -apple-system,"PingFang SC",sans-serif;' +
+      'padding:9px 16px;border-radius:10px;box-shadow:0 10px 26px rgba(88,22,14,.34);max-width:70vw';
+    document.body.appendChild(el);
+  }
+  el.textContent = `未保存到服务器：${text}`;
+  el.style.display = 'block';
+  clearTimeout(saveErrTimer);
+  saveErrTimer = setTimeout(() => { el.style.display = 'none'; }, 3600);
+}
+
+const BUILDINGS = DATA.buildings;
+
+const EXTRA_COLORS = [0x8fb8f0, 0x62cdb0, 0xf0be63, 0xe0a8c4, 0xa9b6c5, 0x9fcfe0];
+const CAT = {
+  office:  { c:0x5b8fd8, label:'办公室' },
+  open:    { c:0x2faa85, label:'开放办公' },
+  exec:    { c:0x8f66cf, label:'领导办公室' },
+  meeting: { c:0xe0a02a, label:'会议室' },
+  front:   { c:0xe0765c, label:'前台 / 大厅' },
+  dining:  { c:0xc4702f, label:'餐厅 / 餐厨' },
+  guest:   { c:0xc96b9c, label:'客房' },
+  fitness: { c:0x36a89e, label:'康体 / 健身' },
+  welfare: { c:0xcfa855, label:'员工福利' },
+  party:   { c:0xb45e60, label:'党群 / 纪检' },
+  archive: { c:0x7a9070, label:'档案室' },
+  support: { c:0x8494a8, label:'配套 / 机房' },
+  stair:   { c:0xa8b6c8, label:'楼梯 / 安全通道' },
+  lift:    { c:0xd79d22, label:'电梯' },
+  wc:      { c:0x6aadc8, label:'卫生间' }
+};
+
+const FH = 3.4;       // 层高
+const GAP = 1.75;     // 剖切模式的层间空隙：要够大才能透出背景，楼层才分离得开
+const GAP_SOLID = 0.08;  // 外观模式：楼层几乎相接，由幕墙横梃来分隔，才像真楼
+const WALL_H = 1.5;
+const WT = 0.11;
+const SPAN = 104;   // 每栋楼最长边在场景中的尺度（相对单位，非真实米数）
+
+/* 体量分级：1–4 层保持原平面尺寸当作裙楼，5 层以上收进。
+   照片里是下宽上窄的体量，收进后台基/塔楼关系一眼就读得出来；
+   4 层以下的房间平面坐标一律不缩放，原有布局与视角完全不变。
+   塔楼收窄到 0.54、层高放大 1.46 倍：宽度收、高度涨，整栋才显得修长。
+   裙楼层高也抬 1.10 倍（平面尺寸不变）—— 只抬塔楼的话，
+   底下四层会显出一截「矮胖的脖子」，整栋反而被压住。
+   「外部的框架」也按同一系数收：台基外扩、挑檐外扩、竖挺高度都乘 f.s，
+   否则窄塔楼会被一圈厚框罩住，反而更壮。 */
+const PODIUM_FLOORS = 4;
+/* 底座（1–4 层）与塔楼一起再收 15%：
+   裙楼 0.85，塔楼 0.54 × 0.85 = 0.459 —— 两者同比例，塔楼/裙楼的宽窄关系
+   （0.54）保持不变，缩的是"整栋的绝对宽度"，不是退台落差。
+   退台台阶因此从 48 收到 40.6，仍然读得出下宽上窄。 */
+const PODIUM_K = 0.85;
+const TOWER_K = 0.459;
+const TOWER_FH_K = 1.46;
+const PODIUM_FH_K = 1.10;
+const floorScale = (fi, b) =>
+  (fi < PODIUM_FLOORS || b.floors.length <= PODIUM_FLOORS) ? PODIUM_K : TOWER_K;
+/* 层高：裙楼 1.10 倍、塔楼 1.46 倍 */
+const floorH = (fi, b) =>
+  (fi < PODIUM_FLOORS || b.floors.length <= PODIUM_FLOORS)
+    ? FH * PODIUM_FH_K : FH * TOWER_FH_K;
+
+/* 占用状态：从 label / person / notes 里推断，只对办公类房间有意义 */
+const OCC = {
+  vacant:   { label:'空置可用', c:'#2f9e6b', hex:0x2f9e6b, order:0 },
+  pending:  { label:'待腾退',   c:'#d99b3a', hex:0xd99b3a, order:1 },
+  borrowed: { label:'借用 / 临时', c:'#c2703f', hex:0xc2703f, order:2 },
+  inuse:    { label:'在用',     c:'#9aabbd', hex:0x9aabbd, order:3 }
+};
+/* 「空置」是占用状态，与功能类别正交：只要不是明确的公共/专用空间都要判定。
+   排除项：楼梯、电梯、卫生间、会议室、客房、餐厅、前台、康体、福利间 ——
+   这些要么不可占用，要么本身就是公共资源。 */
+const NON_OCCUPIABLE = {
+  stair:1, lift:1, wc:1, meeting:1, guest:1,
+  dining:1, front:1, fitness:1, welfare:1
+};
+function occupancyOf(r){
+  if (NON_OCCUPIABLE[r.cat]) return 'inuse';
+  const t = `${r.label} ${r.person} ${r.notes}`;
+  if (/待退|待搬|调离/.test(t)) return 'pending';
+  if (/借用|临时|挂职|未还/.test(t)) return 'borrowed';
+  if (/空房|空置|闲置|预留|放置家具/.test(t)) return 'vacant';
+  return 'inuse';
+}
+
+/* 类别元数据：数据里没定义时按名字哈希兜底，保证任何数据都能渲染 */
+function catInfo(key){
+  if (CAT[key]) return CAT[key];
+  CAT[key] = { c: EXTRA_COLORS[Object.keys(CAT).length % EXTRA_COLORS.length], label: key };
+  return CAT[key];
+}
+BUILDINGS.forEach(b => b.floors.forEach(f => f.rooms.forEach(r => {
+  catInfo(r.cat);
+  r.occ = occupancyOf(r);
+})));
+
+/* =========================================================
+   面积
+   —— 原始表只画了格子、没写面积，只有 9F 的 12 间标了「22㎡」。
+   —— 所以面积分两类，绝不混淆：
+     · 实测面积：从原图标注解析，或人工填写（直接显示 22.0㎡）
+     · 折算面积：人工设定「本层房间面积合计」后，按房间占比折算（显示 ≈18.4㎡）
+   两者都没有就显示「—」，不留空数字。
+   ========================================================= */
+const AREA_RE = /(\d+(?:\.\d+)?)\s*(?:㎡|m2|M2|m²|平方米|平米)/;
+function parseArea(r){
+  const hay = [r.notes, r.label, (r.lines || []).join(' ')].join(' ');
+  const m = hay.match(AREA_RE);
+  if (!m) return null;
+  const v = Number(m[1]);
+  return isFinite(v) && v > 0 ? v : null;
+}
+
+/* 本层面积合计（人工设定，用于折算） */
+const FLOOR_AREA = Object.assign({}, SNAPSHOT.floorAreas || {});
+const floorAreaKey = (b, f) => `${b.id}#${f.tag}`;
+function floorTotal(b, f){ return toNum(FLOOR_AREA[floorAreaKey(b, f)]); }
+function setFloorTotal(b, f, v){
+  const k = floorAreaKey(b, f);
+  const n = toNum(v);
+  const prev = FLOOR_AREA[k];
+  if (n === null || n <= 0) delete FLOOR_AREA[k];
+  else FLOOR_AREA[k] = n;
+  apiSend('PUT', `/api/hq3d/floors/${encodeURIComponent(b.id)}/${encodeURIComponent(f.tag)}/area`,
+    { areaTotal: n === null || n <= 0 ? null : n })
+    .catch(() => {
+      // 失败就回滚内存，别让界面显示一个库里没有的数
+      if (prev === undefined) delete FLOOR_AREA[k]; else FLOOR_AREA[k] = prev;
+      renderAreaBar && renderAreaBar();
+    });
+}
+
+/* 取一间房的有效面积：{ v, est } —— est=true 表示是折算值 */
+function areaOf(r){
+  if (r.area !== null && r.area !== undefined && r.area !== ''){
+    const n = toNum(r.area);
+    if (n !== null && n > 0) return { v: n, est: false };
+  }
+  const b = BUILDINGS[r.bi], f = b.floors[r.fi];
+  const total = floorTotal(b, f);
+  if (total && r.frac > 0) return { v: +(r.frac * total).toFixed(1), est: true };
+  return null;
+}
+function fmtArea(a){
+  if (!a) return '—';
+  return (a.est ? '≈' : '') + a.v.toFixed(a.v < 100 ? 1 : 0) + ' ㎡';
+}
+/* 本层面积概览：实测 / 折算 / 未登记 */
+function floorAreaStat(b, f){
+  let real = 0, est = 0, none = 0, sumReal = 0, sumEst = 0;
+  f.rooms.forEach(r => {
+    const a = areaOf(r);
+    if (!a){ none++; return; }
+    if (a.est){ est++; sumEst += a.v; } else { real++; sumReal += a.v; }
+  });
+  return { real, est, none, sumReal, sumEst };
+}
+
+/* =========================================================
+   房间资料（可就地修改）
+   —— 人员变动、部门调整、房间改名都走这里
+   —— 只存「被改过的字段」，原始数据不动，随时能恢复
+   ========================================================= */
+const ROOM_KEY = 'hq3d.rooms.v1';
+const EDITABLE_FIELDS = ['label', 'person', 'dept', 'notes', 'cat', 'area'];
+const FIELD_LABEL = { label:'房间名', person:'使用人', dept:'部门',
+                      notes:'备注', cat:'功能类别', area:'面积' };
+const NUM_FIELDS = { area:1 };
+
+/* 把服务端的 profile 还原成界面期望的形状：
+   服务端存 category/areaSqm 与扁平的 history 条目；
+   界面用 cat/area 与「一次保存 = 一条 {at,by,changes[]}」。 */
+function profileFromServer(p){
+  if (!p) return null;
+  const out = { updatedAt: p.updatedAt ? Date.parse(p.updatedAt) : 0, history: [] };
+  if (p.label !== undefined) out.label = p.label;
+  if (p.person !== undefined) out.person = p.person;
+  if (p.dept !== undefined) out.dept = p.dept;
+  if (p.notes !== undefined) out.notes = p.notes;
+  if (p.category !== undefined) out.cat = p.category;
+  if (p.areaSqm !== undefined) out.area = p.areaSqm;
+  // history 按时间聚回「一次提交」
+  const byAt = new Map();
+  (p.history || []).forEach(h => {
+    const key = h.at || '';
+    if (!byAt.has(key)) byAt.set(key, { at: Date.parse(key) || 0, by: h.by || '', changes: [] });
+    byAt.get(key).changes.push({ field: h.field, from: h.from, to: h.to });
+  });
+  out.history = [...byAt.values()].sort((a, b) => a.at - b.at).slice(-30);
+  return out;
+}
+
+const ROOM_OVR = {};
+Object.keys(SNAPSHOT.profiles || {}).forEach(uid => {
+  const v = profileFromServer(SNAPSHOT.profiles[uid]);
+  if (v) ROOM_OVR[uid] = v;
+});
+
+/* 提交改动：只把真正被覆盖的字段发给服务端，其余留空表示「沿用原值」 */
+function saveRoomOvr(r){
+  if (!r || !r.uid) return;
+  const o = ROOM_OVR[r.uid] || {};
+  const payload = {};
+  EDITABLE_FIELDS.forEach(k => {
+    const v = o[k];
+    payload[k === 'cat' ? 'category' : k === 'area' ? 'areaSqm' : k] =
+      (v === undefined || v === null || v === '') ? null : v;
+  });
+  apiSend('PUT', `/api/hq3d/rooms/${encodeURIComponent(r.uid)}`, { profile: payload })
+    .then(({ profile }) => {
+      const back = profileFromServer(profile);
+      if (back) ROOM_OVR[r.uid] = back;
+      applyRoomOvr(r);
+      refreshPane();
+    })
+    .catch(() => {});
+}
+
+/* 把覆盖值刷到房间对象上；没有覆盖的房间保持原始数据 */
+function applyRoomOvr(r){
+  const o = ROOM_OVR[r.uid];
+  if (!o){
+    EDITABLE_FIELDS.forEach(k => {
+      r[k] = NUM_FIELDS[k] ? toNum(r.orig[k]) : r.orig[k];
+    });
+    r.occ = occupancyOf(r);
+    return false;
+  }
+  EDITABLE_FIELDS.forEach(k => {
+    const v = (o[k] !== undefined && o[k] !== null) ? o[k] : r.orig[k];
+    r[k] = NUM_FIELDS[k] ? toNum(v) : v;
+  });
+  r.occ = occupancyOf(r);
+  return true;
+}
+function toNum(v){
+  if (v === '' || v === null || v === undefined) return null;
+  const n = Number(v);
+  return isFinite(n) ? n : null;
+}
+function hasRoomOvr(r){ return !!ROOM_OVR[r.uid]; }
+function roomHistory(r){
+  const o = ROOM_OVR[r.uid];
+  return (o && o.history) || [];
+}
+function roomUpdatedAt(r){
+  const o = ROOM_OVR[r.uid];
+  return o && o.updatedAt ? o.updatedAt : 0;
+}
+
+/* 保存一间房的改动：只记真正变了的字段，写进历史 */
+function saveRoomInfo(r, patch, by){
+  const cur = {};
+  EDITABLE_FIELDS.forEach(k => { cur[k] = r[k]; });
+  const changes = [];
+  EDITABLE_FIELDS.forEach(k => {
+    if (patch[k] === undefined) return;
+    const from = String(cur[k] == null ? '' : cur[k]).trim();
+    const to = String(patch[k] == null ? '' : patch[k]).trim();
+    if (from !== to) changes.push({ field: k, from, to });
+  });
+  if (!changes.length) return null;
+
+  const o = ROOM_OVR[r.uid] || { history: [] };
+  const merged = {};
+  EDITABLE_FIELDS.forEach(k => { merged[k] = cur[k]; });
+  changes.forEach(c => { merged[c.field] = c.to; });
+
+  // 只保留与原始值不同的字段，避免表里堆积无意义条目
+  const store = {};
+  EDITABLE_FIELDS.forEach(k => {
+    const orig = String(r.orig[k] == null ? '' : r.orig[k]).trim();
+    const now = String(merged[k] == null ? '' : merged[k]).trim();
+    if (now !== orig) store[k] = now;
+  });
+
+  const rec = { at: Date.now(), by: by || '', changes };
+  const history = (o.history || []).slice(-30).concat([rec]);
+  ROOM_OVR[r.uid] = Object.assign({}, store, { updatedAt: rec.at, history });
+  if (!Object.keys(store).length && !history.length) delete ROOM_OVR[r.uid];
+  saveRoomOvr(r);
+
+  applyRoomOvr(r);
+  return rec;
+}
+
+/* 恢复原始数据 */
+function restoreRoomInfo(r){
+  if (!ROOM_OVR[r.uid]) return;
+  delete ROOM_OVR[r.uid];
+  applyRoomOvr(r);
+  apiSend('DELETE', `/api/hq3d/rooms/${encodeURIComponent(r.uid)}`)
+    .then(() => refreshPane())
+    .catch(() => {});
+}
+
+
+/* =========================================================
+   维护记录
+   —— 只对会议室与各类办公室开放：楼梯、电梯、卫生间这些不归房间维护流程管
+   ========================================================= */
+const MAINTAINABLE = { office:1, open:1, exec:1, meeting:1 };
+const MNT_TYPES = ['空调', '给排水', '照明', '门禁', '家具', '网络', '消防', '其他'];
+const MNT_STATUS = {
+  open:  { label:'待处理', c:'#d65440', order:0 },
+  doing: { label:'维修中', c:'#d99b3a', order:1 },
+  done:  { label:'已完成', c:'#2f9e6b', order:2 }
+};
+const MNT_KEY = 'hq3d.maintenance.v1';
+
+/* 服务端记录 → 界面记录：reporter→who；ISO 时间→毫秒数（界面会做减法排序） */
+function recordFromServer(rec){
+  return {
+    id: rec.id,
+    type: rec.type,
+    title: rec.title,
+    note: rec.note || '',
+    who: rec.reporter || '',
+    status: rec.status,
+    createdAt: Date.parse(rec.createdAt) || 0,
+    updatedAt: Date.parse(rec.updatedAt) || 0
+  };
+}
+const MNT = {};
+Object.keys(SNAPSHOT.maintenance || {}).forEach(uid => {
+  const recs = (SNAPSHOT.maintenance[uid].records || []).map(recordFromServer);
+  if (recs.length) MNT[uid] = { records: recs };
+});
+
+/* 迁移：房间改名后 uid 不再含 label，旧键（含 label）要重新对齐，
+   否则改过名字的房间会「丢记录」。必须在 uid 与 orig 都生成之后调用。 */
+function migrateMntKeys(){
+  // 数据来自 MySQL 后，键就是服务端 uid，不存在「改名前旧键」需要迁移。
+  // 保留为空函数是为了不打断调用处（几何构建前会调一次）。
+}
+/* 兼容旧调用点：写操作已改为逐条打接口，不再整包落 localStorage */
+function saveMnt(){}
+
+const canMaintain = r => !!MAINTAINABLE[r.cat];
+const recsOf = r => (MNT[r.key] && MNT[r.key].records) || [];
+const activeRecs = r => recsOf(r).filter(x => x.status !== 'done');
+function mntState(r){
+  const a = activeRecs(r);
+  if (!a.length) return 'none';
+  return a.some(x => x.status === 'open') ? 'open' : 'doing';
+}
+function mntLabel(){
+  return `报修：${['空调','给排水','照明','门禁','家具','网络','消防','其他'].join(' / ')}`;
+}
+
+/* 新增报修：先本地落一条（界面立刻有反应），再提交服务端；
+   成功后用服务端返回的 id 替换本地临时 id —— 后续改状态、删除都靠它。 */
+function addRecord(r, { type, title, note, who }){
+  const tempId = 'tmp' + Date.now().toString(36);
+  if (!MNT[r.key]) MNT[r.key] = { records: [] };
+  const rec = {
+    id: tempId,
+    type: type || '其他',
+    title: title || (type || '维修') + '报修',
+    note: note || '',
+    who: who || '',
+    status: 'open',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  MNT[r.key].records.push(rec);
+  apiSend('POST', `/api/hq3d/rooms/${encodeURIComponent(r.uid)}/maintenance`,
+    { record: { type: rec.type, title: rec.title, note: rec.note, reporter: rec.who } })
+    .then(({ record }) => {
+      Object.assign(rec, recordFromServer(record));
+      syncMntVisual(); refreshPane();
+    })
+    .catch(() => {
+      // 落库失败就把这条撤回，避免界面上留一条服务端并不存在的报修
+      const recs = recsOf(r);
+      const i = recs.findIndex(x => x.id === tempId);
+      if (i >= 0) recs.splice(i, 1);
+      if (!recsOf(r).length) delete MNT[r.key];
+      syncMntVisual(); refreshPane();
+    });
+  return rec;
+}
+function setRecordStatus(r, id, status){
+  const recs = recsOf(r);
+  const rec = recs.find(x => x.id === id);
+  if (!rec) return;
+  const prev = { status: rec.status, updatedAt: rec.updatedAt };
+  rec.status = status;
+  rec.updatedAt = Date.now();
+  if (id.startsWith('tmp')) return;         // 还没拿到服务端 id，等 POST 回来再改
+  apiSend('PATCH', `/api/hq3d/maintenance/${encodeURIComponent(id)}`, { status })
+    .then(({ record }) => { Object.assign(rec, recordFromServer(record)); syncMntVisual(); refreshPane(); })
+    .catch(() => { rec.status = prev.status; rec.updatedAt = prev.updatedAt; syncMntVisual(); refreshPane(); });
+}
+function deleteRecord(r, id){
+  const recs = recsOf(r);
+  const i = recs.findIndex(x => x.id === id);
+  if (i < 0) return;
+  const [removed] = recs.splice(i, 1);
+  if (!recs.length) delete MNT[r.key];
+  if (id.startsWith('tmp')) return;
+  apiSend('DELETE', `/api/hq3d/maintenance/${encodeURIComponent(id)}`)
+    .catch(() => {
+      // 删失败就放回来，位置不追求精确
+      if (!MNT[r.key]) MNT[r.key] = { records: [] };
+      MNT[r.key].records.push(removed);
+      syncMntVisual(); refreshPane();
+    });
+}
+
+/* ---------- 3D 标记：斜纹覆盖层 + 呼吸暖光 ---------- */
+const hatchTex = (function makeHatch(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const x = c.getContext('2d');
+  x.clearRect(0, 0, 32, 32);
+  x.strokeStyle = 'rgba(184,58,38,.95)';
+  x.lineWidth = 6;
+  x.lineCap = 'butt';
+  for (let i = -32; i < 64; i += 11){
+    x.beginPath();
+    x.moveTo(i, 0);
+    x.lineTo(i + 32, 32);
+    x.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+
+let mntPulse = [];     // 需要呼吸发光的房间（持续维护中的）
+
+function ensureHatch(r){
+  if (r.hatch) return r.hatch;
+  const w = Math.max(r.w - 0.5, 0.3);
+  const d = Math.max(r.d - 0.5, 0.3);
+  const tex = hatchTex.clone();
+  tex.needsUpdate = true;
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+  // 按 1.2m 一道：太密的斜纹在屏幕上会糊成一层色，反而看不出是斜纹
+  tex.repeat.set(Math.max(1, w / 1.2), Math.max(1, d / 1.2));
+  const m = new THREE.Mesh(aoPlaneGeo, new THREE.MeshBasicMaterial({
+    map: tex, transparent: true, opacity: .55, depthWrite: false
+  }));
+  m.rotation.x = -Math.PI / 2;
+  m.scale.set(w, d, 1);
+  m.position.set(r.cx, TILE_H + 0.04, r.cz);
+  m.renderOrder = 4;
+  m.visible = false;
+  r.mesh.parent.add(m);
+  r.hatch = m;
+  return m;
+}
+
+function syncMntVisual(){
+  mntPulse = [];
+  BUILDINGS.forEach(b => b.floors.forEach(f => f.rooms.forEach(r => {
+    if (!canMaintain(r)) return;
+    const st = mntState(r);
+    if (st !== 'none'){
+      const h = ensureHatch(r);
+      h.visible = true;
+      h.material.opacity = st === 'open' ? .72 : .5;
+      mntPulse.push(r);
+    } else if (r.hatch){
+      r.hatch.visible = false;
+    }
+    if (r !== state.selected){
+      r.mesh.material.emissive.setHex(OCC[r.occ].hex);
+      r.mesh.material.emissiveIntensity = r.occ !== 'inuse' ? .12 : 0;
+    }
+  })));
+  updateMntBadge();
+}
+
+function updateVacBadge(){
+  const b = curB();
+  const n = b.floors.reduce((a, f) => a + f.rooms.filter(r => r.occ !== 'inuse').length, 0);
+  const badge = document.getElementById('vacBadge');
+  if (!badge) return;
+  badge.textContent = n;
+  badge.style.background = n ? '#2f9e6b' : '#b6c3d2';
+}
+
+function updateMntBadge(){
+  const b = curB();
+  const n = b.floors.reduce((a, f) => a + f.rooms.filter(r => canMaintain(r) && mntState(r) !== 'none').length, 0);
+  const badge = document.getElementById('mntBadge');
+  if (!badge) return;
+  badge.textContent = n;
+  badge.style.background = n ? '#d65440' : '#b6c3d2';
+}
+
+/* 预处理：给每栋、每层、每个房间挂上索引与局部坐标 */
+BUILDINGS.forEach((b, bi) => {
+  b.idx = bi;
+  // 按宽高比自适应：长边统一到 SPAN，短边按比例缩，短边下限避免退化成一条线
+  if (b.aspect >= 1){ b.FW = SPAN; b.FD = Math.max(5, SPAN / b.aspect); }
+  else { b.FD = SPAN; b.FW = Math.max(5, SPAN * b.aspect); }
+  // 底座的平面尺度系数：基座、雨棚、广场、退台挑檐都按它算，
+  // 否则裙楼缩了、这些附属体还按原始 b.FW 画，会从楼身外沿探出去一大圈
+  b.podK = PODIUM_K;
+  b.floors.forEach((f, fi) => {
+    f.bi = bi; f.fi = fi;
+    // 本层体量：4 层以上收进，房间坐标绕本层中心等比缩放 —— 相对关系不变，只是变小
+    f.s = floorScale(fi, b);
+    f.h = floorH(fi, b);
+    f.FW = b.FW * f.s;
+    f.FD = b.FD * f.s;
+    f.tag = (fi + 1) + 'F';
+    f.short = f.sheet.replace(/^(主楼|南配楼)/, '').replace(/（全）/g, '').trim();
+    f.rooms.forEach((r, ri) => {
+      r.bi = bi; r.fi = fi; r.ri = ri;
+      r.x = r.nx * f.FW - f.FW / 2;
+      r.z = r.nz * f.FD - f.FD / 2;
+      r.w = r.nw * f.FW;
+      r.d = r.nd * f.FD;
+      r.cx = r.x + r.w / 2;
+      r.cz = r.z + r.d / 2;
+      // 稳定标识：房间资料与维护记录都靠它跨会话对齐。
+      // 必须放在 f.tag 赋值之后；且只由「原始数据」推导 ——
+      // 用户改名不能改变 uid，否则一改名字所有关联记录全断。
+      // 同一层常有多个同名同号房间（两条安全通道、两部电梯、几间「办公室」）。
+      // 只用「楼#层#号#名」会让它们共用同一个键：改一间的资料，另一间跟着变，
+      // 维护记录也会串号。第二间起追加序号，保证 uid 层内唯一。
+      const uidBase = [b.id, f.tag, r.no || '_', String(r.label).replace(/\s+/g, '')].join('#');
+      r.uidBase = uidBase;
+      // uid 由服务端下发（已保证层内唯一），这里直接沿用 ——
+      // 页面若自己另算一套，改资料时就会写到不存在的键上。
+      // 仅在服务端缺值时退回本地推导，保证一条脏数据不会让整层渲染失败。
+      r.uid = r.uid || uidBase;
+      r.key = r.uid;                       // 兼容旧字段名
+      // 原始值快照：「恢复原值」和变更对比都要用
+      // 面积：原图里有的直接解析（如「（22㎡）」），没有就留空 —— 不编造
+      r.orig = { label: r.label, person: r.person || '', dept: r.dept || '',
+                 notes: r.notes || '', cat: r.cat,
+                 area: parseArea(r) };
+      const mx = r.nx + r.nw / 2, mz = r.nz + r.nd / 2;
+      const vi = mz < 0.34 ? 0 : mz > 0.66 ? 2 : 1;
+      const hi = mx < 0.34 ? 0 : mx > 0.66 ? 2 : 1;
+      r.dir = [['西北角', '北部', '东北角'], ['西侧', '中部', '东侧'], ['西南角', '南部', '东南角']][vi][hi];
+
+      // 资料覆盖必须在 uid 与 orig 都就绪后才能应用
+      applyRoomOvr(r);
+    });
+  });
+});
+
+/* =========================================================
+   场景
+   ========================================================= */
+const canvas = document.getElementById('scene');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias:true, alpha:true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;   // 电影级色调映射，白不过曝、暗部有层次
+renderer.toneMappingExposure = 1.04;
+renderer.shadowMap.enabled = false;   // 阴影贴图在这个尺度几乎看不出，却要付大面积采样成本
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(40, window.innerWidth / window.innerHeight, 0.4, 1400);
+camera.position.set(40, 42, 46);
+
+const controls = new OrbitControls(camera, canvas);
+controls.enableDamping = true;
+controls.dampingFactor = 0.075;
+controls.minDistance = 5;
+controls.maxDistance = 420;
+controls.maxPolarAngle = Math.PI * 0.495;
+
+/* 间接光：用室内环境贴图代替纯半球光，材质才有柔和高光与体积感 */
+const pmrem = new THREE.PMREMGenerator(renderer);
+pmrem.compileEquirectangularShader();
+const ENV_TEX = pmrem.fromScene(new RoomEnvironment(renderer), 0.05).texture;
+scene.environment = ENV_TEX;
+
+/* 主光：唯一投影光源，负责房间之间的接触阴影 */
+const key = new THREE.DirectionalLight(0xfff6ea, 3.1);
+key.position.set(34, 62, 46);
+key.castShadow = false;
+key.shadow.mapSize.set(1024, 1024);
+key.shadow.camera.near = 4;
+key.shadow.camera.far = 220;
+key.shadow.bias = -0.0006;
+key.shadow.normalBias = 0.03;
+scene.add(key);
+
+/* 补光：冷调方向光，拉开暗面层次，不投影 */
+const fill = new THREE.DirectionalLight(0xbfd6f2, 0.42);
+fill.position.set(-46, 26, -34);
+scene.add(fill);
+
+/* 轮廓光：从背后勾边，让楼板从背景里浮起来 */
+const rim = new THREE.DirectionalLight(0xdce9ff, 0.62);
+rim.position.set(-10, 16, -72);
+scene.add(rim);
+
+/* 半球光只留一点点：天光偏冷、地面反光偏暖，给暗面一点方向感 */
+scene.add(new THREE.HemisphereLight(0xf2f7ff, 0xbfcbdc, 0.13));
+
+/* 地面柔影 */
+const groundMesh = (function ground(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 256;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 126);
+  g.addColorStop(0, 'rgba(48,78,122,.28)');
+  g.addColorStop(.6, 'rgba(48,78,122,.09)');
+  g.addColorStop(1, 'rgba(48,78,122,0)');
+  ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 256);
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({
+    map:new THREE.CanvasTexture(c), transparent:true, depthWrite:false
+  }));
+  m.rotation.x = -Math.PI / 2;
+  scene.add(m);
+  return m;
+})();
+
+/* =========================================================
+   几何
+   ========================================================= */
+const slabMatBase = new THREE.MeshStandardMaterial({
+  color:0xbfcedf, roughness:.9, metalness:.02, envMapIntensity:.2
+});
+const edgeMatBase = new THREE.LineBasicMaterial({ color:0xa9bdd6, transparent:true, opacity:.85 });
+const wallMatBase = new THREE.MeshStandardMaterial({
+  color:0xeef3fa, roughness:.72, metalness:.02, envMapIntensity:.2
+});
+/* 墙顶盖：一条亮边，模拟建筑模型常见的“洗净”高光 */
+const capMatBase = new THREE.MeshStandardMaterial({
+  color:0xfdfeff, roughness:.42, metalness:.04, envMapIntensity:.32
+});
+/* 底座：楼板下的一圈深色台基，把楼层“垫”起来 */
+const plinthMatBase = new THREE.MeshStandardMaterial({
+  color:0xa3b5cc, roughness:.92, metalness:.02, envMapIntensity:.16
+});
+const TILE_H = 0.45;                       // 房间板厚度：侧面要看得见才有体积
+const tileGeo = new THREE.BoxGeometry(1, 1, 1);
+const aoPlaneGeo = new THREE.PlaneGeometry(1, 1);
+const boxGeo = new THREE.BoxGeometry(1, 1, 1);
+
+/* 用“向浅灰靠拢”代替降透明度：避免透明混合，暗化后依然是不透明块体 */
+const PALE = new THREE.Color(0xd7e1ee);
+const SLAB_BASE = new THREE.Color(0xbfcedf);
+const SLAB_DARK = new THREE.Color(0x7d8ea6);
+function tintRoom(r, k){
+  const base = r.mesh.userData.baseColor;
+  if (!base) return;
+  if (k >= 0.995){
+    r.mesh.material.color.copy(base);
+  } else {
+    r.mesh.material.color.copy(base).lerp(PALE, 1 - k);
+  }
+}
+
+/* 给房间板注入“边缘内阴影”：顶面越靠近边界越暗，
+   等于给每块地板做出倒角与内 AO —— 这是块体感的关键，
+   光靠打光是做不出来的（大面积平面上明暗处处相同）。 */
+function withEdgeShade(mat, w, d){
+  // 内阴影按「米」算，不按 UV 比例：窄房间与宽房间的暗边等宽，
+  // 否则狭长楼层（10:1 的板楼）整片发平
+  const size = new THREE.Vector2(Math.max(w, 0.001), Math.max(d, 0.001));
+  mat.onBeforeCompile = (shader) => {
+    shader.uniforms.uTileSize = { value: size };
+    shader.vertexShader = 'varying vec2 vTileUv;\n' + shader.vertexShader.replace(
+      '#include <uv_vertex>',
+      '#include <uv_vertex>\n  vTileUv = uv;'
+    );
+    shader.fragmentShader = 'varying vec2 vTileUv;\nuniform vec2 uTileSize;\n' +
+      shader.fragmentShader.replace(
+      '#include <color_fragment>',
+      `#include <color_fragment>
+       {
+         float _du = min(vTileUv.x, 1.0 - vTileUv.x) * uTileSize.x;
+         float _dv = min(vTileUv.y, 1.0 - vTileUv.y) * uTileSize.y;
+         float _d = min(_du, _dv);
+         float _s = smoothstep(0.0, 0.55, _d);
+         diffuseColor.rgb *= mix(0.55, 1.0, _s);
+       }`
+    );
+  };
+  mat.customProgramCacheKey = () => 'tile-edge-shade';
+  return mat;
+}
+
+/* 接地阴影贴图：中心实、边缘软的椭圆，铺在房间板下方 */
+const aoTex = (function makeAO(){
+  const c = document.createElement('canvas');
+  c.width = c.height = 128;
+  const ctx = c.getContext('2d');
+  const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+  g.addColorStop(0, 'rgba(26,44,72,.62)');
+  g.addColorStop(.55, 'rgba(26,44,72,.34)');
+  g.addColorStop(1, 'rgba(26,44,72,0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+})();
+const aoMatBase = new THREE.MeshBasicMaterial({
+  map: aoTex, transparent: true, opacity: .5, depthWrite: false
+});
+
+
+const world = new THREE.Group();
+scene.add(world);
+
+/* 每栋楼一个 group，内部每层一个 group */
+// uid / orig 全部就绪：先迁移旧维护键，再进几何构建
+migrateMntKeys();
+
+BUILDINGS.forEach(b => {
+  b.group = new THREE.Group();
+  world.add(b.group);
+  b.floors.forEach(f => {
+    const g = new THREE.Group();
+    g.userData.fi = f.fi;
+    g.userData.bi = b.idx;
+
+    const SLAB_T = 0.3;
+    const slabGeo = new THREE.BoxGeometry(f.FW, SLAB_T, f.FD);
+    const slabMat = slabMatBase.clone();
+    const slab = new THREE.Mesh(slabGeo, slabMat);
+    slab.position.y = -SLAB_T / 2;
+    slab.userData.slabFi = f.fi;
+    g.add(slab);
+
+    const edge = new THREE.LineSegments(new THREE.EdgesGeometry(slabGeo), edgeMatBase.clone());
+    edge.position.y = -SLAB_T / 2;
+    g.add(edge);
+
+    /* 台基：比楼板外扩一点、压暗，形成一圈厚度与投影，楼层不再像一张纸 */
+    /* 台基做成四条裙边（中空），只画外露的一圈 —— 实心大盒子的填充面积是纯浪费 */
+    const plinthMat = plinthMatBase.clone();
+    // 台基外扩与裙边厚度都乘 f.s：塔楼收窄后外框跟着收，不然一圈厚边会把窄体量撑壮
+    const PAD = 1.6 * f.s;
+    const PW = f.FW + PAD, PD = f.FD + PAD, PH = 0.62 * f.s, PT2 = 0.9 * f.s;
+    const plinthGroup = new THREE.Group();
+    plinthGroup.position.y = -SLAB_T - PH / 2;
+    [
+      [0, PD / 2 - PT2 / 2, PW, PT2],
+      [0, -PD / 2 + PT2 / 2, PW, PT2],
+      [-PW / 2 + PT2 / 2, 0, PT2, PD - PT2 * 2],
+      [PW / 2 - PT2 / 2, 0, PT2, PD - PT2 * 2]
+    ].forEach(([x, z, w, d]) => {
+      const m2 = new THREE.Mesh(new THREE.BoxGeometry(w, PH, d), plinthMat);
+      m2.position.set(x, 0, z);
+      plinthGroup.add(m2);
+    });
+    const plinthEdge = new THREE.LineSegments(
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(PW, PH, PD)),
+      new THREE.LineBasicMaterial({ color:0xa9bad0, transparent:true, opacity:.45 })
+    );
+    plinthGroup.add(plinthEdge);
+    g.add(plinthGroup);
+    g.userData.plinthGroup = plinthGroup;
+
+    /* 幕墙竖挺：只在四角与每 1/6 处立细柱，读起来是建筑而不是盒子 */
+    const mullMat = new THREE.MeshStandardMaterial({
+      color:0xc3d3e6, roughness:.5, metalness:.15, envMapIntensity:.5,
+      transparent:true, opacity:.9
+    });
+    const mullSegs = [];
+    const MH = f.h * 0.58;      // 竖挺高度跟层高走，塔楼层高抬高后不能还停在 2.0
+    for (let i = 0; i <= 6; i++){
+      const x = -f.FW / 2 + (f.FW / 6) * i;
+      mullSegs.push({ x, z:-f.FD / 2 }, { x, z:f.FD / 2 });
+    }
+    for (let i = 1; i < 4; i++){
+      const z = -f.FD / 2 + (f.FD / 4) * i;
+      mullSegs.push({ x:-f.FW / 2, z }, { x:f.FW / 2, z });
+    }
+    const mullIm = new THREE.InstancedMesh(
+      new THREE.BoxGeometry(0.08, MH, 0.08), mullMat, mullSegs.length);
+    const mo = new THREE.Object3D();
+    mullSegs.forEach((m2, k) => {
+      mo.position.set(m2.x, MH / 2, m2.z);
+      mo.updateMatrix();
+      mullIm.setMatrixAt(k, mo.matrix);
+    });
+    mullIm.instanceMatrix.needsUpdate = true;
+    g.add(mullIm);
+    g.userData.mullions = mullIm;
+
+    /* ---------- 整栋模式专属：现代塔楼的读图元素 ---------- */
+    /* (a) 楼层腰线：只画水平的一圈，绝不画竖边
+       —— 竖边会把 20 层连成一根柱子，这是整栋视图显得笨重的头号原因 */
+    // 挑檐做成四条边（中空框）：中间空着，填充面积可忽略；厚度让它在任何缩放下都看得见
+    const EAD = 1.5 * f.s;
+    const EW = f.FW + EAD, ED = f.FD + EAD, EH = 0.13, ET = 0.5 * f.s;
+    const eaveGroup = new THREE.Group();
+    const eaveMat = new THREE.MeshStandardMaterial({
+      color:0xdceaf8, roughness:.42, metalness:.06, envMapIntensity:.4
+    });
+    [
+      [0, ED / 2 - ET / 2, EW, ET],
+      [0, -ED / 2 + ET / 2, EW, ET],
+      [-EW / 2 + ET / 2, 0, ET, ED - ET * 2],
+      [EW / 2 - ET / 2, 0, ET, ED - ET * 2]
+    ].forEach(([x, z, w, d]) => {
+      const b2 = new THREE.Mesh(new THREE.BoxGeometry(w, EH, d), eaveMat);
+      b2.position.set(x, 0, z);
+      eaveGroup.add(b2);
+    });
+    eaveGroup.position.y = f.h * 0.95;
+    g.add(eaveGroup);
+    g.userData.glassFrame = eaveGroup;
+    g.userData.eaveMat = eaveMat;
+
+    /* (b) 楼层标牌：canvas 贴图 sprite，悬在楼层西北角外侧 */
+    if (!b.tagTex) b.tagTex = {};
+    const mkTag = (txt) => {
+      if (b.tagTex[txt]) return b.tagTex[txt];
+      const c = document.createElement('canvas');
+      c.width = 128; c.height = 64;
+      const ctx = c.getContext('2d');
+      ctx.clearRect(0, 0, 128, 64);
+      // 圆角底板
+      const r = 14, pad = 4;
+      ctx.beginPath();
+      ctx.moveTo(pad + r, pad);
+      ctx.lineTo(128 - pad - r, pad);
+      ctx.quadraticCurveTo(128 - pad, pad, 128 - pad, pad + r);
+      ctx.lineTo(128 - pad, 64 - pad - r);
+      ctx.quadraticCurveTo(128 - pad, 64 - pad, 128 - pad - r, 64 - pad);
+      ctx.lineTo(pad + r, 64 - pad);
+      ctx.quadraticCurveTo(pad, 64 - pad, pad, 64 - pad - r);
+      ctx.lineTo(pad, pad + r);
+      ctx.quadraticCurveTo(pad, pad, pad + r, pad);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,.94)';
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(120,160,210,.85)';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+      ctx.fillStyle = '#2b4570';
+      ctx.font = 'bold 34px -apple-system, "PingFang SC", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(txt, 64, 34);
+      const tex = new THREE.CanvasTexture(c);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      b.tagTex[txt] = tex;
+      return tex;
+    };
+    const tag = new THREE.Sprite(new THREE.SpriteMaterial({
+      map: mkTag(f.tag), transparent: true, depthWrite: false, depthTest: false,
+      toneMapped: false          // 不参与色调映射，标牌才能保持白底清晰
+    }));
+    tag.scale.set(3.4, 1.7, 1);
+    tag.userData.baseScale = 3.4;
+    tag.position.set(-f.FW / 2 - 2.6, f.h * 0.5, f.FD / 2);
+    tag.renderOrder = 10;
+    g.add(tag);
+    g.userData.tag = tag;
+
+    /* (c) 功能构成条：把本层房间按顺序压成一条彩色带，贴在楼层前沿 */
+    (function profileStrip(){
+      const H = 0.26;
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024; canvas.height = 12;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = 'rgba(255,255,255,0)';
+      ctx.fillRect(0, 0, 1024, 12);
+      const sorted = f.rooms.slice().sort((a, c) => a.nx - c.nx);
+      const total = Math.max(...sorted.map(r => r.nx + r.nw), 1);
+      sorted.forEach(r => {
+        const x0 = (r.nx / total) * 1024;
+        const x1 = ((r.nx + r.nw) / total) * 1024;
+        const col = catInfo(r.cat).c;
+        ctx.fillStyle = '#' + col.toString(16).padStart(6, '0');
+        ctx.fillRect(x0, 0, Math.max(x1 - x0 - 0.6, 0.6), 12);
+      });
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      // 竖直面默认朝向 +Z，正好贴在楼层南侧剖面上，像楼板的一条彩色剖面
+      const strip = new THREE.Mesh(
+        new THREE.PlaneGeometry(f.FW * 0.9, H),
+        new THREE.MeshBasicMaterial({ map: tex, transparent: true, opacity: .92,
+                                      depthWrite: false })
+      );
+      strip.position.set(0, -SLAB_T / 2, f.FD / 2 + 0.015);
+      strip.visible = false;
+      g.add(strip);
+      g.userData.strip = strip;
+    })();
+
+    const wallMat = wallMatBase.clone();
+    const segs = [];
+    f.rooms.forEach(r => {
+      const cat = catInfo(r.cat);
+      const isCirculation = r.cat === 'stair' || r.cat === 'lift';
+      const mat = new THREE.MeshStandardMaterial({
+        color: cat.c,
+        roughness: .5,
+        metalness: .04,
+        envMapIntensity: .16,
+        transparent: false,
+        opacity: 1,
+        depthWrite: true,
+        emissive: new THREE.Color(OCC[r.occ].hex),
+        emissiveIntensity: r.occ !== 'inuse' ? .12 : 0
+      });
+      // 薄板代替平面：有厚度才有边界感，俯视时房间分隔一眼可辨
+      withEdgeShade(mat, Math.max(r.w - 0.5, 0.15), Math.max(r.d - 0.5, 0.15));
+      const tile = new THREE.Mesh(tileGeo, mat);
+      // 内缩 0.34：房间之间留出可见缝隙，深色楼板透出来 → 每个房间成了独立块体
+      tile.scale.set(Math.max(r.w - 0.5, 0.15), TILE_H, Math.max(r.d - 0.5, 0.15));
+      tile.position.set(r.cx, TILE_H / 2 + 0.01, r.cz);
+      tile.userData.room = r;
+      tile.userData.isTile = true;
+      tile.userData.baseOpacity = 1;
+      tile.userData.baseColor = mat.color.clone();
+      tile.userData.baseY = TILE_H / 2 + 0.01;
+      g.add(tile);
+      r.mesh = tile;
+
+      // 接地阴影：比房间略大一圈，从板下透出柔边
+      // 落影：朝主光反方向偏移一点，边缘软化 —— 房间立刻“离地”
+      const ao = new THREE.Mesh(aoPlaneGeo, aoMatBase.clone());
+      ao.rotation.x = -Math.PI / 2;
+      ao.scale.set(Math.max(r.w + 0.5, 0.4), Math.max(r.d + 0.5, 0.4), 1);
+      ao.position.set(r.cx + 0.34, 0.004, r.cz + 0.3);
+      ao.userData.isAO = true;
+      ao.renderOrder = 1;
+      g.add(ao);
+      r.ao = ao;
+
+      const hw = r.w / 2, hd = r.d / 2;
+      segs.push({ x:r.cx, z:r.cz - hd, sx:r.w, sz:WT });
+      segs.push({ x:r.cx, z:r.cz + hd, sx:r.w, sz:WT });
+      segs.push({ x:r.cx - hw, z:r.cz, sx:WT, sz:r.d });
+      segs.push({ x:r.cx + hw, z:r.cz, sx:WT, sz:r.d });
+    });
+
+    const im = new THREE.InstancedMesh(boxGeo, wallMat, segs.length);
+    const capIm = new THREE.InstancedMesh(boxGeo, capMatBase.clone(), segs.length);
+    const o = new THREE.Object3D();
+    const o2 = new THREE.Object3D();
+    segs.forEach((s, k) => {
+      const sx = Math.max(s.sx, 0.05), sz = Math.max(s.sz, 0.05);
+      o.position.set(s.x, WALL_H / 2, s.z);
+      o.scale.set(sx, WALL_H, sz);
+      o.updateMatrix();
+      im.setMatrixAt(k, o.matrix);
+
+      // 墙顶一条 6cm 亮边，边界立刻清晰
+      o2.position.set(s.x, WALL_H - 0.03, s.z);
+      o2.scale.set(sx + 0.012, 0.06, sz + 0.012);
+      o2.updateMatrix();
+      capIm.setMatrixAt(k, o2.matrix);
+    });
+    im.instanceMatrix.needsUpdate = true;
+    capIm.instanceMatrix.needsUpdate = true;
+    capIm.castShadow = false;
+    g.add(im);
+    g.add(capIm);
+
+    g.userData.mats = { slab:slabMat, edge:edge.material, wall:wallMat, walls:im,
+                        caps:capIm, plinth:plinthMat };
+    b.group.add(g);
+    f.group = g;
+  });
+});
+
+/* =========================================================
+   办公家具：按房间功能摆对应的用具
+   —— 每个房间按类别生成「盒子 / 柱体 / 球体」三类基元，全层共用 3 个
+      InstancedMesh，颜色走 instanceColor：一层几百件家具也只 3 个 draw call。
+   —— 懒构建：只给要显示的那一层生成，切层时才付这一次代价。
+   ========================================================= */
+const FURN_MAT = {
+  box: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.64, metalness:.06, envMapIntensity:.24 }),
+  cyl: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.40, metalness:.30, envMapIntensity:.34 }),
+  sph: new THREE.MeshStandardMaterial({ color:0xffffff, roughness:.92, metalness:0, envMapIntensity:.16 })
+};
+const FURN_GEO = {
+  box: new THREE.BoxGeometry(1, 1, 1),
+  cyl: new THREE.CylinderGeometry(1, 1, 1, 10),
+  sph: new THREE.SphereGeometry(1, 10, 8)
+};
+/* 家具配色：比房间色板低饱和一档 —— 家具是内容，不是色块 */
+const FC = {
+  top:    0xdbcbb0,   // 桌面木色
+  topDk:  0xb99b73,
+  body:   0x93a0ad,   // 桌柜钢灰
+  chair:  0x3d4a58,
+  fab:    0x6d7f92,
+  sofa:   0x54697d,
+  wood:   0x9c7a4e,
+  dark:   0x333c47,
+  metal:  0xb0bac5,
+  screen: 0x1f2b3a,
+  leaf:   0x4d7a44,
+  pot:    0x9a8971,
+  white:  0xeef3f8,
+  red:    0xbf5240,
+  blue:   0x3f6fa8,
+  mat:    0x546a68,
+  equip:  0x53606e,
+  glass:  0x9dc3d8
+};
+const furnDummy = new THREE.Object3D();
+const furnCol = new THREE.Color();
+
+/* 房间能摆多少工位：优先用名称里的「N人」，没有就按面积估 */
+function seatCap(r){
+  const m = /(\d+)\s*人/.exec(`${r.label} ${r.notes || ''}`);
+  return m ? Math.min(Number(m[1]), 60) : 0;
+}
+function localFn(px, pz, ry){
+  const c = Math.cos(ry), s = Math.sin(ry);
+  return (dx, dz) => [px + dx * c - dz * s, pz + dx * s + dz * c];
+}
+
+function buildFurniture(f){
+  if (f.furn) return f.furn;
+  const yb = TILE_H + 0.02;
+  const B = [], C = [], P = [];
+  const box = (x, y, z, sx, sy, sz, col, ry = 0) => B.push([x, y, z, sx, sy, sz, col, ry]);
+  const cyl = (x, y, z, rad, h, col) => C.push([x, y, z, rad, h, col]);
+  const sph = (x, y, z, rad, col, sy = 1) => P.push([x, y, z, rad, col, sy]);
+
+  const plant = (x, z, k = 1) => {
+    cyl(x, yb, z, 0.24 * k, 0.34 * k, FC.pot);
+    sph(x, yb + 0.62 * k, z, 0.36 * k, FC.leaf, 1.05);
+    sph(x + 0.16 * k, yb + 0.80 * k, z - 0.12 * k, 0.24 * k, 0x5f8d4b, 1.0);
+  };
+  const chair = (x, z, ry = 0, col = FC.chair) => {
+    const L = localFn(x, z, ry);
+    let p = L(0, 0);
+    box(p[0], yb + 0.38, p[1], 0.48, 0.09, 0.46, col, ry);
+    p = L(0, -0.21);
+    box(p[0], yb + 0.42, p[1], 0.48, 0.50, 0.08, col, ry);
+    p = L(0, 0.01);
+    cyl(p[0], yb + 0.18, p[1], 0.05, 0.36, FC.metal);
+  };
+  const desk = (x, z, ry = 0, w = 1.55, d = 0.74, person = true, screen = true) => {
+    const L = localFn(x, z, ry);
+    let p = L(0, 0);
+    box(p[0], yb + 0.70, p[1], w, 0.07, d, FC.top, ry);
+    p = L(w * 0.31, 0);
+    box(p[0], yb + 0.34, p[1], 0.44, 0.66, d * 0.84, FC.body, ry);   // 侧柜
+    if (screen){
+      p = L(0, -d * 0.30);
+      box(p[0], yb + 0.84, p[1], Math.min(0.52, w * 0.42), 0.32, 0.04, FC.screen, ry);
+    }
+    if (person){
+      p = L(0, d * 0.86);
+      chair(p[0], p[1], ry + Math.PI);
+    }
+  };
+  const sofa = (x, z, ry = 0, w = 1.9) => {
+    const L = localFn(x, z, ry);
+    let p = L(0, 0);
+    box(p[0], yb + 0.20, p[1], w, 0.42, 0.78, FC.sofa, ry);            // 座
+    p = L(0, -0.34);
+    box(p[0], yb + 0.56, p[1], w, 0.68, 0.16, FC.sofa, ry);            // 靠背
+    p = L(-w / 2 + 0.08, 0);
+    box(p[0], yb + 0.34, p[1], 0.18, 0.44, 0.76, FC.fab, ry);          // 扶手
+    p = L(w / 2 - 0.08, 0);
+    box(p[0], yb + 0.34, p[1], 0.18, 0.44, 0.76, FC.fab, ry);
+  };
+  const lowTable = (x, z, w = 1.5, d = 0.8) => {
+    box(x, yb + 0.40, z, w, 0.07, d, FC.wood);
+    cyl(x, yb, z, 0.10, 0.40, FC.dark);
+  };
+  const cabinet = (x, z, ry = 0, w = 2.2, h = 1.35, d = 0.46) =>
+    box(x, yb, z, w, h, d, FC.body, ry);
+
+  f.rooms.forEach(r => {
+    const iw = r.w - 0.62, id = r.d - 0.62;
+    if (iw < 0.9 || id < 0.9) return;
+    const cx = r.cx, cz = r.cz;
+    const cat = r.cat;
+    const area = iw * id;
+
+    if (cat === 'office' || cat === 'exec' || cat === 'party'){
+      /* 个人办公室：只摆一套办公桌椅（按领导办公室布置）。
+         之前按「N人」铺工位网格，一层几百张桌子既看不出是单间，也吃帧率；
+         单间就该是一张桌子 + 一把椅子，在房间里的位置还得像有人用：
+         桌子靠里侧偏窗，椅子在桌前，背后留出走动空间。 */
+      const dw = Math.min(Math.max(iw * 0.46, 1.5), 3.0);
+      const dd = Math.min(Math.max(id * 0.30, 0.66), 1.1);
+      const dxx = cx + iw * 0.06;
+      const dzz = cz + id * 0.04;
+      box(dxx, yb + 0.74, dzz, dw, 0.10, dd, FC.topDk);                  // 台面
+      box(dxx, yb + 0.34, dzz, dw * 0.90, 0.68, dd * 0.62, FC.wood);     // 台身
+      box(dxx, yb + 0.02, dzz, dw * 0.34, 0.68, dd * 0.30, FC.dark);     // 挡板
+      chair(dxx, dzz + dd * 0.92, Math.PI, 0x2f3945);                    // 一把椅子
+      if (cat === 'party'){
+        // 党群活动室：除桌椅外保留一面宣传板（不是家具，是房间功能标识）
+        box(cx, yb, r.z + 0.42, Math.min(iw * 0.6, 3.0), 1.9, 0.14, FC.red, 0);
+      }
+    } else if (cat === 'open'){
+      // 开放办公：长条工位岛，两排对坐。岛数与每岛座位数都按面积收敛，
+      // 否则一整层开放办公会生成上千件家具，软件渲染下帧率直接掉一半
+      const nSeat = Math.min(24, seatCap(r) || Math.round(area / 6));
+      const perIsland = Math.max(2, Math.min(4, Math.round(iw / 3.4)));
+      const islands = Math.max(1, Math.ceil(nSeat / (perIsland * 2)));
+      const cols = Math.max(1, Math.min(islands, Math.round(Math.sqrt(islands * (iw / id)) + 0.4)));
+      const irows = Math.ceil(islands / cols);
+      const island = Math.min((iw - 1.6) / cols - 1.2, 7.2);
+      const stepX = (iw - 0.6) / cols, stepZ = (id - 1.2) / Math.max(1, irows);
+      for (let i = 0; i < irows; i++){
+        for (let j = 0; j < cols; j++){
+          if (i * cols + j >= islands) break;
+          const bx = r.x + 0.3 + stepX * (j + 0.5);
+          const bz = r.z + 0.6 + stepZ * (i + 0.5);
+          box(bx, yb + 0.70, bz, island, 0.08, 1.05, FC.top);
+          box(bx, yb + 0.30, bz, island * 0.92, 0.62, 0.16, FC.body);
+          const per = Math.max(2, Math.round(island / 1.7));
+          for (let q = 0; q < per; q++){
+            const dx = -island / 2 + 0.85 + (island - 1.7) / Math.max(1, per - 1) * q;
+            box(bx + dx, yb + 0.84, bz - 0.36, 0.46, 0.30, 0.04, FC.screen);
+            chair(bx + dx, bz + 0.86, Math.PI);
+            if (per > 2) chair(bx + dx, bz - 0.86, 0);
+          }
+        }
+      }
+      if (area > 40) plant(r.x + 0.9, r.z + 0.9, 1.1);
+    } else if (cat === 'meeting'){
+      // 会议室：长桌 + 一圈椅子 + 侧墙投屏
+      const tw = Math.min(iw * 0.62, 4.6), td = Math.min(id * 0.44, 1.7);
+      box(cx, yb + 0.72, cz, tw, 0.08, td, FC.top);
+      box(cx, yb + 0.36, cz, tw * 0.25, 0.70, td * 0.5, FC.wood);
+      const nSide = Math.max(2, Math.floor(tw / 1.05));
+      for (let i = 0; i < nSide; i++){
+        const dx = -tw / 2 + 0.52 + (tw - 1.04) / Math.max(1, nSide - 1) * i;
+        chair(cx + dx, cz + td / 2 + 0.62, Math.PI);
+        chair(cx + dx, cz - td / 2 - 0.62, 0);
+      }
+      if (td > 2.1){ chair(cx - tw / 2 - 0.62, cz, Math.PI / 2); }
+      // 投屏（贴北墙）
+      box(cx, yb + 1.15, r.z + 0.42, Math.min(tw * 0.8, 2.6), 1.15, 0.07, FC.screen);
+      if (area > 20) plant(r.x + 0.8, r.z + 0.8, 0.9);
+    } else if (cat === 'front'){
+      // 前台 / 大厅：接待台 + 背景墙 + 等候沙发
+      const w2 = Math.min(iw * 0.45, 4.2);
+      box(cx, yb + 1.02, cz + id * 0.10, w2, 0.10, 0.95, FC.white);
+      box(cx, yb + 0.50, cz + id * 0.10, w2 * 0.96, 1.00, 0.80, 0x8b7a63);
+      box(cx, yb + 1.06, r.z + 0.42, Math.min(iw * 0.55, 5.0), 1.9, 0.10, FC.blue);
+      sofa(cx - iw * 0.28, cz + id * 0.30, Math.PI, Math.min(iw * 0.28, 2.4));
+      sofa(cx + iw * 0.28, cz + id * 0.30, Math.PI, Math.min(iw * 0.28, 2.4));
+      lowTable(cx, cz + id * 0.22, 1.5, 0.9);
+      plant(r.x + 0.85, r.z + 0.85, 1.2);
+      plant(r.x + r.w - 0.85, r.z + 0.85, 1.2);
+    } else if (cat === 'dining'){
+      // 餐厅：圆桌 + 四椅 + 备餐台
+      const n = Math.max(1, Math.min(8, Math.floor(area / 13)));
+      const cols = Math.max(1, Math.round(Math.sqrt(n)));
+      for (let i = 0; i < n; i++){
+        const gx = cx + ((i % cols) - (cols - 1) / 2) * Math.min(iw / cols, 3.4);
+        const gz = cz + (Math.floor(i / cols) - 0.5) * Math.min(id / 2, 3.2);
+        cyl(gx, yb + 0.70, gz, 0.78, 0.08, FC.top);
+        cyl(gx, yb, gz, 0.09, 0.70, FC.dark);
+        chair(gx - 0.95, gz, Math.PI / 2); chair(gx + 0.95, gz, -Math.PI / 2);
+        chair(gx, gz - 0.95, 0); chair(gx, gz + 0.95, Math.PI);
+      }
+      box(cx, yb, r.z + 0.5, Math.min(iw * 0.7, 4), 0.92, 0.6, FC.metal);
+    } else if (cat === 'guest'){
+      // 客房：床 + 床头柜 + 书桌 + 行李凳
+      const bw = Math.min(iw * 0.5, 1.85), bd = Math.min(id * 0.55, 2.15);
+      const bx = cx - iw * 0.12, bz = cz + id * 0.08;
+      box(bx, yb + 0.28, bz, bw, 0.34, bd, 0x6d5b46);                       // 床架
+      box(bx, yb + 0.48, bz, bw - 0.10, 0.22, bd - 0.10, 0xf0efe8);         // 床垫
+      box(bx, yb + 0.62, bz - bd * 0.34, bw - 0.24, 0.16, 0.52, 0xdfe6ee);  // 枕头区
+      box(bx, yb + 0.02, bz, bw, 1.02, 0.12, 0x7d6a52);                     // 床头板
+      box(bx - bw / 2 - 0.42, yb, bz - bd * 0.4, 0.52, 0.5, 0.42, FC.wood);  // 床头柜
+      box(bx + bw / 2 + 0.42, yb, bz - bd * 0.4, 0.52, 0.5, 0.42, FC.wood);
+      if (iw > 4.5) desk(cx + iw * 0.28, cz + id * 0.35, 0, 1.3, 0.62, true, false);
+      box(cx, yb, cz + id * 0.44, Math.min(iw * 0.35, 1.2), 0.42, 0.5, FC.fab);
+    } else if (cat === 'fitness'){
+      // 康体：跑步机 + 动感单车 + 哑铃架 + 垫子 + 镜面墙
+      const nT = Math.max(1, Math.min(3, Math.floor(iw / 3.2)));
+      for (let i = 0; i < nT; i++){
+        const tx = cx - ((nT - 1) * 3.2) / 2 + i * 3.2, tz = cz - id * 0.18;
+        box(tx, yb + 0.16, tz, 1.05, 0.30, 2.1, FC.equip);                 // 机座
+        box(tx, yb + 0.34, tz + 0.25, 0.80, 0.06, 1.5, 0x24292f);          // 跑带
+        box(tx, yb + 0.62, tz - 0.95, 0.10, 0.95, 0.10, FC.metal);         // 立柱
+        box(tx, yb + 1.10, tz - 0.95, 0.86, 0.34, 0.16, FC.dark);          // 控制台
+        box(tx, yb + 0.86, tz - 0.88, 0.9, 0.06, 0.10, FC.metal);          // 扶手
+      }
+      // 单车
+      const bkx = cx + iw * 0.28, bkz = cz + id * 0.12;
+      box(bkx, yb + 0.10, bkz, 1.0, 0.20, 0.42, FC.dark);
+      box(bkx, yb + 0.52, bkz, 0.34, 0.34, 0.30, FC.equip);
+      box(bkx, yb + 0.78, bkz + 0.28, 0.12, 0.55, 0.12, FC.metal);
+      // 哑铃架
+      box(cx - iw * 0.30, yb, cz + id * 0.34, 2.0, 0.55, 0.5, FC.equip);
+      for (let i = 0; i < 5; i++) cyl(cx - iw * 0.30 - 0.8 + i * 0.4, yb + 0.58, cz + id * 0.34, 0.11, 0.22, FC.metal);
+      // 镜面墙 + 地垫
+      box(cx, yb + 1.1, r.z + 0.40, Math.min(iw * 0.8, 4.6), 1.5, 0.06, FC.glass);
+      box(cx, yb - 0.01, cz + id * 0.30, Math.min(iw * 0.6, 3.2), 0.05, 1.4, FC.mat);
+    } else if (cat === 'welfare'){
+      // 员工福利：休息沙发 + 茶几 + 储物柜 + 绿植
+      sofa(cx - iw * 0.2, cz + id * 0.2, Math.PI, Math.min(iw * 0.34, 2.2));
+      sofa(cx + iw * 0.24, cz - id * 0.1, Math.PI / 2, Math.min(id * 0.4, 2.0));
+      lowTable(cx, cz + id * 0.12, 1.4, 0.8);
+      box(cx, yb, r.z + 0.5, Math.min(iw * 0.8, 4.0), 1.6, 0.42, FC.body);   // 储物柜
+      plant(r.x + 0.85, r.z + 0.85, 1.0);
+    } else if (cat === 'archive'){
+      // 档案室：密集架成排
+      const rows = Math.max(1, Math.floor((id - 0.4) / 1.5));
+      const sw = Math.min(iw - 0.4, 6);
+      for (let i = 0; i < rows; i++){
+        const sz = cz - ((rows - 1) * 1.5) / 2 + i * 1.5;
+        box(cx, yb, sz, sw, 1.85, 0.62, 0x7f8a96);
+        box(cx, yb + 1.86, sz, sw + 0.08, 0.10, 0.68, 0x606b77);
+      }
+    } else if (cat === 'support'){
+      // 配套 / 机房：机柜阵列 + 空调 + 货箱。
+      // 库房常是又窄又长的整条，机柜要沿长轴排，否则全挤在中间
+      const along = id > iw * 1.6 ? 'z' : 'x';
+      const len = along === 'z' ? id : iw;
+      const n = Math.max(2, Math.min(8, Math.floor(len / 1.5)));
+      for (let i = 0; i < n; i++){
+        const t = len * (0.12 + 0.76 * i / Math.max(1, n - 1)) - len / 2;
+        const rx = along === 'z' ? cx : r.x + len / 2 + t;
+        const rz = along === 'z' ? r.z + len / 2 + t : cz;
+        box(rx, yb, rz, 0.95, 2.0, 0.85, 0x39424e);
+        box(rx, yb + 0.35, rz + 0.45, 0.75, 0.06, 0.04, 0x4f8fd6);   // 状态灯带
+        box(rx, yb + 0.55, rz + 0.45, 0.75, 0.06, 0.04, 0x4f8fd6);
+        box(rx, yb + 1.60, rz + 0.45, 0.75, 0.06, 0.04, 0x6fbf8f);
+      }
+      box(cx, yb + 1.0, r.z + 0.42, 1.1, 1.2, 0.5, 0xd7dce2);          // 壁挂空调
+      box(cx + iw * 0.32, yb, cz + id * 0.3, 0.8, 0.7, 0.8, 0xa08b6c); // 货箱
+      box(cx - iw * 0.30, yb, cz - id * 0.3, 0.9, 0.55, 0.7, 0xb5a184); // 第二个货箱
+    } else if (cat === 'stair'){
+      // 楼梯：踏步沿 z 上升，一眼读出「这是竖向交通」
+      const n = Math.max(4, Math.min(12, Math.floor(id / 0.42)));
+      const sw = Math.min(iw * 0.8, 1.6);
+      for (let i = 0; i < n; i++){
+        box(cx, yb, r.z + 0.4 + i * 0.42, sw, 0.10 + i * 0.13, 0.42, 0xdfe6ee);
+      }
+    } else if (cat === 'lift'){
+      // 电梯：轿厢地面 + 两扇门
+      box(cx, yb - 0.01, cz, Math.max(iw - 0.3, 0.4), 0.04, Math.max(id - 0.3, 0.4), 0x9aa6b3);
+      box(cx - Math.max(iw - 0.3, 0.4) / 4 - 0.02, yb, cz + id * 0.42, Math.max(iw - 0.3, 0.4) / 2 - 0.04, 1.4, 0.06, FC.metal);
+      box(cx + Math.max(iw - 0.3, 0.4) / 4 + 0.02, yb, cz + id * 0.42, Math.max(iw - 0.3, 0.4) / 2 - 0.04, 1.4, 0.06, FC.metal);
+    } else if (cat === 'wc'){
+      // 卫生间：隔间 + 台盆
+      const n = Math.max(2, Math.min(4, Math.floor(iw / 1.0)));
+      for (let i = 0; i < n; i++){
+        const sx = r.x + 0.5 + i * ((iw - 0.4) / n);
+        box(sx, yb, r.z + 0.9, 0.06, 1.25, 1.1, 0xdfe7ee);
+        box(sx, yb, r.z + 1.45, (iw - 0.4) / n, 1.25, 0.06, 0xdfe7ee);
+      }
+      box(cx, yb + 0.78, cz + id * 0.32, Math.min(iw * 0.7, 2.4), 0.12, 0.42, FC.white);
+    }
+  });
+
+  /* 打包成 3 个 InstancedMesh */
+  const grp = new THREE.Group();
+  grp.name = 'furniture';
+  const packs = [['box', B], ['cyl', C], ['sph', P]];
+  packs.forEach(([k, arr]) => {
+    if (!arr.length) return;
+    const im = new THREE.InstancedMesh(FURN_GEO[k], FURN_MAT[k], arr.length);
+    arr.forEach((a, i) => {
+      if (k === 'box'){
+        furnDummy.position.set(a[0], a[1] + a[4] / 2, a[2]);
+        furnDummy.rotation.set(0, a[7], 0);
+        furnDummy.scale.set(Math.max(a[3], 0.01), Math.max(a[4], 0.01), Math.max(a[5], 0.01));
+      } else if (k === 'cyl'){
+        furnDummy.position.set(a[0], a[1] + a[4] / 2, a[2]);
+        furnDummy.rotation.set(0, 0, 0);
+        furnDummy.scale.set(Math.max(a[3], 0.01), Math.max(a[4], 0.01), Math.max(a[3], 0.01));
+      } else {
+        furnDummy.position.set(a[0], a[1], a[2]);
+        furnDummy.rotation.set(0, 0, 0);
+        furnDummy.scale.set(a[3], a[3] * a[5], a[3]);
+      }
+      furnDummy.updateMatrix();
+      im.setMatrixAt(i, furnDummy.matrix);
+      im.setColorAt(i, furnCol.setHex(k === 'sph' ? a[4] : a[k === 'cyl' ? 5 : 6]));
+    });
+    im.instanceMatrix.needsUpdate = true;
+    if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    im.frustumCulled = false;     // 一层的家具分布在整个楼板，包围盒没必要重算
+    grp.add(im);
+  });
+  f.group.add(grp);
+  f.furn = grp;
+  return grp;
+}
+
+/* =========================================================
+   建筑外观：玻璃幕墙 + 屋顶
+   —— 一面幕墙只用 1 个平面，横梃/竖梃/层间实心带全部在着色器里画。
+      3 个 draw call 换一整套幕墙细节，比堆几何体便宜得多。
+   —— 玻璃用 Fresnel：正视近乎透明（能看见室内），掠射接近镜面。
+      这正是真玻璃的读法，也是「像真楼」的关键。
+   ========================================================= */
+const FACADE_VERT = `
+  varying vec2 vUv;
+  varying vec3 vWorld;
+  void main(){
+    vUv = uv;
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorld = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+
+const FACADE_FRAG = `
+  precision highp float;
+  uniform float uPitch;      // 楼层间距（世界单位）
+  uniform float uCols;       // 竖肋数量
+  uniform float uSpandrel;
+  uniform vec3  uGlass;      // 玻璃基色（照片实测 #0d1128 附近）
+  uniform vec3  uFin;        // 竖肋金属色（照片实测近白 #eef4f4）
+  uniform float uInterior;
+  uniform vec3  uSunDir;
+  uniform vec3  uSkyLo;      // 地平线天空色
+  uniform vec3  uSkyHi;      // 天顶天空色
+  varying vec2 vUv;
+  varying vec3 vWorld;
+
+  void main(){
+    vec3 N = normalize(cross(dFdx(vWorld), dFdy(vWorld)));
+    vec3 V = normalize(cameraPosition - vWorld);
+    float facing = abs(dot(V, N));
+
+    // 面方向光：照片里两面亮度差 3 倍以上（L=35 vs 111），这是体量的来源
+    float ndl = max(dot(N, normalize(uSunDir)), 0.0);
+    // 照片里背光面 L=35、受光面 L=111，明暗比 3:1 → 环境底噪必须压得很低。
+    // n^1.25 用 n*n^0.25 的多项式近似，避免满屏 pow
+    float n2 = ndl * ndl;
+    float ndl125 = ndl * (0.75 + 0.25 * n2) * (0.5 + 0.5 * ndl) + 0.25 * n2;
+    ndl125 = clamp(ndl125, 0.0, 1.0);
+    float shade = 0.085 + 0.915 * ndl125;
+
+    // 层间带：按世界高度对齐真实楼板
+    float fh = vWorld.y / uPitch;
+    float fy = fract(fh);
+    float spandrel = smoothstep(uSpandrel + 0.02, uSpandrel - 0.02, fy);
+    float slabLine = smoothstep(0.06, 0.0, fy);
+
+    // 密集竖向金属肋：照片中周期稳定 4px，是这座楼最强的识别特征。
+    // 肋只占每格边缘约 28%，中间是深色玻璃槽 —— 覆盖太宽整面就成了金属灰
+    float mx = fract(vUv.x * uCols);
+    float fin = smoothstep(0.215, 0.085, min(mx, 1.0 - mx));
+    float finCore = smoothstep(0.075, 0.03, abs(mx - 0.5));
+
+    // 玻璃反射：深色镀膜玻璃，正视几乎看不见内部，掠射反射天空
+    float f1 = 1.0 - facing;
+    float fres = f1 * f1 * f1;          // (1-facing)^3，避免 pow
+    vec3 R = reflect(-V, N);
+    vec3 sky = mix(uSkyLo, uSkyHi, clamp(R.y * 1.1 + 0.30, 0.0, 1.0));
+
+    vec3 glass = uGlass * shade * (0.55 + 0.45 * facing)
+               + sky * (0.04 + 0.62 * fres) * (0.12 + 0.88 * ndl);
+
+    // 肋面：受光时接近纯白，背光时落成深灰 —— 照片里就是这个全范围交替
+    vec3 finCol = uFin * mix(0.30, 1.0, ndl) * (0.64 + 0.36 * facing);
+
+    vec3 col = mix(glass, finCol * 0.60, spandrel);
+    col = mix(col, finCol * (1.0 + finCore * 0.55), fin);
+    col *= (1.0 - slabLine * 0.45);
+
+    // 镀膜玻璃近乎不透明：留一点室内感即可。原来 0.47 的 alpha
+    // 会让明亮室内透上来，把深色玻璃冲成灰色
+    float a = mix(0.90 - 0.12 * uInterior, 0.99, fres);
+    a = max(a, spandrel * 0.94);
+    a = max(a, fin * 0.99);
+    a = max(a, finCore * 0.99);
+
+    gl_FragColor = vec4(col, a);
+
+    // ShaderMaterial 不会自动接色彩管线：不补这两行，
+    // 线性值会被当成 sRGB 直接显示，整栋发灰发白
+    #include <tonemapping_fragment>
+    #include <colorspace_fragment>
+  }
+`;
+
+/* 照片实测配色：深色镀膜玻璃 + 近白金属肋 + 左浅右深的天空 */
+const PH = {
+  glass:   new THREE.Color(0x5a6474),
+  fin:     new THREE.Color(0xeef4f4),
+  skyLo:   new THREE.Color(0xabcaE6),   // 地平线偏暖浅蓝
+  skyHi:   new THREE.Color(0x2a60ba),   // 天顶深蓝
+  // 太阳放在相机侧后：可见的南面受光、东面落影。
+  // 若光与相机同侧，两个可见面都亮，整栋就没有体量（这是最初的问题）
+  sun:     new THREE.Vector3(0.66, 0.34, -0.62).normalize()
+};
+
+/* 屋顶标识用的徽标：把用户提供的 logo3.png（115×102，纯 #004f99 单色 + 透明底）
+   按 alpha 通道矢量化成路径（外轮廓 75 点 + 竖标 10 点 + 内孔 23 点，容差 0.75px，
+   与原始位图逐像素比对 0.59% 差异，全在边缘一像素内）。
+   矢量的好处：放大到招牌尺寸不出马赛克，且可以整体换成金色。
+   坐标空间 86×85（原图裁掉留白后的紧凑框）。 */
+const LOGO_PATH = 'M2 0L55 0L55 1L60 2L66 8L67 13L68 13L68 47L67 47L66 54L64 55L64 57L62 58L62 60L60 62L58 62L57 64L55 64L53 66L50 66L50 67L36 67L36 66L33 66L33 65L29 64L22 57L22 55L20 53L20 50L19 50L19 44L18 44L19 36L20 36L20 33L21 33L22 29L24 28L24 26L26 24L28 24L32 20L35 20L35 19L38 19L38 18L48 18L48 19L50 19L50 36L48 36L47 34L40 34L40 35L38 35L35 38L35 41L34 41L34 45L35 45L35 48L37 50L39 50L41 52L48 51L51 48L51 46L52 46L52 18L50 16L19 16L19 15L16 15L2 1ZM70 0L86 0L86 84L84 84L73 73L73 71L71 69L71 66L70 66L70 1ZM2 2L14 14L14 16L16 18L16 67L17 67L17 69L19 69L19 70L68 70L68 71L71 71L84 85L12 85L12 84L6 82L4 80L4 78L2 77L1 69L0 69L0 2L1 2Z';
+const LOGO_BOX = { w: 86, h: 85 };
+
+function makeFacadeMaterial(b, floors, sideWidth){
+  // 肋距 3.2 个单位：照片里右立面 11 根肋、周期 4px，换算到本模型约此密度
+  const cols = Math.max(5, Math.round(sideWidth / 3.2));
+  return new THREE.ShaderMaterial({
+    uniforms: {
+      uPitch:    { value: FH + GAP_SOLID },
+      uCols:     { value: cols },
+      uSpandrel: { value: 0.20 },
+      uGlass:    { value: PH.glass.clone() },
+      uFin:      { value: PH.fin.clone() },
+      uInterior: { value: 1.0 },
+      uSunDir:   { value: PH.sun.clone() },
+      uSkyLo:    { value: PH.skyLo.clone() },
+      uSkyHi:    { value: PH.skyHi.clone() }
+    },
+    vertexShader: FACADE_VERT,
+    fragmentShader: FACADE_FRAG,
+    transparent: true,
+    depthWrite: false,
+    side: THREE.FrontSide    // 法线全部朝外，双面渲染等于白付一倍填充
+  });
+}
+
+/* 立面分段建：1–4 层（裙楼）与 5 层以上（塔楼）各一组平面 + 角柱。
+   每组平面都用「单位高度 + 缩放」，层间空隙变化时只改 scale.y，
+   不会像固定高度几何那样在剖切模式下与楼层脱开。
+   分段的意义：体量在 4 层有一处收进，立面必须跟着台阶走，
+   否则幕墙会把八层楼一起罩在一张皮里，退台就看不出来了。 */
+BUILDINGS.forEach(b => {
+  const facade = new THREE.Group();
+  facade.visible = false;
+
+  const planeGeo = new THREE.PlaneGeometry(1, 1);
+  planeGeo.translate(0, 0.5, 0);          // 底边落到 y=0，缩放即总高
+
+  const colMat = new THREE.MeshStandardMaterial({
+    color: 0xb9c8d9, roughness: .35, metalness: .55, envMapIntensity: .7
+  });
+  const colGeo = new THREE.BoxGeometry(0.45, 1, 0.45);
+  colGeo.translate(0, 0.5, 0);
+
+  b.facadeMats = [];
+  b.facadeTiers = [];
+
+  const segs = [];
+  const podN = Math.min(PODIUM_FLOORS, b.floors.length);
+  segs.push({ f0: 0, nF: podN, k: PODIUM_K });
+  if (b.floors.length > PODIUM_FLOORS)
+    segs.push({ f0: PODIUM_FLOORS, nF: b.floors.length - PODIUM_FLOORS, k: TOWER_K });
+  b.towerK = segs[segs.length - 1].k;
+
+  segs.forEach(seg => {
+    const FW = b.FW * seg.k, FD = b.FD * seg.k;
+    // 幕墙离楼板的外皮距离也乘 k：塔楼收窄后若还留 0.30 的皮，立面会比楼板宽出一圈
+    const SK = 0.30 * seg.k;
+    const OX = FW / 2 + SK, OZ = FD / 2 + SK;
+    const tier = { f0: seg.f0, nF: seg.nF, k: seg.k, mats: [], pitch: FH + GAP_SOLID, base: 0, height: FH };
+    [
+      { w: FW + SK * 2, pos: [0, 0, OZ],  rot: [0, 0, 0] },              // 南
+      { w: FW + SK * 2, pos: [0, 0, -OZ], rot: [0, Math.PI, 0] },        // 北
+      { w: FD + SK * 2, pos: [OX, 0, 0],  rot: [0, Math.PI / 2, 0] },    // 东
+      { w: FD + SK * 2, pos: [-OX, 0, 0], rot: [0, -Math.PI / 2, 0] }    // 西
+    ].forEach(sd => {
+      const mat = makeFacadeMaterial(b, seg.nF, sd.w);
+      const m = new THREE.Mesh(planeGeo, mat);
+      m.position.set(sd.pos[0], sd.pos[1], sd.pos[2]);
+      m.rotation.set(sd.rot[0], sd.rot[1], sd.rot[2]);
+      m.scale.set(sd.w, 1, 1);
+      m.renderOrder = 8;
+      m.userData.tier = tier;
+      facade.add(m);
+      tier.mats.push(mat);
+      b.facadeMats.push(mat);
+    });
+    // 转角料：真幕墙都有，也顺手把体量收住
+    [[-OX, -OZ], [OX, -OZ], [OX, OZ], [-OX, OZ]].forEach(([x, z]) => {
+      const c = new THREE.Mesh(colGeo, colMat);
+      c.position.set(x, 0, z);
+      c.userData.tier = tier;
+      facade.add(c);
+    });
+    b.facadeTiers.push(tier);
+  });
+
+  /* 退台挑檐：裙楼顶面外露的一圈薄板 + 塔楼根部一道深色收边。
+     没有这一圈，两段体量会像两个盒子叠着放 */
+  const ledge = new THREE.Group();
+  // 裙楼屋面外挑：只比裙楼楼板多一点，尺寸不再外扩太多，退台的台阶才干净
+  const LW = b.FW * b.podK + 1.1, LD = b.FD * b.podK + 1.1, LT = 0.5, LH = 0.40;
+  const ledgeMat = new THREE.MeshStandardMaterial({
+    color: 0xdfe6ee, roughness: .55, metalness: .18, envMapIntensity: .4
+  });
+  const ledgeEdgeMat = new THREE.MeshStandardMaterial({
+    color: 0x8c9aab, roughness: .7, metalness: .2, envMapIntensity: .3
+  });
+  const addRing = (grp, W, D, T, H2, mat, y) => {
+    [[0, D / 2 - T / 2, W, T], [0, -D / 2 + T / 2, W, T],
+     [-W / 2 + T / 2, 0, T, D - T * 2], [W / 2 - T / 2, 0, T, D - T * 2]]
+      .forEach(([x, z, w, d]) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, H2, d), mat);
+        m.position.set(x, y, z);
+        grp.add(m);
+      });
+  };
+  // 裙楼屋面：退台处不能是空的，否则从外观视角能一眼看进 4 层的高度
+  const podRoofMat = new THREE.MeshStandardMaterial({
+    color: 0x8f99a6, roughness: .88, metalness: .05, envMapIntensity: .2
+  });
+  const podRoof = new THREE.Mesh(new THREE.BoxGeometry(LW - 0.9, 0.34, LD - 0.9), podRoofMat);
+  podRoof.position.y = -0.19;
+  ledge.add(podRoof);
+  addRing(ledge, LW, LD, LT, LH, ledgeMat, 0);
+  addRing(ledge, LW - 0.1, LD - 0.1, LT * 0.7, LH * 0.5, ledgeEdgeMat, -LH * 0.62);
+  ledge.visible = false;
+  b.group.add(ledge);
+  b.ledge = ledge;
+
+  /* 冠部：照片顶部的亮色收头。一条实心带把塔顶压住，
+     比让幕墙直接切齐更像真楼的女儿墙与冠板 */
+  const crown = new THREE.Group();
+  const CW = b.FW * b.towerK + 0.55, CD = b.FD * b.towerK + 0.55;
+  const crownMat = new THREE.MeshStandardMaterial({
+    color: 0xe9edf1, roughness: .62, metalness: .1, envMapIntensity: .35
+  });
+  addRing(crown, CW, CD, 0.52, 2.1, crownMat, 0);
+  const crownCap = new THREE.Mesh(new THREE.BoxGeometry(CW, 0.30, CD), crownMat);
+  crownCap.position.y = 1.02;
+  crown.add(crownCap);
+  crown.visible = false;
+  b.group.add(crown);
+  b.crown = crown;
+
+  b.group.add(facade);
+  b.facade = facade;
+
+  /* ---------- 屋顶：按照片 —— 露天木平台 ----------
+     照片实测：木板缝周期 26~27px（平行等距）、木色 #57442B~#A37B4B、均值 #6C5031；
+     远边缘轮廓三段高度 → 女儿墙 + 一处出屋面房间（机房）。
+     板缝用 canvas 贴图而不是建几何：整片平台几十块板，建 Mesh 是纯浪费。 */
+  const roof = new THREE.Group();
+  // 屋顶落在塔楼顶面：收进后的尺寸，不是裙楼的尺寸
+  const RW = b.FW * b.towerK, RD = b.FD * b.towerK;
+  roof.visible = false;
+  const topY = 0;    // 相对屋顶组原点，整体高度由 refreshBuildingShell 设定
+
+  const roofMat = new THREE.MeshStandardMaterial({
+    color: 0xd6dee9, roughness: .82, metalness: .05, envMapIntensity: .3
+  });
+
+  /* 木地板贴图：横向长板 + 深色板缝 + 每块板的色差 */
+  const deckTex = (function makeDeck(){
+    const c = document.createElement('canvas');
+    c.width = 32; c.height = 512;
+    const g = c.getContext('2d');
+    g.fillStyle = '#6f5334'; g.fillRect(0, 0, 32, 512);
+    // 竖向板缝：一层贴图覆盖 4 块板
+    const planks = 4, pw = 512 / planks;
+    const tons = ['#6f5334', '#7d5f3d', '#614828', '#846443', '#6a4e30', '#775839'];
+    for (let i = 0; i < planks; i++){
+      g.fillStyle = tons[i % tons.length];
+      g.fillRect(i * pw + 1.4, 0, pw - 2.8, 512);
+      // 木纹：几道细线
+      g.strokeStyle = 'rgba(48,32,16,.28)';
+      g.lineWidth = 0.9;
+      for (let k = 0; k < 3; k++){
+        const x = i * pw + 3 + Math.random() * (pw - 8);
+        g.beginPath(); g.moveTo(x, 0); g.lineTo(x + 1.2, 512); g.stroke();
+      }
+      // 板缝
+      g.fillStyle = 'rgba(40,26,12,.85)';
+      g.fillRect(i * pw, 0, 1.4, 512);
+    }
+    const t = new THREE.CanvasTexture(c);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = THREE.SRGBColorSpace;
+    t.anisotropy = 4;
+    return t;
+  })();
+
+  /* 平台基层（石材），四周外露一圈，当作女儿墙内侧的压顶带 */
+  const kerbMat = new THREE.MeshStandardMaterial({
+    color: 0x9d8567, roughness: .88, metalness: .03, envMapIntensity: .2
+  });
+  const baseSlab = new THREE.Mesh(
+    new THREE.BoxGeometry(RW + 1.4, 0.26, RD + 1.4), kerbMat);
+  baseSlab.position.y = topY + 0.13;
+  roof.add(baseSlab);
+
+  /* 木地板面层：比基层内收一圈 */
+  const DECK_W = RW - 1.0, DECK_D = RD - 1.0;
+  const deckMat = new THREE.MeshStandardMaterial({
+    map: deckTex, roughness: .72, metalness: .02, envMapIntensity: .26,
+    color: 0xffffff, emissive: 0x241708, emissiveIntensity: .22
+  });
+  // 板宽：照片里缝距 26px，整幅可见宽度约 400px → 视野内约 15 块。
+  // 模型平台宽 DECK_W，视野约占 0.55 → 目标 板宽 ≈ DECK_W*0.55/(15*4) 每贴图 4 块
+  const plankW = Math.max(0.55, DECK_W * 0.55 / (15 * 4));
+  deckTex.repeat.set(DECK_W / (plankW * 4), 1);
+  deckTex.rotation = 0;
+  const deck = new THREE.Mesh(
+    new THREE.PlaneGeometry(DECK_W, DECK_D), deckMat);
+  deck.rotation.x = -Math.PI / 2;
+  deck.rotation.z = 0;
+  deck.position.y = topY + 0.265;
+  deck.receiveShadow = true;
+  roof.add(deck);
+
+  /* 女儿墙：白色薄墙（照片远边缘那条亮线就是这个） */
+  const PW = RW + 1.4, PD = RD + 1.4, PH2 = 1.05, PT3 = 0.30;
+  const parMat = new THREE.MeshStandardMaterial({
+    color: 0xe8ebee, roughness: .7, metalness: .04, envMapIntensity: .3
+  });
+  [[0, PD / 2 - PT3 / 2, PW, PT3], [0, -PD / 2 + PT3 / 2, PW, PT3],
+   [-PW / 2 + PT3 / 2, 0, PT3, PD - PT3 * 2],
+   [PW / 2 - PT3 / 2, 0, PT3, PD - PT3 * 2]].forEach(([x, z, w, d]) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, PH2, d), parMat);
+    m.position.set(x, topY + 0.26 + PH2 / 2, z);
+    roof.add(m);
+  });
+
+  /* 玻璃栏杆：女儿墙上一道通透护栏，屋顶平台常见，也让边缘读起来更轻 */
+  const railMat = new THREE.MeshStandardMaterial({
+    color: 0xcfe3ee, roughness: .12, metalness: .1, envMapIntensity: .8,
+    transparent: true, opacity: .30
+  });
+  const postMat = new THREE.MeshStandardMaterial({
+    color: 0xb9c2cc, roughness: .32, metalness: .7, envMapIntensity: .6
+  });
+  const RH = 0.62;
+  [[0, PD / 2 - 0.16, PW - 0.4, 0.04], [0, -PD / 2 + 0.16, PW - 0.4, 0.04],
+   [-PW / 2 + 0.16, 0, 0.04, PD - 0.4],
+   [PW / 2 - 0.16, 0, 0.04, PD - 0.4]].forEach(([x, z, w, d]) => {
+    const g2 = new THREE.Mesh(new THREE.BoxGeometry(w, RH, d), railMat);
+    g2.position.set(x, topY + 0.26 + PH2 + RH / 2, z);
+    roof.add(g2);
+  });
+  // 立柱：沿四边等距
+  (function posts(){
+    const n = Math.max(4, Math.round(PW / 5));
+    const geo = new THREE.BoxGeometry(0.09, RH + 0.1, 0.09);
+    const im = new THREE.InstancedMesh(geo, postMat, (n + 1) * 2 + 8);
+    const o = new THREE.Object3D();
+    let k = 0;
+    for (let i = 0; i <= n; i++){
+      const x = -PW / 2 + 0.3 + (PW - 0.6) / n * i;
+      [PD / 2 - 0.16, -PD / 2 + 0.16].forEach(z => {
+        o.position.set(x, topY + 0.26 + PH2 + RH / 2, z);
+        o.updateMatrix(); im.setMatrixAt(k++, o.matrix);
+      });
+    }
+    for (let i = 1; i < 5; i++){
+      const z = -PD / 2 + 0.3 + (PD - 0.6) / 5 * i;
+      [PW / 2 - 0.16, -PW / 2 + 0.16].forEach(x => {
+        o.position.set(x, topY + 0.26 + PH2 + RH / 2, z);
+        o.updateMatrix(); im.setMatrixAt(k++, o.matrix);
+      });
+    }
+    im.count = k;
+    im.instanceMatrix.needsUpdate = true;
+    roof.add(im);
+  })();
+
+  /* 出屋面房间：照片远边缘轮廓有三段不同高度，这一处凸起对应它 */
+  const pentMat = new THREE.MeshStandardMaterial({
+    color: 0xdfe4ea, roughness: .78, metalness: .04, envMapIntensity: .28
+  });
+  const towerFH = b.floors[b.floors.length - 1].h;
+  const pentW = RW * 0.26, pentD = RD * 0.24, pentH = towerFH * 0.80;
+  const pent = new THREE.Mesh(new THREE.BoxGeometry(pentW, pentH, pentD), pentMat);
+  pent.position.set(-RW * 0.22, topY + 0.26 + pentH / 2, -RD * 0.20);
+  roof.add(pent);
+  // 房间压顶
+  const pentCap = new THREE.Mesh(
+    new THREE.BoxGeometry(pentW + 0.5, 0.16, pentD + 0.5), parMat);
+  pentCap.position.set(pent.position.x, topY + 0.26 + pentH + 0.08, pent.position.z);
+  roof.add(pentCap);
+
+  /* 花池 + 灌木 + 木质坐凳：露天平台的生活感靠这三样 */
+  const planterMat = new THREE.MeshStandardMaterial({
+    color: 0x8d7b5f, roughness: .9, metalness: .02, envMapIntensity: .18
+  });
+  const soilMat = new THREE.MeshStandardMaterial({
+    color: 0x3d4a2c, roughness: .98, metalness: 0, envMapIntensity: .1
+  });
+  const bushMat = new THREE.MeshStandardMaterial({
+    color: 0x4e6b36, roughness: .9, metalness: 0, envMapIntensity: .18,
+    emissive: 0x101a08, emissiveIntensity: .4
+  });
+  const benchMat = new THREE.MeshStandardMaterial({
+    color: 0x8a6a44, roughness: .8, metalness: .02, envMapIntensity: .2
+  });
+
+  // 两条长花池沿平台两侧铺开
+  const PX = RW * 0.62, PZ = 2.2;
+  [-1, 1].forEach(sgn => {
+    const px = sgn * RW * 0.14, pz = sgn * RD * 0.30;
+    const box2 = new THREE.Mesh(new THREE.BoxGeometry(PX, 0.7, PZ), planterMat);
+    box2.position.set(px, topY + 0.26 + 0.35, pz);
+    roof.add(box2);
+    const soil = new THREE.Mesh(new THREE.BoxGeometry(PX - 0.2, 0.06, PZ - 0.2), soilMat);
+    soil.position.set(px, topY + 0.26 + 0.70, pz);
+    roof.add(soil);
+    // 灌木：沿花池密排，个头更大
+    const n2 = Math.max(5, Math.round(PX / 3.2));
+    const bushGeo = new THREE.SphereGeometry(0.72, 12, 9);
+    const im = new THREE.InstancedMesh(bushGeo, bushMat, n2);
+    const o2 = new THREE.Object3D();
+    for (let i = 0; i < n2; i++){
+      o2.position.set(px - PX / 2 + 1.4 + (PX - 2.8) / Math.max(1, n2 - 1) * i,
+                      topY + 0.26 + 1.02, pz);
+      const sc = 0.8 + ((i * 37) % 10) / 22;
+      o2.scale.set(sc * 1.15, sc * 0.92, sc);
+      o2.rotation.y = i * 0.7;
+      o2.updateMatrix();
+      im.setMatrixAt(i, o2.matrix);
+    }
+    im.instanceMatrix.needsUpdate = true;
+    roof.add(im);
+  });
+
+  // 木坐凳：两张，对着花池
+  [[-RW * 0.13, RD * 0.06], [RW * 0.16, -RD * 0.02]].forEach(([x, z]) => {
+    const seat = new THREE.Mesh(new THREE.BoxGeometry(9, 0.42, 1.5), benchMat);
+    seat.position.set(x, topY + 0.26 + 0.21, z);
+    roof.add(seat);
+  });
+
+  /* 屋顶设备：两组冷却塔 */
+  const towerGeo = new THREE.CylinderGeometry(1.15, 1.15, 1.4, 18);
+  const towerMat = new THREE.MeshStandardMaterial({
+    color: 0xaab8c9, roughness: .55, metalness: .35, envMapIntensity: .45
+  });
+  [[RW * 0.24, -RD * 0.24], [RW * 0.24, -RD * 0.06]].forEach(([x, z]) => {
+    const t2 = new THREE.Mesh(towerGeo, towerMat);
+    t2.position.set(x, topY + 0.26 + 0.7, z);
+    roof.add(t2);
+  });
+
+  /* 屋顶字标只给主楼（塔楼）建。配楼是四层板楼，屋面进深很小，
+     竖一块「中国东方资产」会把整个平台压满，也不符合真楼的挂字逻辑。 */
+  if (b.id === 'main'){
+    /* ---------- 屋顶标识：徽标 + 「中国东方资产」 ----------
+       组成：左 logo3.png 的矢量轮廓 + 右「中国东方资产」，两者同色。
+       配色按照片 logo1.jpg 实测：图片是 262×125 的摄影件（Vision OCR 无可读文字），
+       亮度直方图在 0.5~0.6 处单峰、非平面填充 → 属「深色底 + 金色字」的牌面。
+         · 亮金主色 #c28b34（占比 16.8%，即字面受光部）
+         · 深古铜底 #412d18（占比 12.5%，即牌面暗部）
+       所以整体走香槟金渐变 + 深古铜底：logo 与字标共用 GOLD_STOPS，
+       颜色严格一致（logo 原稿是单色蓝，此处按用户要求统一成金色）。
+       做法：canvas 只画金色部分（透明底），背后另放一块有厚度的深古铜背板与立架，
+       无光照材质（toneMapped:false）保证不受场景光影响。 */
+    const signCanvas = (function makeSign(){
+      const c = document.createElement('canvas');
+      c.width = 2048; c.height = 340;
+      const g = c.getContext('2d');
+      g.clearRect(0, 0, 2048, 340);
+
+      // 香槟金：与照片 logo1.jpg 的亮金 #c28b34 同族，中间调压在这一档
+      const GOLD_STOPS = [[0,'#f4d894'],[.28,'#e3b45c'],[.56,'#c8842a'],[.80,'#a16518'],[1,'#7f4f10']];
+
+      // 金色渐变：上下各有亮暗，字才有金属厚度而不是一片黄。
+      // 字标与 logo 共用同一组色标，两者的颜色才严格一致
+      const goldOf = (y0, y1, stops) => {
+        const gr = g.createLinearGradient(0, y0, 0, y1);
+        (stops || GOLD_STOPS).forEach(([t, c2]) => gr.addColorStop(t, c2));
+        return gr;
+      };
+
+      const R = 104;                       // 徽标半高（px）：logo 高度取 2R 略多
+      const CH = '中国东方资产'.split('');
+      const fs = 196, gap = 14;
+      const FONT = '"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif';
+      g.font = `bold ${fs}px ${FONT}`;
+      const widths = CH.map(ch => g.measureText(ch).width);
+      const textW = widths.reduce((a, v) => a + v, 0) + gap * (CH.length - 1);
+      const logoW = R * 2.02 * (LOGO_BOX.w / LOGO_BOX.h);
+      const gap2 = 54;                       // logo 与字标之间的呼吸
+      const totalW = logoW + gap2 + textW;
+      const x0 = (2048 - totalW) / 2;
+      const logoCx = x0 + logoW / 2, logoCy = 150;
+
+      /* 徽标：用户上传的 logo3.png，矢量化后用同款金色填充。
+         原图是纯色 #004f99 单色稿，这里不保留原蓝色 —— 按要求「logo 颜色与文字一样」，
+         统一走香槟金竖向渐变，与字标同一组色标，远看是一枚金色标记。 */
+      (function logo(){
+        const LH = R * 2.02;                       // 徽标高≈字号（略高一点，压住字身）
+        const LW = LH * (LOGO_BOX.w / LOGO_BOX.h);
+        const lx = logoCx - LW / 2, ly = logoCy - LH / 2;
+        const sc = LH / LOGO_BOX.h;
+        g.save();
+        g.translate(lx, ly);
+        g.scale(sc, sc);
+        g.fillStyle = goldOf(0, LOGO_BOX.h, GOLD_STOPS);
+        const p2 = new Path2D(LOGO_PATH);
+        g.fill(p2, 'evenodd');
+        g.restore();
+      })();
+
+      /* 字标：香槟金渐变 + 深古铜描边（描边不是为了装饰，
+         浅金压在深底若无描边，缩小后笔画会与底色糊成一片） */
+      let x = x0 + logoW + gap2;
+      g.textAlign = 'left'; g.textBaseline = 'middle';
+      CH.forEach((ch, i) => {
+        g.font = `bold ${fs}px ${FONT}`;
+        g.lineJoin = 'round';
+        g.lineWidth = 7;
+        g.strokeStyle = 'rgba(72,48,16,.75)';
+        g.strokeText(ch, x, 150);
+        g.fillStyle = goldOf(150 - fs * 0.44, 150 + fs * 0.44);
+        g.fillText(ch, x, 150);
+        x += widths[i] + gap;
+      });
+
+      /* 英文副标：同色系、低一档亮度，只作衬托 */
+      g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = 'rgba(198,152,82,.92)';
+      g.font = '600 42px "Helvetica Neue",Arial,sans-serif';
+      const EN = 'CHINA ORIENT ASSET MANAGEMENT';
+      const lw = [...EN].reduce((a, ch) => a + g.measureText(ch).width + 9, 0) - 9;
+      let lx = 1024 - lw / 2;
+      [...EN].forEach(ch => {
+        const w2 = g.measureText(ch).width;
+        g.fillText(ch, lx + w2 / 2, 302);
+        lx += w2 + 9;
+      });
+
+      // 牌面金色细边框：把整块牌子收住，也让「金字 + 暗底」更像成品
+      g.strokeStyle = 'rgba(206,164,96,.55)';
+      g.lineWidth = 4;
+      g.strokeRect(3, 3, 2048 - 6, 340 - 6);
+
+      const t = new THREE.CanvasTexture(c);
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.anisotropy = 4;
+      return t;
+    })();
+
+    const sign = new THREE.Group();
+    // 字标宽度取塔楼面的 46%（不超过 38）：真楼的屋顶字标是「占一段」，不是铺满整条女儿墙
+    // 字标宽度取塔楼立面的 0.56（上限 44）：照片里的屋顶招牌是「占半个立面」的量级，
+    // 太小在整栋视图里只剩一条浅带，认不出字
+    const SIGN_W = Math.min(RW * 0.56, 44), SIGN_H = SIGN_W * (340 / 2048);
+    const signMat = new THREE.MeshBasicMaterial({
+      map: signCanvas, transparent: true, alphaTest: .02,
+      depthWrite: false, toneMapped: false, side: THREE.FrontSide
+    });
+    const signPlane = new THREE.Mesh(new THREE.PlaneGeometry(SIGN_W, SIGN_H), signMat);
+    signPlane.renderOrder = 6;
+    sign.add(signPlane);
+
+    // 背板 + 立架：深古铜（照片牌面暗部 #412d18 → 这里压深一档，才托得住金字）
+    const backMat = new THREE.MeshStandardMaterial({
+      color: 0x241a12, roughness: .58, metalness: .45, envMapIntensity: .35
+    });
+    const signBack = new THREE.Mesh(
+      new THREE.BoxGeometry(SIGN_W * 0.98, SIGN_H * 0.96, 0.12), backMat);
+    signBack.position.z = -0.22;
+    sign.add(signBack);
+    const legGeo = new THREE.BoxGeometry(0.26, 1, 0.26);
+    legGeo.translate(0, 0.5, 0);
+    [-SIGN_W * 0.34, 0, SIGN_W * 0.34].forEach(lx2 => {
+      const leg = new THREE.Mesh(legGeo, backMat);
+      leg.position.set(lx2, -SIGN_H / 2 - 0.55, -0.16);
+      leg.scale.y = SIGN_H / 2 + 0.7;
+      sign.add(leg);
+    });
+
+    // 主牌：朝南（正对主视角），立在女儿墙上沿之上
+    sign.position.set(0, topY + 0.26 + 1.05 + SIGN_H / 2 + 0.55, RD / 2 - 0.35);
+    roof.add(sign);
+    b.roofSign = sign;
+
+    /* 侧立面一块小一点的同样的牌子：从东侧看过去也有标识 */
+    const signE = sign.clone();
+    signE.scale.setScalar(0.72);
+    signE.rotation.y = Math.PI / 2;
+    signE.position.set(RW / 2 - 1.3, topY + 0.26 + 1.05 + SIGN_H * 0.36 + 0.55, -RD * 0.06);
+    roof.add(signE);
+  }
+
+  b.group.add(roof);
+  b.roof = roof;
+
+  /* ---------- 首层基座（石材裙房）＋ 入口雨棚 ＋ 广场 ---------- */
+  const base = new THREE.Group();
+  base.visible = false;
+
+  const stoneMat = new THREE.MeshStandardMaterial({
+    color: 0x9aa6b4, roughness: .78, metalness: .06, envMapIntensity: .28
+  });
+
+  // 裙房：比主体外扩一圈，高约一层半，真楼底部都有更厚重的基座
+  const PFH = floorH(0, b);                 // 裙楼层高：基座、雨棚都按它，别用原始 FH
+  // 基座基准从「原始楼宽」换成「裙楼宽度」：外扩量仍是每边 1.0（总宽 +2.0），
+  // 但基准跟着裙楼收，否则裙楼缩了、基座还按 104 算，会凭空多出两圈宽檐
+  const PBW = b.FW * b.podK, PBD = b.FD * b.podK;
+  const BX = PBW + 2.0, BZ = PBD + 2.0, BH = PFH * 1.05;   // 基座比一层略高，才有厚重的「座」
+  const pod = new THREE.Mesh(
+    new THREE.BoxGeometry(BX, BH, BZ), stoneMat);
+  pod.position.y = BH / 2 - 0.1;
+  base.add(pod);
+
+  // 石材分缝：竖向浅槽，避免裙房是一整块灰。
+  // 用实例化：每个立面三十多条缝，逐个建 Mesh 会白吃几十个 draw call。
+  const grooveMat = new THREE.MeshStandardMaterial({
+    color: 0x7d8896, roughness: .85, metalness: .04
+  });
+  const gCount = Math.round(BX / 3.2);
+  const gIm = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(0.22, BH * 0.92, 0.22), grooveMat, (gCount + 1) * 2);
+  const go = new THREE.Object3D();
+  let gi = 0;
+  for (let i = 0; i <= gCount; i++){
+    const gx = -BX / 2 + (BX / gCount) * i;
+    [BZ / 2 + 0.02, -BZ / 2 - 0.02].forEach(z => {
+      go.position.set(gx, BH / 2 - 0.1, z);
+      go.updateMatrix();
+      gIm.setMatrixAt(gi++, go.matrix);
+    });
+  }
+  gIm.instanceMatrix.needsUpdate = true;
+  base.add(gIm);
+
+  // 入口雨棚（南立面正中）
+  const canW = Math.min(PBW * 0.34, 26), canD = 4.2;
+  const canopy = new THREE.Mesh(
+    new THREE.BoxGeometry(canW, 0.34, canD),
+    new THREE.MeshStandardMaterial({ color:0xdfe6ee, roughness:.4, metalness:.35, envMapIntensity:.5 })
+  );
+  canopy.position.set(0, PFH * 0.88, BZ / 2 + canD / 2 - 0.4);
+  base.add(canopy);
+  // 雨棚下两颗细柱
+  const postGeo = new THREE.CylinderGeometry(0.16, 0.16, PFH * 0.88, 10);
+  [-canW / 2 + 1.2, canW / 2 - 1.2].forEach(x => {
+    const post = new THREE.Mesh(postGeo, stoneMat);
+    post.position.set(x, PFH * 0.44, BZ / 2 + canD - 0.8);
+    base.add(post);
+  });
+
+  // 广场：一块大而薄的地坪，只作落地参照
+  // 照片里建筑底部被绿植遮挡 → 地坪取橄榄绿，比灰地更接近实景
+  const plaza = new THREE.Mesh(
+    new THREE.PlaneGeometry(PBW + 10, PBD + 10),
+    new THREE.MeshStandardMaterial({
+      color: 0x8a9068, roughness: .96, metalness: 0, envMapIntensity: .12
+    })
+  );
+  plaza.rotation.x = -Math.PI / 2;
+  plaza.position.y = -1.0;
+  base.add(plaza);
+
+  b.group.add(base);
+  b.base = base;
+});
+
+const selLines = new THREE.Group();
+world.add(selLines);
+const selMat = new THREE.LineBasicMaterial({ color:0x1f57cc, transparent:true, opacity:.95 });
+
+/* =========================================================
+   状态
+   ========================================================= */
+const state = {
+  mode:'one',
+  bi:0,
+  fi:0,
+  selected:null,
+  dimCat:null,
+  spread:0,
+  target:0,
+  facade:'solid',   // solid=外观（真实幕墙）, xray=剖切（看清楼层）
+  gap:GAP_SOLID,    // 当前层间空隙，随 facade 插值
+  liftT:0,
+  hoverFi:-1,      // 整栋模式下鼠标悬停的楼层：浮起并高亮
+  hoverT:0
+};
+
+const curB = () => BUILDINGS[state.bi];
+const curF = () => curB().floors[state.fi];
+
+/* 外壳（幕墙 + 屋顶）随楼层总高刷新 */
+function refreshBuildingShell(b){
+  // 逐段累加：塔楼层高被抬高，各段的 pitch / 起始高度 / 总高都不再是「层数 × 同一定值」
+  let y = 0;
+  b.facadeTiers.forEach(t => {
+    t.pitch = b.floors[t.f0].h + state.gap;
+    t.base = y;
+    t.height = t.nF * t.pitch;
+    y += t.height;
+  });
+  if (b.facade){
+    b.facade.children.forEach(c => {
+      const t = c.userData.tier;
+      if (!t) return;
+      c.scale.y = t.height;
+      c.position.y = t.base;
+    });
+  }
+  if (b.facadeTiers) b.facadeTiers.forEach(t =>
+    t.mats.forEach(mt => { mt.uniforms.uPitch.value = t.pitch; }));
+  if (b.ledge){
+    b.ledge.position.y = floorY(Math.min(PODIUM_FLOORS, b.floors.length), 1, b) - 0.03;
+    b.ledge.visible = !!(b.facade && b.facade.visible);
+  }
+  if (b.crown){
+    b.crown.position.y = towerH(b) - 1.05;
+    b.crown.visible = !!(b.facade && b.facade.visible);
+  }
+  if (b.roof) b.roof.position.y = towerH(b) + 0.02;
+}
+
+/* 层位置：累加每层真实层高（塔楼更高），不能再用 i × 定值 */
+function floorY(i, spread, b){
+  b = b || curB();
+  let y = 0;
+  const g = state.gap;
+  for (let k = 0; k < i && k < b.floors.length; k++) y += b.floors[k].h + g;
+  return y * spread;
+}
+function towerH(b){
+  let y = 0;
+  const g = state.gap;
+  b.floors.forEach(f => { y += f.h + g; });
+  return Math.max(FH, y - g);
+}
+
+/* ---------- 可见性 ---------- */
+function applyVisibility(){
+  const b = curB();
+  const all = state.mode === 'all';
+  const solid = all && state.facade === 'solid';
+
+  b.floors.forEach((f, i) => {
+    const isSel = i === state.fi;
+    const vis = all || isSel;
+    f.group.visible = vis;
+    const m = f.group.userData.mats;
+    const dim = all && !isSel;
+
+    // 外观模式：室内压暗但不隐藏 —— 透过玻璃隐约看到楼层，才像有人用的真楼
+    const dimK = solid ? 0.42 : 0.84;
+    m.slab.color.copy(SLAB_BASE).lerp(SLAB_DARK, dim ? 0.55 : (solid ? 0.30 : 0));
+    if (f.group.userData.plinthGroup) f.group.userData.plinthGroup.visible = all ? isSel && !solid : true;
+    m.edge.opacity = isSel ? 0.92 : (solid ? 0.18 : 0.4);
+    m.walls.visible = all ? isSel && !solid : true;
+    m.caps.visible = all ? isSel && !solid : true;
+    if (f.group.userData.mullions) f.group.userData.mullions.visible = !all;
+
+    if (f.group.userData.glassFrame) f.group.userData.glassFrame.visible = all && !solid;
+    if (f.group.userData.tag) f.group.userData.tag.visible = false;
+    if (f.group.userData.strip) f.group.userData.strip.visible = all && !solid && !isSel;
+
+    // 家具只在「看清这一层」时出现：整栋（外观/剖切）一律隐藏，
+    // 一来那个尺度下家具只有几像素，二来省掉每层几百个实例的绘制
+    if (vis && !all && !solid){
+      buildFurniture(f).visible = true;
+    } else if (f.furn){
+      f.furn.visible = false;
+    }
+
+    const hK = 0.945 + 0.055 * (i / Math.max(1, b.floors.length - 1));
+    f.rooms.forEach(r => {
+      r.mesh.visible = true;
+      tintRoom(r, dim ? dimK * hK : (solid ? 0.86 : 1));
+      if (r.ao) r.ao.visible = !all || (isSel && !solid);
+    });
+  });
+
+  // 其他楼栋整体隐藏；外壳只在当前楼栋的外观模式出现
+  BUILDINGS.forEach((bb, i) => {
+    bb.group.visible = i === state.bi;
+    if (bb.cornerEdge) bb.cornerEdge.visible = all && !solid && i === state.bi;
+    if (bb.facade) bb.facade.visible = solid && i === state.bi;
+    if (bb.roof) bb.roof.visible = solid && i === state.bi;
+    if (bb.base) bb.base.visible = solid && i === state.bi;
+    if (bb.ledge) bb.ledge.visible = solid && i === state.bi;
+    if (bb.crown) bb.crown.visible = solid && i === state.bi;
+  });
+
+  if (b.facadeMats) b.facadeMats.forEach(mt => {
+    mt.uniforms.uInterior.value = solid ? 1.0 : 0.0;
+  });
+
+  // 外壳高度必须每次模式切换都同步：只看 gap 是否变化会漏掉
+  // 「首次进入整栋时 gap 已经是目标值」的情况，幕墙会停在 scale.y=1 的一条细片上
+  BUILDINGS.forEach(bb => refreshBuildingShell(bb));
+
+
+  // 外观模式换成照片的黄昏天空；幕墙的天空反射由着色器解析计算，不依赖穹顶
+  document.body.classList.toggle('sky-real', solid);
+  if (solid){
+    key.color.setHex(0xfff2dc);
+    key.intensity = 3.4;
+    key.position.set(92, 46, -84);
+    fill.intensity = 0.20;
+    rim.intensity = 0.30;
+  } else {
+    key.color.setHex(0xfff6ea);
+    key.intensity = 3.1;
+    key.position.set(34, 62, 46);
+    fill.intensity = 0.42;
+    rim.intensity = 0.62;
+  }
+
+  // 整栋概览关掉环境贴图：全屏面积下这次采样很贵，而视觉上分辨不出
+  scene.environment = all ? null : ENV_TEX;
+}
+
+/* =========================================================
+   标签
+   ========================================================= */
+const labelsEl = document.getElementById('labels');
+let labelItems = [];
+function buildLabels(){
+  labelsEl.innerHTML = '';
+  labelItems = [];
+  if (state.mode === 'all') return;
+  const f = curF();
+  f.rooms.forEach(r => {
+    if (state.dimCat && r.cat !== state.dimCat && r !== state.selected) return;
+    const el = document.createElement('div');
+    el.className = 'lbl' + (r.w < 3.2 ? ' sm' : '');
+    const txt = (r.no ? r.no + ' ' : '') + r.label;
+    el.textContent = txt.length > 12 ? txt.slice(0, 11) + '…' : txt;
+    labelsEl.appendChild(el);
+    labelItems.push({ el, room:r });
+  });
+}
+const v3 = new THREE.Vector3();
+const vL = new THREE.Vector3();
+const vR = new THREE.Vector3();
+function updateLabels(){
+  if (!labelItems.length) return;
+  const w = window.innerWidth, h = window.innerHeight;
+  const yBase = state.mode === 'all' ? floorY(state.fi, state.spread) : 0;
+  const yL = yBase + WALL_H + 0.45;   // 标签贴在房间墙上，与层高无关
+  labelItems.forEach(it => {
+    const r = it.room;
+    v3.set(r.cx, yL, r.cz).project(camera);
+    if (v3.z > 1){ it.el.style.display = 'none'; return; }
+    // 投影出房间在屏幕上的宽度，太小则隐藏（放大后自动出现）
+    vL.set(r.x, yL, r.cz).project(camera);
+    vR.set(r.x + r.w, yL, r.cz).project(camera);
+    const pxW = Math.abs(vR.x - vL.x) * 0.5 * w;
+    if (r !== state.selected && pxW < 21){ it.el.style.display = 'none'; return; }
+    it.el.style.display = '';
+    it.el.classList.toggle('sm', pxW < 40);
+    it.el.style.transform = `translate(-50%,-50%) translate(${(v3.x*.5+.5)*w}px,${(-v3.y*.5+.5)*h}px)`;
+  });
+}
+
+/* =========================================================
+   取景
+   ========================================================= */
+const probe = new THREE.PerspectiveCamera(40, 1, 0.1, 3000);
+function visibleBox(pad){
+  const W = window.innerWidth, H = window.innerHeight;
+  let l = pad;
+  if (W > 900){
+    const sr = document.getElementById('side').getBoundingClientRect().right;
+    l = Math.min(sr + 12, W * 0.42) + pad;
+  }
+  let r = W - pad;
+  const dEl = document.getElementById('detail');
+  if (W > 900 && dEl.classList.contains('show')) r = W - pad - dEl.getBoundingClientRect().width - 26;
+  return { l, r, t:pad, b:H - pad, W, H };
+}
+function bboxPx(cam, corners){
+  const W = window.innerWidth, H = window.innerHeight;
+  let minx = 1e9, maxx = -1e9, miny = 1e9, maxy = -1e9;
+  for (const c of corners){
+    const v = c.clone().project(cam);
+    const px = (v.x * .5 + .5) * W, py = (-v.y * .5 + .5) * H;
+    minx = Math.min(minx, px); maxx = Math.max(maxx, px);
+    miny = Math.min(miny, py); maxy = Math.max(maxy, py);
+  }
+  return { minx, maxx, miny, maxy, cx:(minx + maxx) / 2, cy:(miny + maxy) / 2 };
+}
+function solveView(target, dir, corners, pad){
+  const vb = visibleBox(pad);
+  let ox = -((vb.l + vb.r) / 2 - vb.W / 2), oy = 0, dist = 40;
+
+  // 二分求「刚好装下」的距离（在当前视锥偏移下）
+  const fitDist = () => {
+    probe.fov = camera.fov;
+    probe.aspect = vb.W / vb.H;
+    probe.setViewOffset(vb.W, vb.H, ox, oy, vb.W, vb.H);
+    probe.updateProjectionMatrix();
+    let lo = 4, hi = 3000;
+    for (let i = 0; i < 52; i++){
+      const mid = (lo + hi) / 2;
+      probe.position.copy(target).addScaledVector(dir, mid);
+      probe.lookAt(target);
+      probe.updateMatrixWorld(true);
+      const b = bboxPx(probe, corners);
+      if (b.minx >= vb.l && b.maxx <= vb.r && b.miny >= vb.t && b.maxy <= vb.b) hi = mid; else lo = mid;
+    }
+    return hi;
+  };
+
+  for (let pass = 0; pass < 8; pass++){
+    dist = fitDist();
+    probe.position.copy(target).addScaledVector(dir, dist);
+    probe.lookAt(target);
+    probe.updateMatrixWorld(true);
+    const b = bboxPx(probe, corners);
+    const dx = b.cx - (vb.l + vb.r) / 2, dy = b.cy - (vb.t + vb.b) / 2;
+    if (Math.abs(dx) < 1.0 && Math.abs(dy) < 1.0) break;
+    ox += dx; oy += dy;
+  }
+
+  // 保险：溢出时把距离放大。放大后内容会向「整幅画面中心」收缩，
+  // 而可见区中心被视锥偏移推到了别处 → 必须重新居中，
+  // 否则内容整体偏到一侧（屋顶视图曾因此被面板压住半幅）
+  for (let guard = 0; guard < 3; guard++){
+    probe.position.copy(target).addScaledVector(dir, dist);
+    probe.lookAt(target);
+    probe.updateMatrixWorld(true);
+    const b = bboxPx(probe, corners);
+    const overW = Math.max(
+      (vb.l - b.minx) / (vb.r - vb.l),
+      (b.maxx - vb.r) / (vb.r - vb.l),
+      (vb.t - b.miny) / (vb.b - vb.t),
+      (b.maxy - vb.b) / (vb.b - vb.t)
+    );
+    if (overW <= 0.001) break;
+    dist *= 1 + overW * 1.05;
+
+    // 放大后重新居中，再进入下一轮判断
+    for (let k = 0; k < 4; k++){
+      probe.position.copy(target).addScaledVector(dir, dist);
+      probe.lookAt(target);
+      probe.updateMatrixWorld(true);
+      const b2 = bboxPx(probe, corners);
+      const dx2 = b2.cx - (vb.l + vb.r) / 2, dy2 = b2.cy - (vb.t + vb.b) / 2;
+      if (Math.abs(dx2) < 1.0 && Math.abs(dy2) < 1.0) break;
+      ox += dx2; oy += dy2;
+      probe.setViewOffset(vb.W, vb.H, ox, oy, vb.W, vb.H);
+      probe.updateProjectionMatrix();
+    }
+  }
+  return { dist, ox, oy };
+}
+function applyOffsets(ox, oy){
+  const W = window.innerWidth, H = window.innerHeight;
+  if (Math.abs(ox) > .5 || Math.abs(oy) > .5) camera.setViewOffset(W, H, ox, oy, W, H);
+  else camera.clearViewOffset();
+  camera.updateProjectionMatrix();
+}
+
+const DIR_3D = new THREE.Vector3(0.64, 0.54, 0.6).normalize();
+const DIR_PLAN = new THREE.Vector3(0, 1, 0.2).normalize();
+const DIR_TOWER = new THREE.Vector3(0.56, 0.34, 0.76).normalize();   // 剖切专用：低视角突出立面
+// 外观专用：更低的机位、更贴近照片的仰视角度（照片是地面仰拍）
+// 抬高到 0.30：照片是地面仰拍看不到顶，但用户要看屋顶平台，得给一点俯角
+const DIR_REAL = new THREE.Vector3(0.72, 0.30, 0.62).normalize();
+const desired = { target:new THREE.Vector3(), dist:50, on:false };
+
+function frame(){
+  const b = curB();
+  let corners, target, dir;
+  if (state.mode === 'all'){
+    dir = state.facade === 'solid' ? DIR_REAL : DIR_TOWER;
+    const H = towerH(b);
+    target = new THREE.Vector3(0, H * 0.5, 0);
+    // 角点要含裙房外扩、雨棚与屋顶字标，否则取景会把边缘和招牌切掉
+    // 角点按「基座外沿」取：裙楼缩窄后仍按 b.FW 留边，画面两侧会白出一大块
+    const TX = b.FW * b.podK / 2 + 2.0, TZ = b.FD * b.podK / 2 + 3.6;
+    corners = [];
+    // 上限要含悬停浮起量（1.5）+ 屋顶招牌。只有主楼有招牌；
+    // 配楼若也按 11.5 留余量，四层板楼会被压成画面下方一条，上面全是天空
+    const upPad = b.id === 'main' ? 11.5 : 2.6;
+    for (const x of [-TX, TX]) for (const z of [-TZ, TZ])
+      for (const y of [-1.2, H + upPad]) corners.push(new THREE.Vector3(x, y, z));
+  } else {
+    dir = state.mode === 'plan' ? DIR_PLAN : DIR_3D;
+    target = new THREE.Vector3(0, FH * 0.3, 0);
+    // 单层模式按「本层」尺寸取景：5 层以上收进以后，仍用裙楼尺寸会把楼层挤成一小块
+    const cf = b.floors[state.fi] || b.floors[0];
+    const OX = cf.FW / 2 + 1.0, OZ = cf.FD / 2 + 1.0;
+    corners = [];
+    for (const x of [-OX, OX]) for (const y of [-0.9, WALL_H]) for (const z of [-OZ, OZ])
+      corners.push(new THREE.Vector3(x, y, z));
+  }
+  const sol = solveView(target, dir, corners, state.mode === 'plan' ? 44 : 46);
+  applyOffsets(sol.ox, sol.oy);
+  desired.target.copy(target);
+  desired.dist = sol.dist;
+  desired.on = true;
+}
+
+/* =========================================================
+   侧栏：楼栋 / 楼层 / 图例 / 统计
+   ========================================================= */
+const bldgTabsEl = document.getElementById('bldgTabs');
+BUILDINGS.forEach((b, i) => {
+  const n = b.floors.reduce((a, f) => a + f.rooms.length, 0);
+  const btn = document.createElement('button');
+  btn.dataset.bi = i;
+  btn.innerHTML = `<b>${b.name}</b><span>${b.floors.length}F · ${n} 间</span>`;
+  btn.onclick = () => gotoBuilding(i);
+  bldgTabsEl.appendChild(btn);
+});
+
+const floorListEl = document.getElementById('floorList');
+function buildFloorList(){
+  floorListEl.innerHTML = '';
+  const b = curB();
+  b.floors.slice().reverse().forEach((f, k) => {
+    const i = b.floors.length - 1 - k;
+    const btn = document.createElement('button');
+    btn.className = 'fitem';
+    btn.dataset.fi = i;
+    const SKIP = { stair:1, lift:1, wc:1 };
+    const top = f.rooms.filter(r => !SKIP[r.cat])
+      .slice().sort((a, c) => c.frac - a.frac)
+      .map(r => r.label).filter(Boolean);
+    const uniq = [...new Set(top)].filter(x => x && x !== '未标注');
+    const vacN = f.rooms.filter(r => r.occ !== 'inuse').length;
+
+    // mini 构成条：把本层房间按 x 顺序压成一条色带，一行就是该层的剖面
+    const sorted = f.rooms.slice().sort((a, c) => a.nx - c.nx);
+    const span = Math.max(...sorted.map(r => r.nx + r.nw), 1);
+    const mini = sorted.map(r => {
+      const pct = Math.max((r.nw / span) * 100, 0.6);
+      const col = catInfo(r.cat).c.toString(16).padStart(6, '0');
+      return `<i style="width:${pct.toFixed(2)}%;background:#${col}"></i>`;
+    }).join('');
+
+    btn.innerHTML = `<span class="row1"><span class="tag">${f.tag}</span><span class="nm">${
+      uniq.slice(0, 2).join(' / ') || f.short
+    }</span>${vacN ? `<span class="vnum" title="空置 / 待腾退">${vacN}</span>` : ''}<span class="ct">${f.rooms.length}</span></span><span class="mini">${mini}</span>`;
+    btn.onclick = () => gotoFloor(i);
+    floorListEl.appendChild(btn);
+  });
+}
+function syncList(){
+  floorListEl.querySelectorAll('.fitem').forEach(b => {
+    b.classList.toggle('on', Number(b.dataset.fi) === state.fi);
+  });
+  const on = floorListEl.querySelector('.fitem.on');
+  if (on) on.scrollIntoView({ block:'nearest' });
+  bldgTabsEl.querySelectorAll('button').forEach(b => b.classList.toggle('on', Number(b.dataset.bi) === state.bi));
+}
+
+/* 当前面板按需重建（切层、切楼栋、改选中后调用） */
+function refreshPane(){
+  if (curPane === 'rooms') buildRoomPane();
+  else if (curPane === 'vacant') buildVacantPane();
+  else if (curPane === 'mnt') buildMntPane();
+  // 角标不受面板切换影响，任何面板下都要是最新值（切楼栋后尤其容易残留旧数）
+  updateVacBadge();
+  updateMntBadge();
+}
+
+const legendEl = document.getElementById('legend');
+function buildLegend(){
+  legendEl.innerHTML = '';
+  const b = curB();
+  const cnt = {};
+  b.floors.forEach(f => f.rooms.forEach(r => cnt[r.cat] = (cnt[r.cat] || 0) + 1));
+  Object.keys(CAT).filter(k => cnt[k]).forEach(k => {
+    const d = document.createElement('div');
+    d.className = 'lg' + (state.dimCat && state.dimCat !== k ? ' off' : '');
+    d.dataset.cat = k;
+    d.innerHTML = `<i style="background:#${CAT[k].c.toString(16).padStart(6, '0')}"></i>${CAT[k].label}`;
+    d.onclick = () => {
+      state.dimCat = state.dimCat === k ? null : k;
+      // 当前层没有该类房间时，自动跳到第一个含该类的楼层
+      if (state.dimCat && !curF().rooms.some(r => r.cat === k)){
+        const target = b.floors.findIndex(f => f.rooms.some(r => r.cat === k));
+        if (target >= 0){
+          state.fi = target;
+          clearSelection(true);
+          applyVisibility();
+          buildLabels();
+          frame();
+        }
+      }
+      b.floors.forEach(f => f.rooms.forEach(r => {
+        const on = !state.dimCat || r.cat === state.dimCat || r === state.selected;
+        tintRoom(r, on ? 1 : 0.05);
+        r.mesh.userData.pickable = on;
+      }));
+      buildLegend();
+      buildLabels();
+    };
+    legendEl.appendChild(d);
+  });
+
+  // 家具说明：房间里的桌椅/器材只在单层视图出现，写一句免得以为是漏做
+  const note = document.createElement('div');
+  note.className = 'lg-note';
+  note.textContent = '每间房已按功能摆好家具：个人办公室只留一套办公桌椅，会议室长桌、健身房器材、档案架、机柜等各按其用，仅在单层与平面视图显示。';
+  legendEl.appendChild(note);
+}
+
+function buildStats(){
+  const b = curB();
+  const all = b.floors.flatMap(f => f.rooms);
+  const cnt = {};
+  all.forEach(r => cnt[r.cat] = (cnt[r.cat] || 0) + 1);
+  const vacN = all.filter(r => r.occ !== 'inuse').length;
+  const officeAll = all.filter(r => !NON_OCCUPIABLE[r.cat]).length;
+  const rate = officeAll ? (vacN / officeAll * 100).toFixed(0) : '0';
+  const mntN = all.filter(r => canMaintain(r) && mntState(r) !== 'none').length;
+  // 面积汇总：只统计有依据的（实测 + 折算），未登记的不计入，也不假装有数
+  let sumArea = 0, nReal = 0, nEst = 0;
+  all.forEach(r => {
+    const a = areaOf(r);
+    if (!a) return;
+    sumArea += a.v;
+    if (a.est) nEst++; else nReal++;
+  });
+  const areaTxt = sumArea >= 10000
+    ? (sumArea / 10000).toFixed(2) + ' 万'
+    : Math.round(sumArea).toLocaleString('zh-CN');
+  updateVacBadge();
+  updateMntBadge();
+  document.getElementById('stats').innerHTML = `
+    <div class="st"><b>${b.floors.length}</b><span>${b.name}楼层</span></div>
+    <div class="st"><b>${all.length}</b><span>空间单元</span></div>
+    <div class="st"><b style="color:#1f7d52">${vacN}</b><span>空置 / 待腾退</span></div>
+    <div class="st"><b style="color:${mntN ? '#b8432c' : 'inherit'}">${mntN}</b><span>维护中</span></div>
+    <div class="st" style="grid-column:1/-1;border-top:1px solid rgba(200,214,232,.55);padding-top:7px">
+      <b>${areaTxt}<span style="font-size:10px;font-weight:400;color:var(--ink3)"> ㎡</span></b>
+      <span>已登记面积${nEst ? `（含 ${nEst} 间折算）` : ''} · 覆盖 ${nReal + nEst}/${all.length}</span>
+    </div>`;
+  // 托盘收起时的那行摘要：类别数 / 空间 / 空置 / 维护 / 面积
+  const traySum = document.getElementById('traySum');
+  if (traySum){
+    traySum.textContent = `${Object.keys(cnt).length} 类 · ${all.length} 空间 · 空 ${vacN} · 修 ${mntN} · ${areaTxt}㎡`;
+  }
+  const total = BUILDINGS.reduce((a, x) => a + x.floors.reduce((c, f) => c + f.rooms.length, 0), 0);
+  document.getElementById('brandSub').textContent = BUILDINGS.length > 1
+    ? BUILDINGS.map(x => `${x.name} ${x.floors.length}F`).join(' + ') + ` · 共 ${total} 个空间`
+    : `${b.name} · ${b.floors.length} 层 · ${all.length} 个空间`;
+  document.getElementById('tagName').textContent = b.name;
+  document.getElementById('tagSub').textContent = `${b.floors.length} 层 · ${all.length} 个空间`;
+  document.getElementById('logo').innerHTML = b.name.replace(/^(.{2}).*$/, '$1<br>') || '楼层';
+  // 地面柔影只做「落地」暗示，别做成一整片地坪：
+  // 太宽的话低视角时它会撑出画面下缘，把取景顶到边界
+  groundMesh.scale.set(b.FW * b.podK + 16, b.FD * b.podK + 14, 1);
+  groundMesh.position.y = -1.05;
+}
+
+/* =========================================================
+   三标签面板：楼层 / 本层房间 / 空置房源
+   ========================================================= */
+let curPane = 'floors';
+function setPane(name){
+  curPane = name;
+  document.querySelectorAll('#paneTabs button').forEach(b =>
+    b.classList.toggle('on', b.dataset.pane === name));
+  const map = { floors:'paneFloors', rooms:'paneRooms', vacant:'paneVacant', mnt:'paneMnt' };
+  Object.entries(map).forEach(([k, id]) => {
+    document.getElementById(id).classList.toggle('on', k === name);
+  });
+  if (name === 'rooms') buildRoomPane();
+  if (name === 'vacant') buildVacantPane();
+  if (name === 'mnt') buildMntPane();
+}
+document.getElementById('paneTabs').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b) setPane(b.dataset.pane);
+});
+
+function noKey(r){
+  const m = String(r.no || '').match(/^(\d+)/);
+  return m ? parseInt(m[1], 10) : 9999;
+}
+/* 房号自然序；无房号的按名称排在后面 */
+function byNo(a, c){
+  const na = noKey(a), nc = noKey(c);
+  if (na !== nc) return na - nc;
+  return String(a.label).localeCompare(String(c.label), 'zh');
+}
+function occLabel(r){
+  const o = OCC[r.occ];
+  if (r.occ === 'inuse') return '';
+  return `<span class="bdg ${r.occ}">${o.label}</span>`;
+}
+
+/* --- 本层房间清单 --- */
+function buildRoomPane(){
+  const f = curF();
+  const head = document.getElementById('roomHead');
+  const list = document.getElementById('roomList');
+  const rooms = f.rooms.slice().sort(byNo);
+  const vacantN = rooms.filter(r => r.occ !== 'inuse').length;
+
+  const mntN = rooms.filter(r => canMaintain(r) && mntState(r) !== 'none').length;
+  head.innerHTML = `<b>${f.tag}</b> ${rooms.length} 间`
+    + (vacantN ? `<span class="badge-inline">${vacantN} 处空置</span>` : '')
+    + (mntN ? `<span class="badge-inline" style="color:#b8432c;background:rgba(214,84,64,.12)">${mntN} 处维护</span>` : '')
+    + `<span class="sp">按房号排序</span>`;
+
+  renderAreaBar();
+
+  list.innerHTML = rooms.map(r => {
+    const cat = catInfo(r.cat);
+    const sel = state.selected === r ? ' on' : '';
+    const ar = areaOf(r);
+    const st = canMaintain(r) ? mntState(r) : 'none';
+    const mntCls = st !== 'none' ? ' mnt' : '';
+    return `<div class="rm${sel}${mntCls}" data-bi="${r.bi}" data-fi="${r.fi}" data-ri="${r.ri}">
+      <span class="sw" style="background:#${cat.c.toString(16).padStart(6, '0')}"></span>
+      <span class="no">${r.no || '—'}</span>
+      <span class="nm">${escHtml(r.label)}${
+        r.person && r.person !== r.label ? `<em class="sub"> · ${escHtml(r.person)}</em>` : ''
+      }</span>
+      ${hasRoomOvr(r) ? '<span class="edot" title="资料已修改"></span>' : ''}
+      ${st !== 'none' ? `<span class="wrench" title="${MNT_STATUS[st].label}">${activeRecs(r).length}</span>` : ''}
+      ${occLabel(r)}
+      <span class="ar${ar ? (ar.est ? ' est' : '') : ' none'}">${ar ? fmtArea(ar) : '—'}</span>
+    </div>`;
+  }).join('');
+
+  list.querySelectorAll('.rm').forEach(el => {
+    const getRoom = () => FLOORS_AT(+el.dataset.bi, +el.dataset.fi).rooms[+el.dataset.ri];
+    el.onclick = () => {
+      const r = getRoom();
+      if (!r) return;
+      state.fi = r.fi;
+      syncList();
+      applyVisibility();
+      buildLabels();
+      selectRoom(r, true);
+      markRoomRow(r);
+    };
+    // 双击直接进编辑：改人员时少一次点击
+    el.ondblclick = () => {
+      const r = getRoom();
+      if (!r) return;
+      el.click();
+      editingRoom = r;
+      renderEditForm(r);
+      const form = document.getElementById('dEditForm');
+      if (form) form.scrollIntoView({ block: 'nearest' });
+    };
+    el.title = '单击查看 · 双击编辑资料';
+  });
+}
+
+/* 本层面积合计：设一次，本层没填面积的房间就按占比折算 */
+function renderAreaBar(){
+  const pane = document.getElementById('paneRooms');
+  if (!pane) return;
+  let bar = document.getElementById('areaBar');
+  if (!bar){
+    bar = document.createElement('div');
+    bar.id = 'areaBar';
+    bar.className = 'areabar';
+    pane.insertBefore(bar, pane.querySelector('.rmhead').nextSibling);
+  }
+  const b = curB(), f = curF();
+  const total = floorTotal(b, f);
+  const st = floorAreaStat(b, f);
+  const known = st.real + st.est;
+  const cov = Math.round(known / Math.max(1, f.rooms.length) * 100);
+  bar.innerHTML = `面积合计
+    <input id="floorAreaInput" type="number" step="1" min="0" inputmode="decimal"
+      value="${total != null ? total : ''}" placeholder="未设" />㎡
+    <span class="cov">已登记 <b>${known}</b>/${f.rooms.length} · ${cov}%</span>`;
+
+  const inp = bar.querySelector('#floorAreaInput');
+  inp.onchange = () => {
+    setFloorTotal(b, f, inp.value);
+    buildRoomPane();
+    if (state.selected) showDetail(state.selected);
+    buildStats();
+  };
+  inp.onkeydown = e => { if (e.key === 'Enter') inp.blur(); };
+}
+
+function FLOORS_AT(bi, fi){ return BUILDINGS[bi].floors[fi]; }
+function markRoomRow(r){
+  document.querySelectorAll('#roomList .rm').forEach(el => {
+    el.classList.toggle('on',
+      +el.dataset.bi === r.bi && +el.dataset.fi === r.fi && +el.dataset.ri === r.ri);
+  });
+  const on = document.querySelector('#roomList .rm.on');
+  if (on) on.scrollIntoView({ block:'nearest' });
+}
+
+/* --- 空置房源（当前楼栋全部楼层） --- */
+function vacantOf(b){
+  const out = { vacant:[], pending:[], borrowed:[] };
+  b.floors.forEach(f => f.rooms.forEach(r => {
+    if (r.occ !== 'inuse' && out[r.occ]) out[r.occ].push(r);
+  }));
+  return out;
+}
+function buildVacantPane(){
+  const b = curB();
+  const v = vacantOf(b);
+  const total = v.vacant.length + v.pending.length + v.borrowed.length;
+  const officeAll = b.floors.flatMap(f => f.rooms).filter(r => !NON_OCCUPIABLE[r.cat]).length;
+  const rate = officeAll ? (total / officeAll * 100).toFixed(1) : '0.0';
+  document.getElementById('vacBadge').textContent = total;
+  document.getElementById('vacBadge').style.background = total ? '#2f9e6b' : '#b6c3d2';
+
+  const list = document.getElementById('vacantList');
+  if (!total){
+    list.innerHTML = `<div class="vempty">${b.name} 暂无空置或待腾退的办公房间</div>`;
+    return;
+  }
+
+  const html = [];
+  html.push(`<div class="rmhead"><b>${b.name}</b> 空置 ${total} 间
+    <span class="sp">占办公 ${rate}%</span></div>`);
+
+  ['vacant', 'pending', 'borrowed'].forEach(k => {
+    const arr = v[k];
+    if (!arr.length) return;
+    const o = OCC[k];
+    html.push(`<div class="vgh"><i style="background:${o.c}"></i>${o.label}<span>${arr.length}</span></div>`);
+    arr.sort((x, y) => x.fi - y.fi || byNo(x, y)).forEach(r => {
+      const f = b.floors[r.fi];
+      html.push(`<div class="rm" data-bi="${r.bi}" data-fi="${r.fi}" data-ri="${r.ri}">
+        <span class="sw" style="background:${o.c}"></span>
+        <span class="no">${f.tag}</span>
+        <span class="nm">${r.no ? r.no + ' ' : ''}${r.label}${
+          (() => {
+            const n = (r.notes || '').replace(/\s+/g, '');
+            const l = String(r.label).replace(/\s+/g, '');
+            if (!n || n === l || n.includes(l) || l.includes(n)) return '';
+            return '<em class="sub"> · ' + r.notes + '</em>';
+          })()
+        }</span>
+        <span class="pc">${(r.frac * 100).toFixed(1)}%</span>
+      </div>`);
+    });
+  });
+  list.innerHTML = html.join('');
+
+  list.querySelectorAll('.rm').forEach(el => {
+    el.onclick = () => {
+      const r = FLOORS_AT(+el.dataset.bi, +el.dataset.fi).rooms[+el.dataset.ri];
+      if (r) gotoRoom(r);
+    };
+  });
+}
+
+/* --- 维护面板（当前楼栋全部有记录的房间） --- */
+function buildMntPane(){
+  const b = curB();
+  const list = document.getElementById('mntList');
+  const buckets = { open: [], doing: [], done: [] };
+
+  b.floors.forEach(f => f.rooms.forEach(r => {
+    if (!canMaintain(r)) return;
+    const recs = recsOf(r);
+    if (!recs.length) return;
+    const active = recs.filter(x => x.status !== 'done');
+    if (active.some(x => x.status === 'open')) buckets.open.push(r);
+    else if (active.length) buckets.doing.push(r);
+    else buckets.done.push(r);
+  }));
+
+  const total = buckets.open.length + buckets.doing.length + buckets.done.length;
+  if (!total){
+    list.innerHTML = `<div class="vempty">${b.name} 暂无维护记录<br>
+      <span style="font-size:10px">点击任意会议室或办公室，在详情卡里「＋ 报修」</span></div>`;
+    return;
+  }
+
+  const html = [];
+  html.push(`<div class="rmhead"><b>${b.name}</b> ${total} 间有记录
+    <span class="sp">已保存至服务器</span>
+    <button id="mntExport" title="导出本楼栋维护记录 JSON"
+      style="border:1px solid rgba(176,196,222,.8);background:rgba(255,255,255,.9);
+             font-family:inherit;font-size:9.5px;color:#5a6c83;border-radius:5px;
+             padding:1px 5px;cursor:pointer;margin-left:4px">导出</button></div>`);
+
+  [['open', '待处理'], ['doing', '维修中'], ['done', '已完成']].forEach(([k, label]) => {
+    const arr = buckets[k];
+    if (!arr.length) return;
+    const st = MNT_STATUS[k];
+    html.push(`<div class="vgh"><i style="background:${st.c}"></i>${label}<span>${arr.length}</span></div>`);
+    arr.sort((x, y) => x.fi - y.fi || byNo(x, y)).forEach(r => {
+      const f = b.floors[r.fi];
+      const recs = recsOf(r).filter(x => (k === 'done' ? x.status === 'done' : x.status !== 'done'));
+      const latest = recs.slice().sort((x, y) => y.createdAt - x.createdAt)[0];
+      html.push(`<div class="rm ${k !== 'done' ? 'mnt' : ''}" data-bi="${r.bi}" data-fi="${r.fi}" data-ri="${r.ri}">
+        <span class="sw" style="background:${st.c}"></span>
+        <span class="no">${f.tag}</span>
+        <span class="nm">${r.no ? r.no + ' ' : ''}${r.label}<em class="sub"> · ${latest.type}</em></span>
+        <span class="wrench">${recs.length}</span>
+      </div>`);
+    });
+  });
+
+  list.innerHTML = html.join('');
+  list.querySelectorAll('.rm').forEach(el => {
+    el.onclick = () => {
+      const r = FLOORS_AT(+el.dataset.bi, +el.dataset.fi).rooms[+el.dataset.ri];
+      if (!r) return;
+      gotoRoom(r);
+    };
+  });
+
+  const exp = list.querySelector('#mntExport');
+  if (exp) exp.onclick = e => { e.stopPropagation(); exportMnt(b); };
+}
+
+/* 导出当前楼栋的维护记录：台账要能拿出去，不能只留在这台机器上 */
+function exportMnt(b){
+  const rows = [];
+  b.floors.forEach(f => f.rooms.forEach(r => {
+    recsOf(r).forEach(rec => {
+      rows.push({
+        楼栋: b.name, 楼层: f.tag, 房号: r.no || '', 房间: r.label,
+        功能: catInfo(r.cat).label, 使用人: r.person || '',
+        面积: (() => { const a = areaOf(r); return a ? (a.est ? '≈' : '') + a.v : ''; })(),
+        类型: rec.type, 事项: rec.title, 状态: MNT_STATUS[rec.status].label,
+        报修人: rec.who || '', 说明: rec.note || '',
+        报修时间: new Date(rec.createdAt).toLocaleString('zh-CN'),
+        更新时间: new Date(rec.updatedAt).toLocaleString('zh-CN')
+      });
+    });
+  }));
+  // 改过资料的房间单独列一段：人员变动靠这个留档
+  const edited = [];
+  b.floors.forEach(f => f.rooms.forEach(r => {
+    if (!hasRoomOvr(r)) return;
+    const o = ROOM_OVR[r.uid];
+    const chg = (o.history || []).flatMap(h => h.changes.map(c => ({
+      时间: new Date(h.at).toLocaleString('zh-CN'),
+      修改人: h.by || '',
+      字段: FIELD_LABEL[c.field] || c.field,
+      原值: c.from, 新值: c.to
+    })));
+    edited.push({
+      楼栋: b.name, 楼层: f.tag, 房号: r.no || '', 房间: r.label,
+      功能: catInfo(r.cat).label, 使用人: r.person || '', 部门: r.dept || '',
+      备注: r.notes || '',
+      面积: (() => { const a = areaOf(r); return a ? (a.est ? '≈' : '') + a.v : ''; })(),
+      面积来源: (() => { const a = areaOf(r); return a ? (a.est ? '折算' : '实测/录入') : '未登记'; })(),
+      原始房间名: r.orig.label, 原始使用人: r.orig.person || '',
+      变更记录: chg
+    });
+  }));
+
+  const payload = {
+    导出时间: new Date().toLocaleString('zh-CN'),
+    楼栋: b.name,
+    维护记录数: rows.length,
+    维护记录: rows,
+    资料修改房间数: edited.length,
+    资料修改: edited
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `房间台账_${b.name}_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+/* =========================================================
+   详情
+   ========================================================= */
+const detailEl = document.getElementById('detail');
+function showDetail(r){
+  const b = BUILDINGS[r.bi];
+  const f = b.floors[r.fi];
+  const cat = catInfo(r.cat);
+  const chip = document.getElementById('dChip');
+  chip.querySelector('i').style.background = '#' + cat.c.toString(16).padStart(6, '0');
+  chip.querySelector('span').textContent = cat.label;
+  document.getElementById('dNo').textContent =
+    `${b.name} · ${f.tag}${r.no ? ' · 房间 ' + r.no : ''}`;
+  const nameEl = document.getElementById('dName');
+  nameEl.innerHTML = escHtml(r.label || '未命名')
+    + (hasRoomOvr(r) ? '<span class="edited" title="资料已修改">已修改</span>' : '');
+  const subs = [];
+  if (r.person && r.person !== r.label) subs.push(r.person);
+  if (r.notes) subs.push(r.notes);
+  if (!subs.length && r.dept && r.dept !== r.label) subs.push(r.dept);
+  if (!subs.length && r.label !== cat.label) subs.push(cat.label);
+  document.getElementById('dSub').textContent = subs.join(' · ') || f.short;
+
+  const rows = [
+    ['所在楼层', /^[一二三四五六七八九十]+层$/.test(f.short) ? `${b.name} ${f.tag}` : `${b.name} ${f.tag}　${f.short}`],
+    ['功能类别', cat.label],
+    ['所在方位', r.dir]
+  ];
+  if (r.person && r.person !== r.label) rows.push(['使用人', r.person]);
+  if (r.dept && r.dept !== r.label && r.dept !== r.person) rows.push(['部门', r.dept]);
+  const ar = areaOf(r);
+  rows.push(['面积', ar
+    ? fmtArea(ar) + (ar.est ? '<span style="font-weight:400;color:#9aabbd;font-size:10px">（折算）</span>' : '')
+    : '<span style="color:#a9b6c5;font-weight:400">未登记</span>']);
+  if (r.notes) rows.push(['备注', r.notes]);
+  if (roomUpdatedAt(r)) rows.push(['资料更新', fmtDate(roomUpdatedAt(r))]);
+  document.getElementById('dList').innerHTML = rows
+    .map(([a, c]) => `<div><dt>${a}</dt><dd>${c}</dd></div>`).join('');
+
+  const pct = r.frac * 100;
+  document.getElementById('dFrac').textContent = pct.toFixed(1) + '%';
+  document.getElementById('dBar').style.width = Math.min(100, pct * 2.6) + '%';
+
+  const rest = r.lines.filter(x => x !== r.no);
+  const flat = rest.join('').replace(/\s+/g, '');
+  const cmp = (r.label + (r.person || '') + (r.notes || '')).replace(/\s+/g, '');
+  document.getElementById('dRaw').textContent = flat && flat !== cmp ? '原图标注：' + rest.join(' ／ ') : '';
+  renderMntBlock(r);
+  renderHistory(r);
+  renderEditForm(r);
+  document.getElementById('dEdit').classList.toggle('on', editingRoom === r);
+  detailEl.classList.add('show');
+}
+
+/* ---------- 详情卡：资料编辑 ---------- */
+let editingRoom = null;
+
+function fmtDate(ts){
+  const d = new Date(ts);
+  const p2 = n => String(n).padStart(2, '0');
+  return `${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+}
+
+function renderEditForm(r){
+  const form = document.getElementById('dEditForm');
+  if (!form) return;
+  const isOpen = editingRoom === r;
+  form.classList.toggle('on', isOpen);
+  if (!isOpen){ form.innerHTML = ''; return; }
+
+  const catOpts = Object.keys(CAT)
+    .filter(k => CAT[k] && CAT[k].label)
+    .map(k => `<option value="${k}"${r.cat === k ? ' selected' : ''}>${catInfo(k).label}</option>`)
+    .join('');
+
+  const curArea = areaOf(r);
+  const estHint = curArea && curArea.est
+    ? `留空则按本层合计折算 ≈${curArea.v}㎡`
+    : '如：22';
+  form.innerHTML = `
+    <div class="fl">房间名</div>
+    <input id="efLabel" value="${escAttr(r.label)}" placeholder="如：会议室 / 经营一部" />
+    <div class="fl">使用人（人员变动改这里）</div>
+    <input id="efPerson" value="${escAttr(r.person)}" placeholder="留空表示无人使用" />
+    <div class="fl">部门</div>
+    <input id="efDept" value="${escAttr(r.dept)}" placeholder="如：经营一部" />
+    <div class="fl">功能类别</div>
+    <select id="efCat">${catOpts}</select>
+    <div class="fl">面积（㎡）</div>
+    <input id="efArea" type="number" step="0.1" min="0" inputmode="decimal"
+      value="${r.area != null ? r.area : ''}"
+      placeholder="${estHint}" />
+    <div class="fl">备注</div>
+    <textarea id="efNotes" placeholder="如：借用 / 待退房 / 22㎡">${escHtml(r.notes)}</textarea>
+    <div class="fl">本次修改人（写入变更记录）</div>
+    <input id="efBy" value="${escAttr(lastEditor)}" placeholder="可选" />
+    <div class="hintline">原始值为「${escHtml(r.orig.label)}${r.orig.person ? ' · ' + escHtml(r.orig.person) : ''}」。改动会记入变更历史，可随时恢复原值。</div>
+    <div class="acts">
+      ${hasRoomOvr(r) ? '<button type="button" class="rst" id="efRestore">恢复原值</button>' : ''}
+      <button type="button" class="no" id="efCancel">取消</button>
+      <button type="button" class="ok" id="efSave">保存</button>
+    </div>`;
+
+  form.querySelector('#efSave').onclick = () => {
+    const patch = {
+      label: form.querySelector('#efLabel').value,
+      person: form.querySelector('#efPerson').value,
+      dept: form.querySelector('#efDept').value,
+      notes: form.querySelector('#efNotes').value,
+      cat: form.querySelector('#efCat').value,
+      area: form.querySelector('#efArea').value
+    };
+    const by = form.querySelector('#efBy').value.trim();
+    if (by) lastEditor = by;
+    // 房间名不能清空，否则列表和搜索都会失去抓手
+    if (!patch.label.trim()) patch.label = r.label;
+    patch.label = patch.label.trim();
+    patch.person = patch.person.trim();
+    patch.dept = patch.dept.trim();
+    patch.notes = patch.notes.trim();
+
+    const rec = saveRoomInfo(r, patch, by || lastEditor);
+    editingRoom = null;
+    afterRoomEdit(r, !!rec);
+  };
+  form.querySelector('#efCancel').onclick = () => {
+    editingRoom = null;
+    renderEditForm(r);
+  };
+  const rst = form.querySelector('#efRestore');
+  if (rst) rst.onclick = () => {
+    restoreRoomInfo(r);
+    editingRoom = null;
+    afterRoomEdit(r, true);
+  };
+}
+
+function escHtml(v){
+  return String(v == null ? '' : v)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+const escAttr = escHtml;
+
+let lastEditor = '';
+try { lastEditor = localStorage.getItem('hq3d.editor') || ''; } catch (e) {}
+
+/* 资料改完后，所有依赖房间字段的地方都要重刷 */
+function afterRoomEdit(r, changed){
+  if (changed){
+    try { localStorage.setItem('hq3d.editor', lastEditor); } catch (e) {}
+  }
+  // 3D 标签、颜色（类别可能改了）、维护斜纹、列表、统计、搜索索引
+  buildLabels();
+  syncMntVisual();
+  buildRoomPane();
+  if (curPane === 'vacant') buildVacantPane();
+  else if (curPane === 'mnt') buildMntPane();
+  buildStats();
+  updateVacBadge();
+  updateMntBadge();
+  buildFloorList();
+  syncList();
+  // 类别变了要重上色
+  r.mesh.material.color.copy(new THREE.Color(catInfo(r.cat).c));
+  r.mesh.userData.baseColor = r.mesh.material.color.clone();
+  showDetail(r);
+}
+
+function renderHistory(r){
+  const el = document.getElementById('dHist');
+  if (!el) return;
+  const hist = roomHistory(r).slice().reverse();
+  if (!hist.length){ el.innerHTML = ''; return; }
+  el.innerHTML = `<div class="histbox"><div class="h">变更历史</div>${
+    hist.slice(0, 6).map(h => {
+      const unit = f => (f === 'area' ? ' ㎡' : '');
+      const parts = h.changes.map(c =>
+        `${FIELD_LABEL[c.field] || c.field}：${c.from ? `<s>${escHtml(c.from)}${unit(c.field)}</s> ` : ''}<b>${escHtml(c.to) || '（空）'}${c.to ? unit(c.field) : ''}</b>`
+      ).join('；');
+      return `<div class="histrow"><span class="t">${fmtDate(h.at)}</span>
+        <span class="c">${parts}${h.by ? '　— ' + escHtml(h.by) : ''}</span></div>`;
+    }).join('')
+  }</div>`;
+}
+
+/* ---------- 详情卡里的维护区块 ---------- */
+function renderMntBlock(r){
+  const el = document.getElementById('dMnt');
+  if (!el) return;
+  if (!canMaintain(r)){
+    el.innerHTML = `<div class="mnthead"><span class="t">维护</span>
+      <span class="mntpill none"><i></i>不适用</span></div>
+      <div class="meta" style="font-size:10.5px;color:#8798ac;line-height:1.6">
+        仅会议室与办公室参与维护管理，楼梯、电梯、卫生间等按物业统一流程处理。</div>`;
+    return;
+  }
+
+  const st = mntState(r);
+  const recs = recsOf(r).slice().sort((a, c) => {
+    const oa = MNT_STATUS[a.status].order, oc = MNT_STATUS[c.status].order;
+    return oa !== oc ? oa - oc : c.createdAt - a.createdAt;
+  });
+  const activeN = recs.filter(x => x.status !== 'done').length;
+
+  const statusPill = st === 'none'
+    ? `<span class="mntpill none"><i></i>正常</span>`
+    : `<span class="mntpill ${st}"><i style="background:${MNT_STATUS[st].c}"></i>${MNT_STATUS[st].label}</span>`;
+
+  const list = recs.length ? recs.map(rec => {
+    const s2 = MNT_STATUS[rec.status];
+    const ops = [];
+    if (rec.status === 'open') ops.push(`<button data-act="doing" data-id="${rec.id}">开始维修</button>`);
+    if (rec.status === 'doing') ops.push(`<button data-act="done" data-id="${rec.id}">标记完成</button>`);
+    if (rec.status === 'done') ops.push(`<button data-act="reopen" data-id="${rec.id}">重新打开</button>`);
+    ops.push(`<button class="del" data-act="del" data-id="${rec.id}">删除</button>`);
+    return `<div class="mrec">
+      <div class="top">
+        <span class="ty">${rec.type}</span>
+        <span class="ti">${rec.title}</span>
+        <span class="mntpill ${rec.status}" style="padding:1px 6px;font-size:9px">
+          <i style="background:${s2.c}"></i>${s2.label}</span>
+      </div>
+      <div class="meta">${fmtDate(rec.createdAt)}${rec.who ? ' · ' + rec.who : ''}${
+        rec.status === 'done' && rec.updatedAt !== rec.createdAt ? ' · 完成于 ' + fmtDate(rec.updatedAt) : ''}</div>
+      ${rec.note ? `<div class="note">${rec.note}</div>` : ''}
+      <div class="ops">${ops.join('')}</div>
+    </div>`;
+  }).join('') : `<div style="font-size:10.5px;color:#8798ac;padding:2px 0 4px">暂无维护记录</div>`;
+
+  el.innerHTML = `
+    <div class="mnthead">
+      <span class="t">维护</span>
+      ${statusPill}
+      ${activeN > 1 ? `<span style="font-size:10px;color:#b8432c">${activeN} 条进行中</span>` : ''}
+      <button class="add" id="mntAdd">＋ 报修</button>
+    </div>
+    <form class="mform" id="mntForm" autocomplete="off">
+      <div class="row">
+        <select id="mfType">${MNT_TYPES.map(t => `<option>${t}</option>`).join('')}</select>
+        <input id="mfWho" placeholder="报修人（可选）" style="max-width:120px" />
+      </div>
+      <input id="mfTitle" placeholder="问题标题，如：空调不制冷" />
+      <textarea id="mfNote" placeholder="补充说明（可选）"></textarea>
+      <div class="acts">
+        <button type="button" class="no" id="mfCancel">取消</button>
+        <button type="submit" class="ok">提交报修</button>
+      </div>
+    </form>
+    <div id="mntRecs">${list}</div>`;
+
+  // 交互
+  const form = el.querySelector('#mntForm');
+  el.querySelector('#mntAdd').onclick = () => {
+    form.classList.add('on');
+    el.querySelector('#mfTitle').focus();
+  };
+  el.querySelector('#mfCancel').onclick = () => form.classList.remove('on');
+  form.onsubmit = e => {
+    e.preventDefault();
+    const title = el.querySelector('#mfTitle').value.trim();
+    const type = el.querySelector('#mfType').value;
+    addRecord(r, {
+      type,
+      title: title || type + '报修',
+      note: el.querySelector('#mfNote').value.trim(),
+      who: el.querySelector('#mfWho').value.trim()
+    });
+    form.classList.remove('on');
+    form.reset();
+    afterMntChange(r, true);
+  };
+  el.querySelectorAll('.ops button').forEach(b => {
+    b.onclick = () => {
+      const id = b.dataset.id, act = b.dataset.act;
+      if (act === 'del') deleteRecord(r, id);
+      else if (act === 'reopen') setRecordStatus(r, id, 'open');
+      else setRecordStatus(r, id, act);
+      afterMntChange(r, false);
+    };
+  });
+}
+
+/* 维护数据变动后的统一刷新 */
+function afterMntChange(r, focusForm){
+  syncMntVisual();
+  renderMntBlock(r);
+  buildRoomPane();
+  if (curPane === 'mnt') buildMntPane();
+  else refreshPane();
+  updateMntBadge();
+  buildStats();
+  if (focusForm) renderMntBlock(r);
+}
+
+function clearSelection(silent){
+  if (state.selected){
+    state.selected.mesh.material.emissiveIntensity = 0;
+    tintRoom(state.selected, 1);
+    state.liftT = 0;
+    state.selected.mesh.position.y = state.selected.mesh.userData.baseY;
+  }
+  state.liftT = 0;
+  state.selected = null;
+  editingRoom = null;
+  selLines.clear();
+  detailEl.classList.remove('show');
+  if (!silent) frame();
+}
+function selectRoom(r, fly){
+  if (!r) return;
+  if (state.selected && state.selected !== r){
+    state.selected.mesh.material.emissiveIntensity = 0;
+    tintRoom(state.selected, 1);
+  }
+  state.selected = r;
+  r.mesh.material.emissive = new THREE.Color(catInfo(r.cat).c);
+  r.mesh.material.emissiveIntensity = 0.5;
+  state.liftT = 1;                       // 触发抬升
+
+  selLines.clear();
+  // 贴在房间板顶面：抬升时会跟着一起升，不会被板体埋掉
+  selLines.position.set(0, r.mesh.position.y + TILE_H / 2 + 0.012
+    + (state.mode === 'all' ? floorY(r.fi, state.spread) : 0), 0);
+  const pad = 0.3;
+  selLines.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(r.x + pad, 0, r.z + pad),
+    new THREE.Vector3(r.x + r.w - pad, 0, r.z + pad),
+    new THREE.Vector3(r.x + r.w - pad, 0, r.z + r.d - pad),
+    new THREE.Vector3(r.x + pad, 0, r.z + r.d - pad),
+    new THREE.Vector3(r.x + pad, 0, r.z + pad)
+  ]), selMat));
+
+  if (r.fi !== state.fi){
+    state.fi = r.fi;
+    syncList();
+    applyVisibility();
+  }
+  showDetail(r);
+  buildLabels();
+  markRoomRow(r);
+  if (fly) frame();
+}
+document.getElementById('detailClose').onclick = () => clearSelection();
+document.getElementById('dEdit').onclick = () => {
+  const r = state.selected;
+  if (!r) return;
+  editingRoom = (editingRoom === r) ? null : r;
+  renderEditForm(r);
+  const form = document.getElementById('dEditForm');
+  if (editingRoom && form) form.scrollIntoView({ block: 'nearest' });
+};
+
+/* =========================================================
+   导航
+   ========================================================= */
+function gotoFloor(i, keepSel, stayInTower){
+  const b = curB();
+  if (i < 0 || i >= b.floors.length) return;
+  if (i !== state.fi) b.floors[i].group.userData.rise = 0;   // 触发升起
+  state.fi = i;
+  // 整栋模式下点楼板/楼层列表 = 「进入」这一层；点右侧刻度 = 只切换高亮，留在整栋
+  if (!stayInTower && state.mode === 'all'){
+    state.mode = 'one';
+    state.target = 0;
+    syncMode();
+    b.floors.forEach(f => { f.group.position.y = 0; f.group.userData.lift = 0; });
+  }
+  if (!keepSel) clearSelection(true);
+  const hasCat = curF().rooms.some(r => r.cat === state.dimCat);
+  if (state.dimCat && !hasCat){
+    state.dimCat = null;
+    curB().floors.forEach(f => f.rooms.forEach(r => {
+      tintRoom(r, 1);
+      r.mesh.userData.pickable = true;
+    }));
+    buildLegend();
+  }
+  syncList();
+  applyVisibility();
+  buildLabels();
+  refreshPane();
+  frame();
+}
+function gotoBuilding(bi){
+  if (bi === state.bi){ return; }
+  state.bi = bi;
+  state.fi = 0;
+  state.mode = 'one';
+  state.spread = 0;
+  state.target = 0;
+  state.dimCat = null;
+  clearSelection(true);
+  curB().floors.forEach(f => { f.group.position.y = 0; });
+  syncMode();
+  buildFloorList();
+  buildFloorTicks();
+  buildLegend();
+  buildStats();
+  syncList();
+  applyVisibility();
+  buildLabels();
+  refreshPane();
+  frame();
+}
+function gotoRoom(r){
+  if (r.bi !== state.bi) gotoBuilding(r.bi);
+  state.fi = r.fi;
+  if (state.mode === 'all'){ state.mode = 'one'; state.target = 0; syncMode(); }
+  syncList();
+  applyVisibility();
+  buildLabels();
+  refreshPane();
+  selectRoom(r, true);
+}
+
+function syncMode(){
+  document.querySelectorAll('#segMode button').forEach(b => b.classList.toggle('on', b.dataset.mode === state.mode));
+  // 外观/剖切只对整栋有意义
+  document.getElementById('segFacade').classList.toggle('on', state.mode === 'all');
+  document.querySelectorAll('#segFacade button').forEach(b =>
+    b.classList.toggle('on', b.dataset.facade === state.facade));
+}
+document.getElementById('segMode').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  state.mode = btn.dataset.mode;
+  state.target = state.mode === 'all' ? 1 : 0;
+  if (state.mode !== 'all') curB().floors.forEach(f => { f.group.position.y = 0; });
+  syncMode();
+  applyVisibility();
+  buildLabels();
+  frame();
+});
+
+document.getElementById('segFacade').addEventListener('click', e => {
+  const btn = e.target.closest('button');
+  if (!btn) return;
+  state.facade = btn.dataset.facade;
+  syncMode();
+  applyVisibility();
+  frame();
+});
+
+/* =========================================================
+   搜索（跨楼栋）
+   ========================================================= */
+const qEl = document.getElementById('q');
+const resEl = document.getElementById('results');
+const qClr = document.getElementById('qClr');
+let hits = [], hitIdx = -1;
+
+function allRooms(){
+  const out = [];
+  BUILDINGS.forEach(b => b.floors.forEach(f => f.rooms.forEach(r => out.push(r))));
+  return out;
+}
+function doSearch(){
+  const q = qEl.value.trim().toLowerCase();
+  qClr.style.display = q ? 'block' : 'none';
+  if (!q){ resEl.classList.remove('show'); hits = []; return; }
+  hits = allRooms().filter(r => {
+    const b = BUILDINGS[r.bi], f = b.floors[r.fi];
+    const ar0 = areaOf(r);
+    const hay = [r.no, r.label, r.person, r.dept, r.notes, f.tag, f.short, b.name,
+                 ar0 ? ar0.v : ''].join(' ').toLowerCase();
+    return hay.includes(q);
+  }).slice(0, 60);
+  hitIdx = hits.length ? 0 : -1;
+  if (!hits.length){
+    resEl.innerHTML = '<div class="empty">没有匹配的房号 / 部门 / 人员</div>';
+    resEl.classList.add('show');
+    return;
+  }
+  resEl.innerHTML = hits.map((r, i) => {
+    const b = BUILDINGS[r.bi], f = b.floors[r.fi];
+    return `<div class="r${i === 0 ? ' hl' : ''}" data-i="${i}">
+      <i class="${r.bi ? 'b2' : ''}">${f.tag}</i>
+      <b>${r.no ? r.no + ' ' : ''}${r.label || '—'}</b>
+      <em>${(() => {
+        const a = areaOf(r);
+        if (a) return fmtArea(a);
+        return (b.id === 'annex' ? '南配楼 ' : '') +
+          (r.person && r.person !== r.label ? r.person : catInfo(r.cat).label);
+      })()}</em></div>`;
+  }).join('');
+  resEl.classList.add('show');
+  resEl.querySelectorAll('.r').forEach(el => {
+    el.onclick = () => { gotoRoom(hits[Number(el.dataset.i)]); resEl.classList.remove('show'); };
+  });
+}
+qEl.addEventListener('input', doSearch);
+qEl.addEventListener('focus', () => { if (qEl.value.trim()) doSearch(); });
+qClr.onclick = () => { qEl.value = ''; doSearch(); qEl.focus(); };
+qEl.addEventListener('keydown', e => {
+  if (!hits.length) return;
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp'){
+    e.preventDefault();
+    hitIdx = (hitIdx + (e.key === 'ArrowDown' ? 1 : -1) + hits.length) % hits.length;
+    resEl.querySelectorAll('.r').forEach((el, i) => el.classList.toggle('hl', i === hitIdx));
+    const cur = resEl.querySelectorAll('.r')[hitIdx];
+    if (cur) cur.scrollIntoView({ block:'nearest' });
+  } else if (e.key === 'Enter'){
+    e.preventDefault();
+    gotoRoom(hits[hitIdx]);
+    resEl.classList.remove('show');
+  } else if (e.key === 'Escape'){
+    resEl.classList.remove('show');
+    qEl.blur();
+  }
+});
+document.addEventListener('click', e => {
+  if (!e.target.closest('.search')) resEl.classList.remove('show');
+});
+
+/* =========================================================
+   拾取
+   ========================================================= */
+const raycaster = new THREE.Raycaster();
+const pointer = new THREE.Vector2(-10, -10);
+let hovered = null, needPick = false, downPos = null;
+const tip = document.getElementById('tip');
+
+function pickTargets(){
+  const arr = [];
+  const b = curB();
+  if (state.mode === 'all'){
+    // 整栋模式：只拾取楼板 —— 点哪层就切到哪层，行为可预期，
+    // 也避免 300+ 房间同时参与射线检测带来的开销
+    b.floors.forEach(f => {
+      if (f.group.visible) f.group.children.forEach(o => {
+        if (o.userData.slabFi !== undefined) arr.push(o);
+      });
+    });
+  } else {
+    curF().rooms.forEach(r => {
+      if (r.mesh.visible && r.mesh.userData.pickable !== false) arr.push(r.mesh);
+    });
+  }
+  return arr;
+}
+function pick(){
+  raycaster.setFromCamera(pointer, camera);
+  const hs = raycaster.intersectObjects(pickTargets(), false);
+  return hs.length ? hs[0].object : null;
+}
+function updateHover(){
+  if (!needPick) return;
+  needPick = false;
+  const obj = pick();
+  if (hovered && hovered !== obj && (!state.selected || hovered !== state.selected.mesh) && hovered.material){
+    hovered.material.emissiveIntensity = 0;
+
+  }
+  if (obj && obj.userData.slabFi !== undefined && state.mode === 'all'){
+    const fi = obj.userData.slabFi;
+    state.hoverFi = fi;
+    const fl = curB().floors[fi];
+    const n = fl.rooms.length;
+    const vacN = fl.rooms.filter(r => r.occ !== 'inuse').length;
+    tip.textContent = `${fl.tag} · ${n} 间${vacN ? ` · ${vacN} 处空置` : ''}　点击进入`;
+    tip.classList.add('show');
+    canvas.style.cursor = 'pointer';
+    hovered = obj;
+    return;
+  }
+  if (obj && obj.userData.room && (!state.selected || obj !== state.selected.mesh)){
+    obj.material.emissive = new THREE.Color(catInfo(obj.userData.room.cat).c);
+    obj.material.emissiveIntensity = 0.26;
+    const r = obj.userData.room;
+    tip.textContent = `${r.no ? r.no + ' · ' : ''}${r.label}${r.person && r.person !== r.label ? ' · ' + r.person : ''}`;
+    tip.classList.add('show');
+    canvas.style.cursor = 'pointer';
+  } else {
+    tip.classList.remove('show');
+    canvas.style.cursor = obj ? 'pointer' : 'default';
+    if (state.mode === 'all') state.hoverFi = -1;
+  }
+  hovered = obj;
+}
+
+canvas.addEventListener('pointermove', e => {
+  pointer.x = (e.clientX / window.innerWidth) * 2 - 1;
+  pointer.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  tip.style.left = e.clientX + 'px';
+  tip.style.top = e.clientY + 'px';
+  needPick = true;
+});
+canvas.addEventListener('pointerleave', () => {
+  pointer.set(-10, -10);
+  needPick = true;
+  state.hoverFi = -1;
+  tip.classList.remove('show');
+});
+canvas.addEventListener('pointerdown', e => { downPos = { x:e.clientX, y:e.clientY }; });
+canvas.addEventListener('pointerup', e => {
+  if (!downPos) return;
+  const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  downPos = null;
+  if (moved > 5) return;
+  const obj = pick();
+  if (!obj){ clearSelection(); return; }
+  if (obj.userData.room){ selectRoom(obj.userData.room); return; }
+  if (obj.userData.slabFi !== undefined && state.mode === 'all'){ gotoFloor(obj.userData.slabFi); }
+});
+window.addEventListener('keydown', e => {
+  if (document.activeElement === qEl) return;
+  const b = curB();
+  if (e.key === 'Escape') clearSelection();
+  if (e.key === 'ArrowUp') gotoFloor(Math.min(b.floors.length - 1, state.fi + 1));
+  if (e.key === 'ArrowDown') gotoFloor(Math.max(0, state.fi - 1));
+  if (e.key === '1') gotoBuilding(0);
+  if (e.key === '2' && BUILDINGS[1]) gotoBuilding(1);
+});
+
+/* =========================================================
+   整栋模式的楼层刻度（右侧竖列，点击切层）
+   ========================================================= */
+const ticksEl = document.getElementById('floorTicks');
+function buildFloorTicks(){
+  ticksEl.innerHTML = '';
+  const b = curB();
+  b.floors.slice().reverse().forEach((f, k) => {
+    const i = b.floors.length - 1 - k;
+    const btn = document.createElement('button');
+    btn.dataset.fi = i;
+    const vac = f.rooms.some(r => r.occ !== 'inuse');
+    btn.className = vac ? 'vacant-dot' : '';
+    btn.innerHTML = `<span>${f.tag}</span><i></i>`;
+    btn.onclick = () => gotoFloor(i, false, true);   // 留在整栋，只换高亮
+    ticksEl.appendChild(btn);
+  });
+}
+const tv = new THREE.Vector3();
+function updateFloorTicks(){
+  const on = state.mode === 'all';
+  ticksEl.classList.toggle('on', on);
+  if (!on) return;
+  const b = curB();
+  const W = window.innerWidth, H = window.innerHeight;
+  ticksEl.querySelectorAll('button').forEach(btn => {
+    const i = +btn.dataset.fi;
+    const y = floorY(i, state.spread) + (b.floors[i] ? b.floors[i].h : FH) * 0.5;
+    // 刻度贴着「这一层」的体量放：5 层以上收进后仍按裙楼宽度放会飘在楼外
+    const fw = b.floors[i] ? b.floors[i].FW : b.FW;
+    tv.set(fw / 2 + fw * 0.06, y, 0).project(camera);
+    const py = (-tv.y * 0.5 + 0.5) * H;
+    btn.style.top = Math.max(4, Math.min(H - 18, py - 6)) + 'px';
+    btn.classList.toggle('on', i === state.fi);
+  });
+}
+
+/* =========================================================
+   指北针 & 主循环
+   ========================================================= */
+const needleEl = document.getElementById('needle');
+const invQ = new THREE.Quaternion();
+const northV = new THREE.Vector3();
+function updateCompass(){
+  invQ.copy(camera.quaternion).invert();
+  northV.set(0, 0, -1).applyQuaternion(invQ);
+  needleEl.style.transform = `rotate(${Math.atan2(northV.x, northV.y)}rad)`;
+}
+
+function animate(){
+  requestAnimationFrame(animate);
+
+  if (Math.abs(state.spread - state.target) > 0.001){
+    state.spread += (state.target - state.spread) * 0.12;
+    curB().floors.forEach((f, i) => { f.group.position.y = floorY(i, state.spread); });
+  }
+
+  /* 层间空隙：外观模式贴合成实心体量，剖切模式拉开看清楼层 */
+  const gapWant = state.mode === 'all'
+    ? (state.facade === 'solid' ? GAP_SOLID : GAP)
+    : state.gap;
+  if (Math.abs(state.gap - gapWant) > 0.002){
+    state.gap += (gapWant - state.gap) * 0.13;
+    const bb = curB();
+    bb.floors.forEach((f, i) => { f.group.position.y = floorY(i, state.spread); });
+    refreshBuildingShell(bb);
+    if (desired.on) frame();        // 体量变了，取景要跟着重算
+  }
+
+  /* 整栋模式：鼠标悬停的楼层向上浮起，当前层也抬高一点 —— 楼层像抽屉一样被抽出 */
+  if (state.mode === 'all'){
+    const sp = state.spread;
+    curB().floors.forEach((f, i) => {
+      const u = f.group.userData;
+      const want = (i === state.hoverFi) ? 1.5 : (i === state.fi ? 0.55 : 0);
+      u.lift = (u.lift || 0) + (want - (u.lift || 0)) * 0.16;
+      f.group.position.y = floorY(i, sp) + u.lift;
+      // 悬停层的幕墙框更亮，其余保持低调
+      if (u.eaveMat){
+        const hot = i === state.hoverFi ? 1 : (i === state.fi ? 0.85 : 0.5);
+        u.eaveMat.color.setHex(0xdceaf8).lerp(new THREE.Color(0x8fc4f5), 1 - hot);
+        u.eaveMat.emissiveIntensity = 0;
+      }
+      if (u.tag){
+        const hot = (i === state.hoverFi || i === state.fi);
+        u.tag.visible = hot;
+        if (hot){
+          const k = i === state.hoverFi ? 1.3 : 1.1;
+          const bs = u.tag.userData.baseScale || 3.4;
+          u.tag.scale.set(bs * k, bs * k * 0.5, 1);
+        }
+      }
+    });
+  } else {
+    // 退出整栋时把浮起归零，避免切回单层时楼层错位
+    curB().floors.forEach(f => { f.group.userData.lift = 0; });
+  }
+
+  if (desired.on){
+    // 必须与 solveView / frame() 用同一个方向。少写一个分支（如 roof），
+    // 相机会沿别的方向落位，取景完全失效 —— 这个坑已经踩了两次
+    const dir = state.mode === 'plan' ? DIR_PLAN
+              : state.mode === 'all'
+                ? (state.facade === 'solid' ? DIR_REAL : DIR_TOWER)
+                : DIR_3D;
+    const goal = desired.target.clone().addScaledVector(dir, desired.dist);
+    camera.position.lerp(goal, 0.1);
+    controls.target.lerp(desired.target, 0.1);
+    if (camera.position.distanceTo(goal) < 0.25){
+      camera.position.copy(goal);
+      controls.target.copy(desired.target);
+      desired.on = false;
+    }
+  }
+
+  // 切层升起动画（仅单层/平面模式；整栋模式位置由 spread 控制）
+  if (state.mode !== 'all'){
+    const fg = curB().floors[state.fi].group;
+    const ua = fg.userData;
+    if (ua.rise === undefined) ua.rise = 1;
+    if (ua.rise < 1){
+      ua.rise = Math.min(1, ua.rise + 0.11);
+      const e = 1 - Math.pow(1 - ua.rise, 3);
+      fg.position.y = -(1 - e) * 1.8;
+    } else if (fg.position.y !== 0){
+      fg.position.y = 0;
+    }
+  }
+
+  // 选中房间抬升：立体感最强的单一手段
+  if (state.selected){
+    const u = state.selected.mesh.userData;
+    const lift = 0.34;
+    const cur = state.selected.mesh.position.y - u.baseY;
+    const want = state.liftT ? lift : 0;
+    const next = cur + (want - cur) * 0.18;
+    state.selected.mesh.position.y = u.baseY + next;
+    selLines.position.y = state.selected.mesh.position.y + TILE_H / 2 + 0.012;
+  }
+
+  /* 维护中的房间：暖光呼吸 + 斜纹层跟随楼层抬升 */
+  if (mntPulse.length){
+    const ph = 0.5 + 0.5 * Math.sin(performance.now() * 0.0028);
+    const k = 0.20 + 0.18 * ph;
+    for (const r of mntPulse){
+      if (r !== state.selected){
+        r.mesh.material.emissive.setHex(0xd65440);
+        r.mesh.material.emissiveIntensity = k;
+      }
+      if (r.hatch && r.hatch.visible){
+        r.hatch.position.y = r.mesh.position.y + TILE_H / 2 + 0.03;
+      }
+    }
+  }
+
+  updateHover();
+  controls.update();
+  updateLabels();
+  updateFloorTicks();
+  updateCompass();
+  renderer.render(scene, camera);
+}
+
+/* ---------- 面板宽度与托盘：浏览体验的两个开关 ----------
+   宽度：拖右缘调整，双击复位；托盘：图例与统计默认收起。
+   两者都存 localStorage —— 这是纯界面偏好，不属于业务数据。 */
+const SIDE_W_KEY = 'hq3d.sideWidth';
+const TRAY_KEY = 'hq3d.trayOpen';
+
+function applySideWidth(px){
+  const w = Math.max(300, Math.min(560, Math.round(px)));
+  document.documentElement.style.setProperty('--side-w', w + 'px');
+  return w;
+}
+(function restoreSideWidth(){
+  let w = 0;
+  try { w = Number(localStorage.getItem(SIDE_W_KEY)) || 0; } catch (e) {}
+  // 小屏不套用记忆宽度，否则会把画布挤没
+  if (w && window.innerWidth > 1100) applySideWidth(w);
+})();
+
+(function initSideGrip(){
+  const grip = document.getElementById('sideGrip');
+  const side = document.getElementById('side');
+  if (!grip || !side) return;
+  let dragging = false, startX = 0, startW = 0, moved = false;
+  const onMove = (e) => {
+    if (!dragging) return;
+    const dx = (e.touches ? e.touches[0].clientX : e.clientX) - startX;
+    if (Math.abs(dx) > 2) moved = true;
+    applySideWidth(startW + dx);
+  };
+  const onUp = () => {
+    if (!dragging) return;
+    dragging = false;
+    grip.classList.remove('drag');
+    document.body.classList.remove('side-dragging');
+    window.removeEventListener('pointermove', onMove);
+    window.removeEventListener('pointerup', onUp);
+    window.removeEventListener('touchmove', onMove);
+    window.removeEventListener('touchend', onUp);
+    if (moved){
+      const w = Math.round(side.getBoundingClientRect().width);
+      try { localStorage.setItem(SIDE_W_KEY, String(w)); } catch (e) {}
+      frame();            // 可见区变了，重新取景，避免模型被加宽的面板压住
+    }
+  };
+  grip.addEventListener('pointerdown', (e) => {
+    dragging = true; moved = false;
+    startX = e.clientX; startW = side.getBoundingClientRect().width;
+    grip.classList.add('drag');
+    document.body.classList.add('side-dragging');
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    e.preventDefault();
+  });
+  // 触摸：pointer 事件在某些浏览器被 canvas 抢走，补一套 touch
+  grip.addEventListener('touchstart', (e) => {
+    dragging = true; moved = false;
+    startX = e.touches[0].clientX; startW = side.getBoundingClientRect().width;
+    grip.classList.add('drag');
+    document.body.classList.add('side-dragging');
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onUp);
+    e.preventDefault();
+  }, { passive: false });
+  grip.addEventListener('dblclick', () => {
+    applySideWidth(358);
+    try { localStorage.removeItem(SIDE_W_KEY); } catch (e) {}
+    frame();
+  });
+})();
+
+(function initTray(){
+  const tray = document.getElementById('tray');
+  const btn = document.getElementById('trayToggle');
+  if (!tray || !btn) return;
+  let open = false;
+  try { open = localStorage.getItem(TRAY_KEY) === '1'; } catch (e) {}
+  const setState = (v) => {
+    tray.classList.toggle('open', v);
+    btn.setAttribute('aria-expanded', v ? 'true' : 'false');
+  };
+  setState(open);
+  btn.addEventListener('click', () => {
+    const next = !tray.classList.contains('open');
+    setState(next);
+    try { localStorage.setItem(TRAY_KEY, next ? '1' : '0'); } catch (e) {}
+  });
+})();
+
+/* ---------- 启动 ---------- */
+state.spread = 0;
+state.target = 0;
+buildFloorList();
+buildLegend();
+buildStats();
+syncList();
+applyVisibility();
+buildLabels();
+gotoFloor(0);
+buildFloorTicks();
+setPane('floors');
+syncMntVisual();
+buildStats();
+animate();
+
+window.addEventListener('resize', () => {
+  camera.aspect = window.innerWidth / window.innerHeight;
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  frame();
+});
+</script>
+</body>
+</html>

@@ -28,7 +28,7 @@ import OperationsReports from './components/OperationsReports';
 import BuildingExplorer, { BUILDINGS, getFloorNumbers, type BuildingId } from './components/BuildingExplorer';
 import { DEFAULT_RULE_SETTINGS } from './constants';
 
-type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'EXCEPTIONS' | 'DEVICES' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'CONFIDENTIALITY' | 'DATA_CENTER';
+type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'EXCEPTIONS' | 'DEVICES' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'CONFIDENTIALITY' | 'DATA_CENTER' | 'HQ_3D';
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
@@ -1369,9 +1369,10 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
   };
 
   return (
-    <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="resource-modal-title" aria-describedby="resource-modal-description">
       <div className="bg-white rounded-[2rem] p-8 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl animate-in zoom-in">
-        <h3 className="font-black text-xl mb-6">{resource ? '编辑资源' : '新增资源'}</h3>
+        <h3 id="resource-modal-title" className="font-black text-xl">{resource?.type === 'ROOM' ? '编辑会议室' : resource ? '编辑资源' : '新增资源'}</h3>
+        <p id="resource-modal-description" className="mt-2 mb-6 text-xs leading-5 text-gray-500">维护名称、容量、位置、设备、开放时段和预约状态，保存后同步至空间导航与预约服务。</p>
         <div className="space-y-4">
           <label className="block">
             <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">永久编码{resource ? ' · 创建后不可修改' : ''}</span>
@@ -3415,7 +3416,10 @@ const App: React.FC = () => {
       DELEGATION_OVERLAP: '同一委托人的代理时间段不能重叠。',
       DUPLICATE_EMAIL: '电子邮箱已存在，请检查后重试。',
       DEPARTMENT_NOT_FOUND: '所选部门不存在，请刷新后重试。',
-      INVALID_USER_ROLE: '请选择有效角色。'
+      INVALID_USER_ROLE: '请选择有效角色。',
+      RESOURCE_NOT_FOUND: '资源不存在或已被删除，请刷新后重试。',
+      RESOURCE_HAS_BOOKINGS: '该资源存在预约记录，不能删除。请改为维护或待开放状态以停止新预约。',
+      RESOURCE_HAS_DEVICES: '该资源仍有关联门口屏设备记录，不能删除。'
     };
     addNotification('操作未完成', messages[code] || code || '请刷新后重试。', 'WARNING');
   };
@@ -3436,6 +3440,25 @@ const App: React.FC = () => {
     try {
       await apiRequest(`/api/departments/${id}`, 'DELETE');
       addNotification('删除成功', '部门已移除。', 'SUCCESS');
+    } catch (error) { adminError(error); }
+  };
+
+  const handleDeleteResource = async (resource: Resource) => {
+    if (!confirm(`确定删除“${resource.name}”吗？此操作无法撤销。仅无预约记录且无门口屏设备绑定的资源可删除；有关联记录时请改为维护或待开放状态。`)) return;
+    try {
+      await apiRequest(`/api/resources/${encodeURIComponent(resource.id)}`, 'DELETE');
+      setSelectedResourceIds(prev => prev.filter(id => id !== resource.id));
+      if (selectedResource?.id === resource.id) {
+        setSelectedResource(null);
+        setShowBookingModal(false);
+      }
+      if (editingResource?.id === resource.id) {
+        setEditingResource(null);
+        setShowResourceModal(false);
+      }
+      if (showResourceCalendar?.id === resource.id) setShowResourceCalendar(null);
+      if (viewDetail?.type === 'RESOURCE' && viewDetail.data?.id === resource.id) setViewDetail(null);
+      addNotification('删除成功', `资源 ${resource.name} 已移除，删除操作已写入审计。`, 'SUCCESS');
     } catch (error) { adminError(error); }
   };
 
@@ -3576,6 +3599,7 @@ const App: React.FC = () => {
     ...(primaryWorkflowItem ? [primaryWorkflowItem] : [])
   ];
   const mobileMoreItems = [
+    { id: 'HQ_3D', label: '总部楼层 3D', shortLabel: '3D', icon: Layers } as NavItem,
     ...workflowNavItems.filter(item => !mobilePrimaryItems.some(primary => primary.id === item.id)),
     ...adminNavItems
   ];
@@ -3611,6 +3635,7 @@ const App: React.FC = () => {
           <SidebarItem icon={LayoutDashboard} label="数据全景看板" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
           <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} />
           <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} />
+          <SidebarItem icon={Layers} label="总部楼层 3D" id="HQ_3D" active={view === 'HQ_3D'} onClick={setView} />
           {(workflowNavItems.length > 0 || adminNavItems.length > 0) && <div className="studio-nav-label">流程与中心</div>}
           {workflowNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={setView} badge={item.badge} />)}
           {adminNavItems.length > 0 && (
@@ -3685,6 +3710,7 @@ const App: React.FC = () => {
               {view === 'ROLES' && '角色权限集'}
               {view === 'REPORTS' && '运营报表'}
               {view === 'DATA_CENTER' && '数据维护中心'}
+              {view === 'HQ_3D' && '总部楼层 3D 分布图'}
             </h2></div>
             {(view === 'RESOURCES' || view === 'USERS') && (
               <div className="relative flex-1 group">
@@ -3740,6 +3766,19 @@ const App: React.FC = () => {
         </header>
 
         <div className="studio-content">
+          {/* 3D 楼层图是独立单页（自带 Three.js 场景与侧栏），整页视角才有意义。
+              负 margin 抵消 .studio-content 的 30/32/56 内边距，再把高度顶到可视区；
+              不用 portal / 改布局，是为了不影响其它视图的排版。 */}
+          {view === 'HQ_3D' && (
+            <div className="animate-in fade-in" style={{ margin: '-30px -32px -56px', height: 'calc(100vh - 132px)', minHeight: 560 }}>
+              <iframe
+                src="/hq3d.html"
+                title="总部楼层 3D 分布图"
+                style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#dfeaf8' }}
+              />
+            </div>
+          )}
+
           {view === 'DASHBOARD' && (
             <div className="space-y-6 animate-in fade-in">
               <section className="agenda-hero" aria-label="今日办公议程">
@@ -3845,6 +3884,9 @@ const App: React.FC = () => {
                 onDetails={(resource) => setViewDetail({ type: 'RESOURCE', data: resource })}
                 onCalendar={setShowResourceCalendar}
                 onBook={(resource) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }}
+                canManage={currentUser.role.includes('SYSTEM_ADMIN')}
+                onEdit={(resource) => { setEditingResource(resource); setShowResourceModal(true); }}
+                onDelete={handleDeleteResource}
               />
               <div className="studio-table-shell">
                 <table className="w-full min-w-[720px] text-left">
@@ -3878,7 +3920,8 @@ const App: React.FC = () => {
                           <button onClick={() => setViewDetail({ type: 'RESOURCE', data: r })} className="p-2 text-gray-500 hover:text-indigo-600 transition-colors" title="详情"><Info size={16}/></button>
                           <button onClick={() => setShowResourceCalendar(r)} className="p-2 text-gray-500 hover:text-emerald-600 transition-colors" title="排期日历" aria-label={`查看${r.name}排期`}><CalendarDays size={16}/></button>
                           <button disabled={!isResourceAcceptingBookings(r)} title={!isResourceAcceptingBookings(r) ? '当前状态暂停新预约' : undefined} onClick={() => { setSelectedResource(r); setEditingBooking(null); setBookingPrefill(null); setCalendarDateForBooking(null); setShowBookingModal(true); }} className={`px-4 py-1.5 bg-${theme}-600 text-white rounded-lg text-[11px] font-black shadow-md hover:translate-y-[-1px] transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:translate-y-0`}>{isResourceAcceptingBookings(r) ? '预约' : r.status === 'MAINTENANCE' ? '维护中' : '待开放'}</button>
-                          {currentUser.role.includes('SYSTEM_ADMIN') && <button aria-label={`编辑${r.name}`} title="编辑资源" onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>}
+                          {currentUser.role.includes('SYSTEM_ADMIN') && <><button aria-label={`编辑${r.name}`} title="编辑资源" onClick={() => { setEditingResource(r); setShowResourceModal(true); }} className="p-2 text-gray-200 hover:text-indigo-600 transition-colors"><Edit2 size={16}/></button>
+                          <button aria-label={`删除${r.name}`} title="删除资源" onClick={() => handleDeleteResource(r)} className="p-2 text-gray-200 hover:text-rose-600 transition-colors"><Trash2 size={16}/></button></>}
                         </td>
                       </tr>
                     ))}
