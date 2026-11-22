@@ -182,6 +182,7 @@ const assertResourceUpdate = (current: Resource, next: Resource, bookings: Booki
 
 export type MutationContext = {
   revision: number;
+  connection: PoolConnection;
   scheduleJob: (job: JobInstruction) => Promise<void>;
   enqueueOutbox: (event: { key: string; type: string; payload: unknown }) => Promise<void>;
   audit: (input: AuditInput) => Promise<void>;
@@ -209,6 +210,7 @@ export const mutateDb = async <T>(mutator: (db: OfficeDb, context: MutationConte
     const previousUsers = structuredClone(db.users || []);
     const result = await mutator(db, {
       revision: currentRevision,
+      connection: conn,
       scheduleJob: job => scheduleJob(conn, job),
       enqueueOutbox: event => enqueueOutbox(conn, event),
       audit: input => conn.query(`INSERT INTO audit_events (id, actor_id, action, entity_type, entity_id, details)
@@ -274,13 +276,14 @@ export const saveResource = async (incoming: Resource, actorId: string, editingI
   return resource;
 });
 
-export const deleteResource = async (id: string, actorId: string) => mutateDb(async (db, { audit }) => {
+export const deleteResource = async (id: string, actorId: string) => mutateDb(async (db, { audit, connection }) => {
   const resource = (db.resources || []).find(item => item.id === id);
   if (!resource) throw new DbError('RESOURCE_NOT_FOUND', 404);
   if ((db.bookings || []).some(booking => booking.resourceId === id)) throw new DbError('RESOURCE_HAS_BOOKINGS', 409);
   if ((db.devices || []).some(device => device.resourceId === id)) throw new DbError('RESOURCE_HAS_DEVICES', 409);
   db.resources = (db.resources || []).filter(item => item.id !== id);
   db.serviceAreas = (db.serviceAreas || []).map(area => ({ ...area, resourceIds: area.resourceIds.filter(resourceId => resourceId !== id) }));
+  await connection.query('DELETE FROM hq3d_room_resource WHERE resource_id = ?', [id]);
   await audit({
     actorId,
     action: 'RESOURCE_DELETE',

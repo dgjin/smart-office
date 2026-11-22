@@ -60,6 +60,8 @@ npm run db:seed:hq3d
 - **写入**：`PUT /api/hq3d/rooms/:uid`（改房间资料）、`POST/PATCH/DELETE /api/hq3d/...`（维护记录）、`PUT /api/hq3d/floors/:building/:tag/area`（楼层面积合计）。写操作要求管理员、`SERVICE_COORDINATOR` 或 `FRONT_DESK` 角色，并各自写 `audit_events`。
 - **为什么不用 `mutateDb`**：那套是整库 JSON 快照重写，一次写入会全量 upsert 20+ 集合。3D 的改动粒度是「一间房一条记录」，走快照会白写几百 KB，也会和排班/预订的乐观锁互相打架。
 - **Three.js**：`public/vendor/three/`（0.160.0，来自 `node_modules/three`）。不引 CDN，一是内网/离线可用，二是主应用的 CSP 不允许外域脚本。升级时 `npm i three@<版本>` 后重新拷贝 `build/three.module.js`、`examples/jsm/controls/OrbitControls.js`、`examples/jsm/environments/RoomEnvironment.js`。
+- **侧栏自动收起**：切到「总部楼层 3D」时侧栏自动折叠到 84px，把宽度让给画面（iframe 从 1332 → 1440px）。这个折叠是**视图派生的临时态**，不写进 `user_preferences` —— 否则离开后侧栏会一直收起、下次登录还会被恢复成收起，等于替用户改了设置。在 3D 里手动展开后本次不再自动收，切走视图即复位。
+- **字体自托管**：`public/vendor/fonts/`（205 个 woff2 分片 + `fonts.css`，6.4MB）。三个家族：Noto Sans SC（正文）、ZCOOL XiaoWei（标题）、IBM Plex Mono（数字与微字），由 `npm run fonts:fetch` 从 Google Fonts 抓取并改写为相对路径，页面不请求任何外域。**保留原 `unicode-range` 分片**，浏览器仍按需加载 —— 实测首页只命中 24 片 / 1.1MB，不是把 6.4MB 全下。字体更新时重跑该命令，不要手工改 `fonts.css`（文件名是 URL 的 md5 前 16 位）。
 - **安全头分档**：`server/http.ts` 的 `securityProfileFor()` 只给 `/hq3d.html` 与 `/vendor/three/` 放宽（`X-Frame-Options: SAMEORIGIN`、`frame-ancestors 'self'`、允许内联脚本），因为该页是行内 module 写法；其余路径仍是 `DENY` + `frame-ancestors 'none'`。
 
 ## 绑定企业身份
@@ -161,6 +163,31 @@ SMART_OFFICE_TEST_MYSQL=true MYSQL_DATABASE=smart_office_test_drill npm run db:d
 ```
 
 生产前由企业确定 RPO/RTO、加密、异地副本、保留期和恢复责任人。建议至少每日全量备份、每周隔离恢复演练，并定期验证备份可读性；备份目录不得位于 Web 静态目录，调度账号仅授予所需权限。
+
+## 总部3D共享同步确认实施（2026-11-22）
+
+`HQ3D-P0-20261122` 按用户确认的“已确认值或推荐安全默认实施，遗留问题由管理员在 UAT 维护”执行。授权输入固化在 `server/data/hq3d-confirmation-20261122.json`，不代表其他责任方签字、C-07 双人复核或正式投产通过。实施顺序为原生备份、独立恢复演练、迁移、确认计划、只读对账：
+
+```bash
+npm run db:backup -- --output /受控备份目录/smart-office.sql
+npm run db:migrate
+npm run db:apply:hq3d-confirmation
+node --env-file-if-exists=.env .wb/reconcile-hq3d-post-confirmation.ts
+```
+
+确认计划只允许 SYSTEM_ADMIN 执行，映射、处置、预约取消、通知、Outbox、退役归档和审计在同一事务中提交；重复执行不会重复取消、通知、审计或推进快照版本。对账报告使用排他创建，不覆盖冻结 P0/post-C07 或既有 post-confirmation 证据；新环境对账须通过 `HQ3D_RECONCILE_OUTPUT` 指定新路径。
+
+本地业务库实际结果：
+
+- 建立 14 条一对一 `resourceId—roomUid` 显式映射；其余 14 条 C-03 资源保持未映射。1902 与 209 保留业务名和 3D 名双轨，不强制重名。
+- 23 间空间落实 `DISPLAY_ONLY/APPLIED`；`annex#3F#302#会议室` 为 `BOOKABLE_CANDIDATE/UAT_PENDING`，未创建预约资源。
+- 受控退役 `r1`、`r2`、`r-1795143749174`，229 保持不存在；15 条历史预约全部保留，仅 4 条 PENDING/APPROVED 预约取消为 `MANUAL_EXCEPTION`，其余历史状态不变。退役资源快照、取消清单和审计均保留，普通资源删除保护未削弱。
+- 10 间资源继续 PENDING；427 间 3D 房间保持活跃，除授权退役外资源清单和字段与冻结基线一致。
+- 迁移 `015z`、`015zz` 统一历史库与房间表排序规则，`016_hq3d_confirmed_sync.sql` 建立映射、处置和退役归档数据面。
+
+证据包括：实施前备份 `backups/mysql-hq3d-confirmation-pre-20261122.sql`（SHA-256 `97e9666200a5e199651cb5b7427d91d70ce134a6a534cd78969ec6f8a35208b8`）；0900 同构隔离恢复、迁移、双重执行及对账报告 `.wb/reports/hq3d-post-confirmation-rehearsal-0900-20261122.json`；业务库报告 `.wb/reports/hq3d-post-confirmation-20261122.json`（revision 14，SHA-256 `3248c03d6e281dc95fc88fb07ab039b54c3e198b2b395477ba41644bcb0c573f`）；`db:verify`、5 项 HQ3D 隔离集成测试及 `.wb/reports/verify-20261122-133641.md` 均通过。
+
+UAT 和正式门禁仍包括：C-03 的 14 条真实 UID 维护、302 候选空间核定、10 间 PENDING 核定、C-07 两名真实责任方独立复核，以及 FORMAL P9-03、企业安全、生产迁移恢复、真实外部平台联调、UAT、培训、灰度和稳定观察。本地技术实施与测试通过不等于上述事项完成。
 
 ## CI 与投产门槛
 

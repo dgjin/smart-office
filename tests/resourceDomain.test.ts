@@ -123,7 +123,7 @@ test('010 迁移增加可空使用释放列，不回填历史签到或释放事�
 });
 
 test('011 迁移幂等初始化设备与异常处理集合', () => {
-  assert.equal(REQUIRED_MIGRATION, '015_hq3d_stable_room_identity.sql');
+  assert.equal(REQUIRED_MIGRATION, '016_hq3d_confirmed_sync.sql');
   const migration = readFileSync(new URL('../server/migrations/011_operations.sql', import.meta.url), 'utf8');
   assert.match(migration, /'devices'/);
   assert.match(migration, /'exceptionActions'/);

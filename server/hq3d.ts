@@ -82,6 +82,24 @@ export type Hq3dMaintenanceRecord = {
   updatedAt: string;
 };
 
+export type Hq3dResourceMapping = {
+  roomUid: string;
+  resourceId: string;
+  planId: string;
+  decisionRef: string;
+  decisionBasis: string;
+  note: string;
+};
+
+export type Hq3dRoomDisposition = {
+  roomUid: string;
+  disposition: 'DISPLAY_ONLY' | 'BOOKABLE_CANDIDATE';
+  reviewStatus: 'APPLIED' | 'UAT_PENDING';
+  planId: string;
+  decisionBasis: string;
+  note: string;
+};
+
 export type Hq3dSnapshot = {
   generatedAt: string;
   buildings: Array<{
@@ -113,6 +131,8 @@ export type Hq3dSnapshot = {
   }>;
   profiles: Record<string, Hq3dRoomProfile>;
   maintenance: Record<string, { records: Hq3dMaintenanceRecord[] }>;
+  resourceMappings: Record<string, Hq3dResourceMapping>;
+  dispositions: Record<string, Hq3dRoomDisposition>;
   floorAreas: Record<string, number>;
   options: {
     maintenanceTypes: string[];
@@ -140,6 +160,18 @@ export const getHq3dSnapshot = async (): Promise<Hq3dSnapshot> => {
   const [maintenanceRows] = await pool.query<any[]>(
     `SELECT id, room_uid, type, title, note, reporter, status, created_at, updated_at
        FROM hq3d_room_maintenance ORDER BY created_at DESC`
+  );
+  const [mappingRows] = await pool.query<any[]>(
+    `SELECT mapping.room_uid, mapping.resource_id, mapping.plan_id, mapping.decision_ref, mapping.decision_basis, mapping.note
+       FROM hq3d_room_resource mapping
+       JOIN hq3d_room room ON room.uid = mapping.room_uid AND room.is_active = 1
+       ORDER BY mapping.room_uid`
+  );
+  const [dispositionRows] = await pool.query<any[]>(
+    `SELECT item.room_uid, item.disposition, item.review_status, item.plan_id, item.decision_basis, item.note
+       FROM hq3d_room_disposition item
+       JOIN hq3d_room room ON room.uid = item.room_uid AND room.is_active = 1
+       ORDER BY item.room_uid`
   );
 
   const floorsByBuilding = new Map<string, Hq3dSnapshot['buildings'][number]['floors']>();
@@ -214,6 +246,29 @@ export const getHq3dSnapshot = async (): Promise<Hq3dSnapshot> => {
     });
   }
 
+  const resourceMappings: Record<string, Hq3dResourceMapping> = {};
+  for (const row of mappingRows) {
+    resourceMappings[String(row.room_uid)] = {
+      roomUid: String(row.room_uid),
+      resourceId: String(row.resource_id),
+      planId: String(row.plan_id),
+      decisionRef: String(row.decision_ref),
+      decisionBasis: String(row.decision_basis),
+      note: String(row.note || '')
+    };
+  }
+  const dispositions: Record<string, Hq3dRoomDisposition> = {};
+  for (const row of dispositionRows) {
+    dispositions[String(row.room_uid)] = {
+      roomUid: String(row.room_uid),
+      disposition: row.disposition,
+      reviewStatus: row.review_status,
+      planId: String(row.plan_id),
+      decisionBasis: String(row.decision_basis),
+      note: String(row.note || '')
+    };
+  }
+
   return {
     generatedAt: new Date().toISOString(),
     buildings: buildingRows.map(row => ({
@@ -225,6 +280,8 @@ export const getHq3dSnapshot = async (): Promise<Hq3dSnapshot> => {
     })),
     profiles,
     maintenance,
+    resourceMappings,
+    dispositions,
     floorAreas,
     options: {
       maintenanceTypes: MAINTENANCE_TYPES,

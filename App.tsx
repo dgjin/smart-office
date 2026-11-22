@@ -2487,6 +2487,10 @@ const App: React.FC = () => {
   const [showAdminMenu, setShowAdminMenu] = useState(false);
   const [showMobileMenu, setShowMobileMenu] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  // 进入「总部楼层 3D」时自动收起侧栏，把宽度让给画面。
+  // 这个状态**不写进用户偏好** —— 否则离开 3D 后侧栏会一直是收起的，
+  // 而且下次登录还会恢复成收起，等于替用户改了设置。
+  const [hqSidebarExpanded, setHqSidebarExpanded] = useState(false);
   const [isOnline, setIsOnline] = useState(false);
   const [workspaceLoaded, setWorkspaceLoaded] = useState(false);
   const [saveStatus, setSaveStatus] = useState<'saved' | 'saving' | 'error'>('saved');
@@ -2690,6 +2694,8 @@ const App: React.FC = () => {
   const [isMarkingAllRead, setIsMarkingAllRead] = useState(false);
   const [notificationActionError, setNotificationActionError] = useState('');
   useEffect(() => { setShowNotificationPanel(false); }, [view]);
+  // 视图一变就把「手动展开」的许可作废：离开 3D 恢复原样，再进 3D 重新自动收起
+  useEffect(() => { setHqSidebarExpanded(false); }, [view]);
   const [searchQuery, setSearchQuery] = useState('');
   const [resourceTypeFilter, setResourceTypeFilter] = useState<'ALL' | ResourceType>('ALL');
   const [resourceStatusFilter, setResourceStatusFilter] = useState<'ALL' | ResourceStatus>('ALL');
@@ -3603,11 +3609,18 @@ const App: React.FC = () => {
     ...workflowNavItems.filter(item => !mobilePrimaryItems.some(primary => primary.id === item.id)),
     ...adminNavItems
   ];
+  // 3D 视图默认收起；用户在该视图里手动展开后（hqSidebarExpanded）就不再自动收
+  const effectiveSidebarCollapsed = sidebarCollapsed || (view === 'HQ_3D' && !hqSidebarExpanded);
+  const toggleSidebar = () => {
+    setSidebarCollapsed(!effectiveSidebarCollapsed);
+    // 从收起切到展开时记下「这次是用户要的」，避免下一帧又被自动收回去
+    setHqSidebarExpanded(effectiveSidebarCollapsed);
+  };
   const isMoreView = mobileMoreItems.some(item => item.id === view);
   const isAdminView = adminNavItems.some(item => item.id === view);
 
   return (
-    <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-sidebar={sidebarCollapsed ? 'collapsed' : 'expanded'}>
+    <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-sidebar={effectiveSidebarCollapsed ? 'collapsed' : 'expanded'}>
       {/* Toast Notifications */}
       <div className="fixed top-6 right-6 z-[1000] space-y-3 pointer-events-none">
         {myNotifications.filter(n => !n.isRead).slice(0, 3).map(n => (
@@ -3622,13 +3635,13 @@ const App: React.FC = () => {
           <button
             type="button"
             className="studio-sidebar-toggle"
-            aria-label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            aria-expanded={!sidebarCollapsed}
+            aria-label={effectiveSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            aria-expanded={!effectiveSidebarCollapsed}
             aria-controls="studio-sidebar-navigation"
-            title={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-            onClick={() => setSidebarCollapsed(value => !value)}
+            title={effectiveSidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+            onClick={toggleSidebar}
           >
-            {sidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            {effectiveSidebarCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
           </button>
         </div>
         <nav id="studio-sidebar-navigation" aria-label="桌面主导航" className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">

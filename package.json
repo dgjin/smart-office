@@ -18,6 +18,8 @@
     "db:verify": "node --env-file-if-exists=.env scripts/db/verify.ts",
     "db:seed": "node --env-file-if-exists=.env scripts/db/seed.ts",
     "db:seed:hq3d": "node --env-file-if-exists=.env scripts/db/seed-hq3d.ts",
+    "db:apply:hq3d-confirmation": "node --env-file-if-exists=.env scripts/db/apply-hq3d-confirmation.ts",
+    "fonts:fetch": "node scripts/fetch-fonts.ts",
     "db:backup": "node --env-file-if-exists=.env scripts/db/native-backup.ts",
     "db:restore": "node --env-file-if-exists=.env scripts/db/native-restore.ts",
     "db:drill": "node --env-file-if-exists=.env scripts/db/native-drill.ts",

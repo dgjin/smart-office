@@ -34,7 +34,7 @@ const seed = async (data: Hq3dSeedData) => {
   }
 };
 const clearHq3d = async () => {
-  for (const table of ['hq3d_room_maintenance', 'hq3d_room_profile', 'hq3d_room', 'hq3d_floor', 'hq3d_building']) {
+  for (const table of ['hq3d_room_resource', 'hq3d_room_disposition', 'hq3d_room_maintenance', 'hq3d_room_profile', 'hq3d_room', 'hq3d_floor', 'hq3d_building']) {
     await queryTestDb(`DELETE FROM ${table}`);
   }
 };
