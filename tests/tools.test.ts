@@ -412,3 +412,100 @@ test('待办按用户路由，并携带可执行的审批、签到与工单动�
   assert.ok(approver.some(t => t.id === 'workorder-w1' && t.actions[0].type === 'PROPOSE_WORK_ORDER'));
   assert.equal(createExecutor(db, { userId: '3', now: NOW }).get_my_todos({}).data.total, employee.length);
 });
+
+test('帮助检索和系统导航只暴露当前角色可用功能', () => {
+  const employee = exec('3');
+  const employeeReport = employee.search_help({ query: '运营报表' });
+  assert.equal(employeeReport.ok, true);
+  assert.equal(employeeReport.data.total, 0);
+  assert.equal(employee.navigate_system({ view: 'REPORTS' }).ok, false);
+  assert.equal(employee.navigate_system({ view: '__PROTO__' }).ok, false);
+
+  const employeeBooking = employee.search_help({ query: '修改预约' });
+  assert.equal(employeeBooking.action?.type, 'OPEN_HELP');
+  if (employeeBooking.action?.type === 'OPEN_HELP') assert.equal(employeeBooking.action.topicId, 'booking-edit');
+  const resourceNavigation = employee.navigate_system({ view: 'RESOURCES' }).action;
+  assert.equal(resourceNavigation?.type, 'NAVIGATE');
+  if (resourceNavigation?.type === 'NAVIGATE') assert.equal(resourceNavigation.view, 'RESOURCES');
+
+  const admin = exec('1');
+  const adminReport = admin.search_help({ query: '运营报表' });
+  assert.equal(adminReport.action?.type, 'OPEN_HELP');
+  if (adminReport.action?.type === 'OPEN_HELP') assert.equal(adminReport.action.topicId, 'reports');
+  assert.equal(admin.navigate_system({ view: 'REPORTS' }).ok, true);
+  assert.equal(admin.navigate_system({ view: 'DATA_CENTER' }).ok, true);
+});
+
+test('修改预约只生成表单草案，冲突排除自身且禁止他人和涉密预约', () => {
+  const result = exec('3').propose_edit_booking({
+    bookingKeyword: '周会',
+    startTime: '2026-11-20T15:00',
+    endTime: '2026-11-20T16:00',
+    purpose: '周会复盘',
+    participants: 8
+  });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(result.action?.type, 'PROPOSE_EDIT_BOOKING');
+  if (result.action?.type === 'PROPOSE_EDIT_BOOKING') {
+    assert.equal(result.action.bookingId, 'b1');
+    assert.equal(result.action.draft.purpose, '周会复盘');
+  }
+  assert.equal(exec('1').propose_edit_booking({ bookingKeyword: '周会' }).ok, false);
+
+  const db = makeDb();
+  db.bookings![0].meetingType = 'CONFIDENTIAL';
+  assert.equal(createExecutor(db, { userId: '3', now: NOW }).propose_edit_booking({ bookingKeyword: '周会' }).ok, false);
+});
+
+test('长期预约续期要求本人、已核准首条且没有待审或活跃续期', () => {
+  const db = makeDb();
+  Object.assign(db.bookings![0], { seriesId: 'series-1', seriesKind: 'LONG_TERM', recurrenceIndex: 0, seriesEndDate: '2026-11-20' });
+  const renewed = createExecutor(db, { userId: '3', now: NOW }).propose_renew_booking({ bookingKeyword: '周会' });
+  assert.equal(renewed.ok, true);
+  assert.equal(renewed.action?.type, 'PROPOSE_RENEW_BOOKING');
+
+  db.bookings!.push({ ...db.bookings![0], id: 'renewal-1', seriesId: 'renewal-series-1', renewalOfSeriesId: 'series-1' });
+  assert.match(createExecutor(db, { userId: '3', now: NOW }).propose_renew_booking({ bookingKeyword: 'b1' }).error || '', /已有/);
+
+  const pending = makeDb();
+  Object.assign(pending.bookings![0], { seriesId: 'series-1', seriesKind: 'LONG_TERM', recurrenceIndex: 0, status: 'PENDING' });
+  assert.equal(createExecutor(pending, { userId: '3', now: NOW }).propose_renew_booking({ bookingKeyword: '周会' }).ok, false);
+});
+
+test('会务角色获得工单工具，参会人可在会前15分钟签到且结束后禁止签到', () => {
+  const coordinatorTools = toolsForRoles(['SERVICE_COORDINATOR']).map(tool => tool.function.name);
+  assert.ok(coordinatorTools.includes('get_work_orders'));
+  assert.ok(coordinatorTools.includes('propose_complete_work_order'));
+  const customTools = toolsForRoles(['CUSTOM_SERVICE'], [], [{ id: 'w1', bookingId: 'b1', type: 'TEA', title: '茶水', assigneeRole: 'CUSTOM_SERVICE', status: 'TODO', createdAt: NOW.toISOString() }]).map(tool => tool.function.name);
+  assert.ok(customTools.includes('get_work_orders'));
+
+  const db = makeDb();
+  Object.assign(db.bookings![0], {
+    attendeeIds: ['2'],
+    startTime: at(19, 23).toISOString(),
+    endTime: at(19, 23, 30).toISOString()
+  });
+  const attendee = createExecutor(db, { userId: '2', now: NOW }).propose_check_in({ bookingKeyword: '周会' });
+  assert.equal(attendee.ok, true);
+  assert.equal(attendee.action?.type, 'PROPOSE_CHECK_IN');
+
+  db.bookings![0].startTime = at(19, 23, 1).toISOString();
+  assert.match(createExecutor(db, { userId: '2', now: NOW }).propose_check_in({ bookingKeyword: '周会' }).error || '', /15 分钟/);
+  db.bookings![0].startTime = at(19, 21).toISOString();
+  db.bookings![0].endTime = at(19, 22).toISOString();
+  assert.match(createExecutor(db, { userId: '2', now: NOW }).propose_check_in({ bookingKeyword: '周会' }).error || '', /已经结束/);
+});
+
+test('参会人未匹配或歧义时明确报错，不再静默丢弃', () => {
+  const base = { resourceName: 'Beta', startTime: '2026-11-20T10:00', endTime: '2026-11-20T11:00', purpose: '项目评审', participants: 2 };
+  const missing = exec('3').propose_booking({ ...base, attendeeNames: ['不存在成员'] });
+  assert.equal(missing.ok, false);
+  assert.match(missing.error || '', /没有找到/);
+
+  const db = makeDb();
+  db.users!.push({ id: '4', name: '李员工', email: 'c2@company.com', role: ['EMPLOYEE'], department: '市场部' });
+  const ambiguous = createExecutor(db, { userId: '3', now: NOW }).propose_booking({ ...base, attendeeNames: ['李员工'] });
+  assert.equal(ambiguous.ok, false);
+  assert.match(ambiguous.error || '', /多位成员/);
+  assert.equal(ambiguous.candidates.length, 2);
+});

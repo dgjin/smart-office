@@ -1,0 +1,179 @@
+export const SYSTEM_VIEWS = [
+  'DASHBOARD', 'RESOURCES', 'USERS', 'BOOKINGS', 'ROLES', 'DEPARTMENTS',
+  'APPROVAL_CENTER', 'WORK_ORDERS', 'EXCEPTIONS', 'DEVICES', 'REPORTS',
+  'WORKFLOW_CONFIG', 'CONFIDENTIALITY', 'DATA_CENTER', 'HQ_3D'
+] as const;
+
+export type SystemView = typeof SYSTEM_VIEWS[number];
+export type HelpAccess = 'EVERYONE' | 'APPROVAL' | 'SERVICE' | 'ADMIN' | 'SECURITY';
+
+export interface HelpTopic {
+  id: string;
+  title: string;
+  category: '会议与空间' | '流程与会务' | '系统管理';
+  view: SystemView;
+  access: HelpAccess;
+  summary: string;
+  keywords: string[];
+  steps: string[];
+  note?: string;
+}
+
+export const HELP_TOPICS: HelpTopic[] = [
+  {
+    id: 'dashboard', title: '会议工作台与今日安排', category: '会议与空间', view: 'DASHBOARD', access: 'EVERYONE',
+    summary: '查看今日、本周和本月的会议安排、个人待办、下一场会议与空间使用概览。',
+    keywords: ['首页', '看板', '今日', '本周', '本月', '下一场', '日程'],
+    steps: ['在“会议工作台”切换今日、本周或本月。', '点击日程日期查看当天安排，点击下一场会议查看申请详情。', '需要签到时选择“扫码签到”，或从“我的申请”进入会议详情。']
+  },
+  {
+    id: 'resource-search', title: '查找会议室与查看周历', category: '会议与空间', view: 'RESOURCES', access: 'EVERYONE',
+    summary: '按名称、楼栋、楼层、容量、设备和状态筛选空间，并查看占用周历。',
+    keywords: ['资源', '会议室', '工位', '搜索', '筛选', '容量', '设备', '周历', '空闲'],
+    steps: ['进入“空间资源库”，输入关键词或组合筛选条件。', '使用“按条件找会议室”填写时间、人数和设备要求，空间导航会同步定位结果。', '打开资源周历确认占用时段，再选择“预约”进入正式申请表。']
+  },
+  {
+    id: 'resource-admin', title: '维护、加锁与删除空间资源', category: '系统管理', view: 'RESOURCES', access: 'ADMIN',
+    summary: '管理员可维护资源台账、楼栋楼层、设备、开放状态与3D映射；编辑和删除前必须逐项解锁。',
+    keywords: ['新增资源', '编辑资源', '删除资源', '加锁', '解锁', '维护', '导入', '台账'],
+    steps: ['进入“空间资源库”，先在目标资源的“管理”中解锁。', '编辑基本信息、开放时段、设备、容量、楼栋楼层和3D位置后保存。', '删除前确认没有预约历史和关联门口屏；不满足删除条件时改为维护或待开放。'],
+    note: '解锁仅在当前登录会话有效；刷新或切换身份后会重新加锁。'
+  },
+  {
+    id: 'hq-3d', title: '总部楼层3D空间导航', category: '会议与空间', view: 'HQ_3D', access: 'EVERYONE',
+    summary: '在主楼和配楼之间切换，查看楼层剖切、会议室分布和实时状态，并进入资源详情或预约。',
+    keywords: ['3D', '总部', '主楼', '配楼', '楼层', '剖切', '房间', '分布'],
+    steps: ['进入“总部楼层3D”，选择主楼或配楼及目标楼层。', '点击房间查看名称、容量、设备和当前会议状态。', '通过房间操作进入资源详情或预约；资源库与3D视图共用同一份资源数据。']
+  },
+  {
+    id: 'booking-create', title: '新建、周期与长期会议室预约', category: '会议与空间', view: 'RESOURCES', access: 'EVERYONE',
+    summary: '通过正式表单填写时间、用途、人数、参会人、会议类型、涉密选择与会务服务。',
+    keywords: ['预约', '预订', '申请', '周期', '每周', '双周', '长期', '视频会议', '茶水'],
+    steps: ['从资源库、3D房间或助手草案打开正式预约表单。', '填写明确用途、时间、人数、参会人和会议类型；涉密属性必须本人明确选择。', '按需添加会务服务、周期或长期安排，核对冲突与审批说明后提交。'],
+    note: '助手草案和表单预填都不会直接创建预约，只有正式表单提交成功后才生效。'
+  },
+  {
+    id: 'booking-edit', title: '修改、取消与提前结束预约', category: '会议与空间', view: 'BOOKINGS', access: 'EVERYONE',
+    summary: '在“我的申请”修改自己的有效预约、撤销申请，或在会议进行中提前结束并释放空间。',
+    keywords: ['修改预约', '改期', '取消', '撤销', '提前结束', '释放'],
+    steps: ['进入“我的申请”，展开目标预约。', '选择“修改预约”调整信息后重新提交，系统会重新校验冲突、额度和审批规则。', '选择“撤销此申请”取消；已签到且正在进行的会议可“提前结束并释放”。'],
+    note: '涉密变更、服务取消时限和长期系列仍按服务端规则执行。'
+  },
+  {
+    id: 'booking-renewal', title: '长期预约续期', category: '会议与空间', view: 'BOOKINGS', access: 'EVERYONE',
+    summary: '长期系列核准后可发起下一周期续期，原周期保持不变，新周期单独校验和审批。',
+    keywords: ['续期', '长期预订', '一个月', '系列', '周期'],
+    steps: ['展开长期系列的首次预约，选择“申请续期”。', '核对系统生成的下一周期起止日期、每日时段、服务和参会人。', '提交后等待新周期审批；重复续期或当前周期仍在审批时不能提交。']
+  },
+  {
+    id: 'booking-check-in', title: '会议签到与实际使用', category: '会议与空间', view: 'BOOKINGS', access: 'EVERYONE',
+    summary: '申请人和参会人可在会前15分钟至会议结束前签到，签到事实用于no-show与使用对账。',
+    keywords: ['签到', '扫码', '二维码', '参会人', '实际使用', 'no-show', '未使用'],
+    steps: ['在有效时间窗内选择顶部“扫码签到”，或展开会议后选择“会议签到”。', '核对会议与资源后确认签到。', '如实际使用记录有差异，在会议详情中提交使用申诉，由有权限的角色处理。']
+  },
+  {
+    id: 'booking-calendar', title: '导出ICS日历与参会邀请', category: '会议与空间', view: 'BOOKINGS', access: 'EVERYONE',
+    summary: '已核准或已取消的预约可按权限导出ICS；参会人通过服务端权限校验后下载。',
+    keywords: ['ICS', '日历', '导出', '下载', '参会人', '邀请'],
+    steps: ['进入“我的申请”并展开预约。', '选择“下载ICS日历”，等待服务端完成权限校验和文件生成。', '将文件导入个人日历；涉密会议仅向获授权人员提供允许的信息。']
+  },
+  {
+    id: 'approval', title: '审批、批量审批与代理', category: '流程与会务', view: 'APPROVAL_CENTER', access: 'APPROVAL',
+    summary: '审批人按当前节点和部门范围处理申请，长期系列按会议日成组审批，驳回必须填写意见。',
+    keywords: ['审批', '通过', '驳回', '批量', '代理', '委托', '流程'],
+    steps: ['进入“审批工作台”，核对申请、资源、时间、服务和审批历史。', '选择通过或驳回；批量操作仅处理已勾选且当前可审批的申请。', '需要代理时由管理员配置有效时间段，系统按代理范围重新计算待办。'],
+    note: '助手只能生成审批提案，最终仍须用户确认，服务端会重检节点、范围和状态。'
+  },
+  {
+    id: 'work-orders', title: '会务服务目录与工单处理', category: '流程与会务', view: 'WORK_ORDERS', access: 'SERVICE',
+    summary: '处理茶水、视频、车辆、桌牌、安保等服务工单，记录补充信息、执行结果、成本与异常。',
+    keywords: ['工单', '会务', '茶水', '视频', '车辆', '桌牌', '服务目录', '成本'],
+    steps: ['进入“服务工单”，按状态和资源筛选本人职责范围内的工单。', '补充目录必填信息，开始处理并填写执行结果或异常原因。', '完成后核对状态与成本；相关状态会回写预约和运营报表。']
+  },
+  {
+    id: 'exceptions', title: '异常中心与人工释放', category: '流程与会务', view: 'EXCEPTIONS', access: 'SERVICE',
+    summary: '集中处理审批超时、未签到、服务异常、设备与集成异常，保留处理记录和审计证据。',
+    keywords: ['异常', '释放', '超时', '未签到', '补偿', '重放', '告警'],
+    steps: ['进入“异常中心”，按类型和状态定位异常。', '查看关联预约、工单或设备事实，选择系统提供的处理动作。', '填写原因并确认；高风险集成补偿、重放和人工释放按页面权限与审计要求执行。']
+  },
+  {
+    id: 'workflow', title: '动态审批规则与流程版本', category: '系统管理', view: 'WORKFLOW_CONFIG', access: 'ADMIN',
+    summary: '配置审批节点、部门与园区范围、优先级规则、流程版本和审批代理。',
+    keywords: ['流程配置', '审批节点', '规则', '版本', '优先级', '自动核准'],
+    steps: ['在“流程配置”维护节点顺序、负责角色和适用范围。', '按优先级配置重要、专属、重服务及连续超期等规则并发布。', '新申请使用发布版本；在途申请继续使用提交时冻结的规则与流程。']
+  },
+  {
+    id: 'departments', title: '部门组织与同步差异', category: '系统管理', view: 'DEPARTMENTS', access: 'ADMIN',
+    summary: '维护部门层级，或通过数据中心预览组织同步差异后再应用。',
+    keywords: ['部门', '组织', '层级', '同步', '导入', '停用'],
+    steps: ['在“部门管理”新增、编辑或调整部门层级。', '删除前处理子部门、成员和流程引用。', '使用组织同步时先检查新增、变更、停用和撤销影响，再由管理员应用。']
+  },
+  {
+    id: 'roles', title: '角色与权限职责', category: '系统管理', view: 'ROLES', access: 'ADMIN',
+    summary: '维护角色定义，并通过成员角色、审批节点和服务职责共同控制可见功能。',
+    keywords: ['角色', '权限', '职责', '员工', '审批人', '会务', '保密'],
+    steps: ['在“角色管理”核对角色名称和职责。', '在成员中心分配角色，在流程与服务目录中配置对应职责。', '使用不同身份验证导航、数据范围和操作权限。']
+  },
+  {
+    id: 'users', title: '成员档案与批量维护', category: '系统管理', view: 'USERS', access: 'ADMIN',
+    summary: '维护成员姓名、联系方式、部门、角色和状态，支持导入、批量操作与安全停用。',
+    keywords: ['成员', '用户', '员工', '联系方式', '角色', '导入', '停用'],
+    steps: ['进入“成员中心”搜索或筛选成员。', '编辑档案并补齐预约所需姓名、座机和手机。', '停用或删除前处理有效预约和代理关系；组织同步成员按同步状态维护。']
+  },
+  {
+    id: 'reports', title: '运营管理看板与明细对账', category: '系统管理', view: 'REPORTS', access: 'ADMIN',
+    summary: '查看空间利用、计划与实际使用、部门投入和会务状态，并导出CSV或XLSX。',
+    keywords: ['运营报表', '报表', '看板', '图表', '利用率', '趋势', '对账', 'CSV', 'XLSX', '导出'],
+    steps: ['进入“运营报表”，选择日期范围并查看管理看板。', '切换“明细与对账”核对预约、签到、服务和差异。', '按当前筛选导出CSV或XLSX；图表与明细使用同一数据快照。']
+  },
+  {
+    id: 'devices', title: '门口屏设备与令牌边界', category: '系统管理', view: 'DEVICES', access: 'ADMIN',
+    summary: '维护门口屏绑定、在线状态和离线展示策略，设备令牌只通过受控环境配置注入。',
+    keywords: ['门口屏', '设备', '令牌', '离线', '绑定', '撤销', '重启'],
+    steps: ['进入“门口屏设备”，检查绑定资源、心跳和在线状态。', '按页面指引执行绑定、撤销或重启等管理动作。', '排障时同时检查资源状态、设备时间和离线缓存边界。'],
+    note: '不要在对话、文档或帮助中粘贴设备令牌。'
+  },
+  {
+    id: 'confidentiality', title: '涉密白名单与变更授权', category: '系统管理', view: 'CONFIDENTIALITY', access: 'SECURITY',
+    summary: '保密管理员维护涉密资格，按规则签发一次性降级或参会范围变化授权。',
+    keywords: ['涉密', '保密', '白名单', '授权', '降级', '双人授权'],
+    steps: ['进入“保密控制”，核对白名单成员与设置理由。', '选择待审批涉密申请和授权类型，填写理由后签发一次性授权。', '申请人提交匹配变更后授权自动核销；降级需要两名不同授权人。'],
+    note: '助手不会代替用户选择涉密属性、签发授权或修改白名单。'
+  },
+  {
+    id: 'data-center', title: '数据、集成、审计与备份恢复', category: '系统管理', view: 'DATA_CENTER', access: 'ADMIN',
+    summary: '集中查看规则版本、组织同步、外部集成、审计和运行证据；高影响操作保留人工执行。',
+    keywords: ['数据中心', '集成', 'OA', '日历', '门禁', '审计', '备份', '恢复', '组织同步'],
+    steps: ['进入“数据中心”选择对应维护区域。', '组织同步先预览差异，集成异常先核对事件与投递事实，审计查询按条件筛选。', '备份、恢复、补偿和重放按企业Runbook执行并保留责任方签认。'],
+    note: '助手提供定位与操作指导，不直接执行恢复、补偿、重放或其他高影响维护。'
+  }
+];
+
+export const isSystemView = (value: unknown): value is SystemView =>
+  typeof value === 'string' && SYSTEM_VIEWS.includes(value as SystemView);
+
+export const getHelpTopic = (id: string) => HELP_TOPICS.find(topic => topic.id === id);
+
+export const canUseHelpTopic = (topic: HelpTopic, roles: string[], allowedViews: ReadonlySet<SystemView>) => {
+  if (!allowedViews.has(topic.view)) return false;
+  if (topic.access === 'ADMIN') return roles.includes('SYSTEM_ADMIN');
+  if (topic.access === 'SECURITY') return roles.includes('SYSTEM_ADMIN') || roles.includes('SECURITY_ADMIN');
+  return true;
+};
+
+export const searchHelpTopics = (query: string, topics: HelpTopic[] = HELP_TOPICS) => {
+  const keyword = query.trim().toLowerCase();
+  if (!keyword) return topics;
+  return topics.map(topic => {
+    const title = topic.title.toLowerCase();
+    const haystack = [topic.title, topic.summary, ...topic.keywords, ...topic.steps].join(' ').toLowerCase();
+    let score = haystack.includes(keyword) ? 1 : 0;
+    if (title === keyword) score += 12;
+    else if (title.includes(keyword)) score += 6;
+    if (topic.keywords.some(item => item.toLowerCase() === keyword)) score += 8;
+    else if (topic.keywords.some(item => item.toLowerCase().includes(keyword))) score += 4;
+    return { topic, score };
+  }).filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score || a.topic.title.localeCompare(b.topic.title, 'zh-CN'))
+    .map(item => item.topic);
+};

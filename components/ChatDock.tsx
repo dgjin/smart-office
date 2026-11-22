@@ -5,6 +5,7 @@ import { SERVICE_TYPE_LABELS } from '../constants';
 import { formatDate, formatTime } from '../utils/dateTime';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { validateBookingDraft } from '../utils/bookingDraft';
+import type { SystemView } from '../helpCatalog';
 
 export interface BookingDraft {
   userId?: string;
@@ -28,7 +29,7 @@ export interface BookingDraft {
 }
 
 export interface AgentAction {
-  type: 'PROPOSE_BOOKING' | 'PROPOSE_CANCEL' | 'PROPOSE_APPROVAL' | 'PROPOSE_CHECK_IN' | 'PROPOSE_WORK_ORDER' | 'NAVIGATE' | 'REFRESH';
+  type: 'PROPOSE_BOOKING' | 'PROPOSE_EDIT_BOOKING' | 'PROPOSE_RENEW_BOOKING' | 'PROPOSE_CANCEL' | 'PROPOSE_APPROVAL' | 'PROPOSE_CHECK_IN' | 'PROPOSE_WORK_ORDER' | 'OPEN_HELP' | 'NAVIGATE' | 'REFRESH';
   draft?: BookingDraft;
   summary?: string;
   bookingId?: string;
@@ -36,7 +37,9 @@ export interface AgentAction {
   workOrderId?: string;
   decision?: 'APPROVE' | 'REJECT';
   comment?: string;
-  view?: string;
+  reason?: string;
+  topicId?: string;
+  view?: SystemView;
 }
 
 interface TodoItem {
@@ -68,7 +71,8 @@ interface ChatDockProps {
   users: User[];
   serviceCatalog: ServiceCatalogItem[];
   onAction: (action: AgentAction) => void | Promise<void>;
-  onNavigate: (view: string) => void;
+  onNavigate: (view: SystemView) => void;
+  request?: { id: number; question: string };
 }
 
 type ActionState = 'done' | 'opened' | 'dismissed';
@@ -89,7 +93,11 @@ const TOOL_LABELS: Record<string, string> = {
   get_usage_stats: '统计使用数据',
   get_work_orders: '查询服务工单',
   get_my_todos: '整理我的待办',
+  search_help: '检索功能指南',
+  navigate_system: '定位系统功能',
   propose_booking: '填写申请草案',
+  propose_edit_booking: '生成修改草案',
+  propose_renew_booking: '生成续期草案',
   propose_cancel: '生成取消提案',
   propose_approval: '生成审批提案',
   propose_check_in: '生成签到提案',
@@ -98,11 +106,15 @@ const TOOL_LABELS: Record<string, string> = {
 
 const ACTION_META: Record<string, { label: string; hint: string; tone: string }> = {
   PROPOSE_BOOKING: { label: '确认并填写', hint: '将打开预约表单，核对后提交', tone: 'emerald' },
+  PROPOSE_EDIT_BOOKING: { label: '核对并修改', hint: '只打开正式修改表单，提交后才会生效', tone: 'emerald' },
+  PROPOSE_RENEW_BOOKING: { label: '核对并续期', hint: '只打开正式续期表单，提交后进入审批', tone: 'emerald' },
   PROPOSE_CANCEL: { label: '确认取消', hint: '取消后该时段立即释放', tone: 'red' },
   PROPOSE_APPROVAL: { label: '确认审批', hint: '提交后进入下一审批节点', tone: 'amber' },
   PROPOSE_CHECK_IN: { label: '确认签到', hint: '将记录本次到店签到', tone: 'indigo' },
   PROPOSE_WORK_ORDER: { label: '确认完成', hint: '完成后将通知会议申请人', tone: 'emerald' },
-  NAVIGATE: { label: '前往查看', hint: '', tone: 'indigo' }
+  OPEN_HELP: { label: '查看指南', hint: '将在帮助抽屉中打开对应操作说明', tone: 'indigo' },
+  NAVIGATE: { label: '前往查看', hint: '', tone: 'indigo' },
+  REFRESH: { label: '刷新数据', hint: '重新读取当前权限范围内的数据', tone: 'indigo' }
 };
 
 const renderInline = (text: string) => text.split(/(\*\*[^*]+\*\*)/g).map((part, index) =>
@@ -415,13 +427,13 @@ const ApprovalActionCard = ({ action, done, busy, error, onConfirm }: {
 };
 
 const SUGGESTIONS = [
-  '明天下午三点 10 人开会，要视频设备，帮我订个会议室',
+  '明天下午三点 10 人开项目评审会，要视频设备，帮我订个会议室',
+  '如何修改我的会议室预约？',
   '我有哪些待审批的申请？',
-  'Alpha 会议室明天还有空吗？',
-  '最近 30 天会议室用得怎么样？'
+  '打开运营报表并说明如何导出'
 ];
 
-export default function ChatDock({ open, onClose, userId, userName, theme, resources, bookings, users, serviceCatalog, onAction, onNavigate }: ChatDockProps) {
+export default function ChatDock({ open, onClose, userId, userName, theme, resources, bookings, users, serviceCatalog, onAction, onNavigate, request }: ChatDockProps) {
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -447,6 +459,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
   const conversationSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const conversationSaveChain = useRef<Promise<void>>(Promise.resolve());
   const conversationLatest = useRef<ConversationState>({ turns: [], handled: {}, input: '' });
+  const handledRequest = useRef(0);
   conversationLatest.current = { turns, handled, input };
   // 流式增量按帧合并：模型单字下发，逐字 setState 会把主线程拖死
   const pendingRef = useRef('');
@@ -518,6 +531,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
     setActionErrors({});
     setPendingActions({});
     actionLocks.current.clear();
+    handledRequest.current = 0;
     setExpandedTrace({});
     setLoading(false);
     setStatus(null);
@@ -781,6 +795,12 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
     }
   };
 
+  useEffect(() => {
+    if (!open || !request || !conversationReady || loading || handledRequest.current === request.id) return;
+    handledRequest.current = request.id;
+    void send(request.question);
+  }, [open, request?.id, conversationReady, loading]);
+
   const updateDraft = (turnIndex: number, actionIndex: number, draft: BookingDraft) => {
     const key = `${turnIndex}-${actionIndex}`;
     setTurns(prev => prev.map((turn, index) => index !== turnIndex ? turn : {
@@ -811,7 +831,10 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
     try {
       if (action.type === 'NAVIGATE' && action.view) onNavigate(action.view);
       else await onAction(action);
-      setHandled(prev => ({ ...prev, [key]: action.type === 'PROPOSE_BOOKING' ? 'opened' : 'done' }));
+      setHandled(prev => ({
+        ...prev,
+        [key]: ['PROPOSE_BOOKING', 'PROPOSE_EDIT_BOOKING', 'PROPOSE_RENEW_BOOKING', 'OPEN_HELP'].includes(action.type) ? 'opened' : 'done'
+      }));
       await refreshTodos();
     } catch (err: any) {
       setActionErrors(prev => ({ ...prev, [key]: err?.message || '操作未完成，请稍后重试。' }));

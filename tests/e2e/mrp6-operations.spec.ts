@@ -469,6 +469,26 @@ test.describe('MRP6 真实 Chrome 驾驶舱、异常、设备与报表', () => {
     const admin = await openWorkspace(browser, 'admin');
     await openAdminView(admin.page, '运营报表');
     await expect(admin.page.getByRole('heading', { name: '利用率与审批效率', exact: true })).toBeVisible();
+    await expect(admin.page.getByRole('tab', { name: '管理看板', exact: true })).toHaveAttribute('aria-selected', 'true');
+    await expect(admin.page.getByRole('heading', { name: '空间利用与会务执行概览', exact: true })).toBeVisible();
+    for (const title of ['预约计划与实际使用趋势', '空间使用排行', '部门会议投入', '会务执行状态']) {
+      await expect(admin.page.getByRole('heading', { name: title, exact: true })).toBeVisible();
+    }
+    const trendSection = admin.page.locator('section').filter({ has: admin.page.getByRole('heading', { name: '预约计划与实际使用趋势', exact: true }) });
+    await expect(admin.page.locator('.report-chart-card svg[role="img"]')).toHaveCount(4);
+    await expect(trendSection.getByRole('img')).toBeVisible();
+    const scheduledTotal = await admin.page.locator('.report-kpi').filter({ hasText: '计划时长' }).locator('strong').evaluate(element => element.firstChild?.textContent || '');
+    const actualTotal = await admin.page.locator('.report-kpi').filter({ hasText: '实际时长' }).locator('strong').evaluate(element => element.firstChild?.textContent || '');
+    await expect(trendSection.locator('.report-chart-legend .is-scheduled')).toHaveText(`计划 ${scheduledTotal} 小时`);
+    await expect(trendSection.locator('.report-chart-legend .is-actual')).toHaveText(`实际 ${actualTotal} 小时`);
+    await trendSection.getByText('查看图表数据', { exact: true }).click();
+    await expect(trendSection.getByRole('table')).toContainText('计划小时');
+    await expect(trendSection.getByRole('table').locator('tbody tr').first()).toBeVisible();
+    await trendSection.getByText('查看图表数据', { exact: true }).click();
+    await admin.page.locator('.studio-main').evaluate(element => { element.scrollTop = 0; });
+    await admin.page.screenshot({ path: 'test-results/mrp6-report-dashboard-desktop-1440.png', fullPage: true });
+    await admin.page.locator('.report-chart-grid').screenshot({ path: 'test-results/mrp6-report-charts-desktop.png' });
+    await admin.page.getByRole('button', { name: '查看对账明细', exact: true }).click();
     await expect(admin.page.getByText('多维统计', { exact: true })).toBeVisible();
     const rangeSelect = admin.page.getByLabel('报表时间范围', { exact: true });
     const anchorInput = admin.page.getByLabel('报表基准日期', { exact: true });
@@ -496,6 +516,11 @@ test.describe('MRP6 真实 Chrome 驾驶舱、异常、设备与报表', () => {
     await anchorInput.fill('2099-01-15');
     await emptyResponse;
     await expect(supplySection.getByText('当前范围没有可汇总的结构化备料需求', { exact: true })).toBeVisible();
+    await admin.page.getByRole('tab', { name: '管理看板', exact: true }).click();
+    for (const message of ['当前范围没有预约趋势数据', '当前范围没有空间使用数据', '当前范围没有部门会议数据', '当前范围没有会务工单数据']) {
+      await expect(admin.page.getByText(message, { exact: true })).toBeVisible();
+    }
+    await admin.page.getByRole('tab', { name: '明细与对账', exact: true }).click();
     const restoredResponse = admin.page.waitForResponse(item => item.url().includes('/api/reports?') && item.ok());
     await anchorInput.fill(today);
     await restoredResponse;
@@ -553,6 +578,13 @@ test.describe('MRP6 真实 Chrome 驾驶舱、异常、设备与报表', () => {
     await admin.page.setViewportSize({ width: 390, height: 844 });
     await expect(admin.page.getByRole('button', { name: '导出 XLSX', exact: true })).toBeVisible();
     expect(await admin.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await admin.page.getByRole('tab', { name: '管理看板', exact: true }).click();
+    await expect(admin.page.getByRole('heading', { name: '预约计划与实际使用趋势', exact: true })).toBeVisible();
+    expect(await admin.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    const mobileChart = await trendSection.locator('.report-chart-body').evaluate(element => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
+    expect(mobileChart.scrollWidth).toBeGreaterThan(mobileChart.clientWidth);
+    await admin.page.screenshot({ path: 'test-results/mrp6-report-dashboard-mobile-390.png', fullPage: true });
+    await admin.page.getByRole('tab', { name: '明细与对账', exact: true }).click();
     const mobileTable = await reportTable.evaluate(element => ({ scrollWidth: element.scrollWidth, clientWidth: element.clientWidth }));
     expect(mobileTable.scrollWidth).toBeGreaterThan(mobileTable.clientWidth);
     await reportTable.scrollIntoViewIfNeeded();

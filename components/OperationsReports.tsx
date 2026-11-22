@@ -4,6 +4,7 @@ import type { Booking, OperationsReport, OperationsReportDimension } from '../ty
 import { formatDate, toLocalDateTimeString } from '../utils/dateTime';
 import { BOOKING_DISPLAY_STATUS_LABELS } from '../utils/bookingRules';
 import { calendarReportRange, localDateInputValue } from '../utils/reports';
+import OperationsDashboard from './OperationsDashboard';
 
 type Notify = (title: string, content: string, type?: 'INFO' | 'SUCCESS' | 'WARNING') => void;
 type RangeId = 'DAY' | 'WEEK' | 'MONTH' | '7' | '30' | '90' | 'ALL';
@@ -17,6 +18,7 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
   const [rangeId, setRangeId] = useState<RangeId>('MONTH');
   const [anchorDate, setAnchorDate] = useState(() => localDateInputValue(new Date()));
   const [dimension, setDimension] = useState<'ALL' | OperationsReportDimension>('ALL');
+  const [view, setView] = useState<'OVERVIEW' | 'DETAIL'>('OVERVIEW');
   const [report, setReport] = useState<OperationsReport | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState<'csv' | 'xlsx' | ''>('');
@@ -69,10 +71,17 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
     } finally { setExporting(''); }
   };
   const rows = report?.rows.filter(row => dimension === 'ALL' || row.dimension === dimension) || [];
-  return <div className="space-y-6 animate-in fade-in">
+  const changeViewWithKeyboard = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const nextView = event.key === 'Home' ? 'OVERVIEW' : event.key === 'End' ? 'DETAIL' : view === 'OVERVIEW' ? 'DETAIL' : 'OVERVIEW';
+    setView(nextView);
+    document.getElementById(nextView === 'OVERVIEW' ? 'report-overview-tab' : 'report-detail-tab')?.focus();
+  };
+  return <div className="space-y-6 animate-in fade-in" aria-busy={loading}>
     <div className="flex flex-col gap-4 xl:flex-row xl:items-end xl:justify-between">
-      <div><p className="text-[11px] font-black uppercase tracking-[0.2em] text-gray-500">RECONCILIATION / REPORTING</p><h3 className="mt-1 text-2xl font-black text-gray-800">利用率与审批效率</h3><p className="mt-2 text-sm text-gray-500">{report ? `${formatDate(new Date(report.start))} 至 ${formatDate(new Date(report.end))}` : '正在读取服务端快照'} · 计划、签到、实际使用与服务分别对账</p></div>
-      <div className="flex flex-wrap gap-2">
+      <div><p className="studio-eyebrow">运营分析 · 管理视角</p><h3 className="mt-1 text-2xl font-black text-gray-800">利用率与审批效率</h3><p className="mt-2 text-sm text-gray-500">{report ? `${formatDate(new Date(report.start))} 至 ${formatDate(new Date(report.end))}` : '正在读取服务端快照'} · 计划、签到、实际使用与服务分别对账</p></div>
+      <div className="report-toolbar flex flex-wrap gap-2">
         <select aria-label="报表时间范围" value={rangeId} onChange={event => setRangeId(event.target.value as RangeId)} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-bold"><option value="DAY">自然日</option><option value="WEEK">自然周（周一起）</option><option value="MONTH">自然月</option><option value="7">近 7 天</option><option value="30">近 30 天</option><option value="90">近 90 天</option><option value="ALL">全部数据</option></select>
         {(rangeId === 'DAY' || rangeId === 'WEEK' || rangeId === 'MONTH') && <input aria-label="报表基准日期" type="date" value={anchorDate} onChange={event => { if (event.target.value) setAnchorDate(event.target.value); }} className="rounded-xl border border-gray-200 bg-white px-4 py-3 text-xs font-bold text-gray-700"/>}
         <button onClick={() => void load()} disabled={loading} aria-label="刷新报表" className="rounded-xl border border-gray-200 bg-white px-3 text-gray-600 disabled:opacity-40"><RefreshCw size={15} className={loading ? 'animate-spin' : ''}/></button>
@@ -81,14 +90,12 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
       </div>
     </div>
     {error && <p role="alert" className="rounded-xl border border-rose-100 bg-rose-50 p-3 text-xs font-bold text-rose-600">{error}</p>}
+    <div className="report-view-tabs" role="tablist" aria-label="运营报表视图">
+      <button id="report-overview-tab" type="button" role="tab" aria-selected={view === 'OVERVIEW'} aria-controls="report-overview-panel" tabIndex={view === 'OVERVIEW' ? 0 : -1} onClick={() => setView('OVERVIEW')} onKeyDown={changeViewWithKeyboard}>管理看板</button>
+      <button id="report-detail-tab" type="button" role="tab" aria-selected={view === 'DETAIL'} aria-controls="report-detail-panel" tabIndex={view === 'DETAIL' ? 0 : -1} onClick={() => setView('DETAIL')} onKeyDown={changeViewWithKeyboard}>明细与对账</button>
+    </div>
     {!report && loading && <div className="rounded-3xl border border-gray-100 bg-white py-24 text-center text-sm font-bold text-gray-500">正在按权限生成对账快照…</div>}
-    {report && <>
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4 xl:grid-cols-8">
-        {[
-          ['预约数', report.overall.bookingCount, '单'], ['计划时长', report.overall.scheduledHours, '小时'], ['实际时长', report.overall.actualHours, '小时'], ['使用率', report.overall.utilization, '%'],
-          ['签到预约', report.overall.checkedInCount, '单'], ['提前结束', report.overall.earlyEndCount, '单'], ['服务成本', report.overall.serviceCost, '元'], ['对账差异', report.differences.length, '项']
-        ].map(([label, value, unit]) => <div key={String(label)} className="rounded-3xl border border-gray-100 bg-white p-4"><p className="text-[11px] font-black text-gray-500">{label}</p><p className="mt-2 text-2xl font-black text-gray-800">{value}<span className="ml-1 text-xs text-gray-500">{unit}</span></p></div>)}
-      </div>
+    {report && (view === 'OVERVIEW' ? <OperationsDashboard report={report} onShowDifferences={() => setView('DETAIL')}/> : <div className="report-details space-y-6" id="report-detail-panel" role="tabpanel" aria-label="明细与对账">
       <section className="space-y-4" aria-labelledby="report-dimensions-title">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between"><div><h4 id="report-dimensions-title" className="font-black text-gray-800">多维统计</h4><p className="mt-1 text-xs text-gray-500">使用率按每日 08:00—20:00 可预约容量计算；服务行按工单类型统计。</p></div><select aria-label="报表维度" value={dimension} onChange={event => setDimension(event.target.value as typeof dimension)} className="rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-xs font-bold"><option value="ALL">全部维度</option>{Object.entries(dimensionLabels).filter(([id]) => id !== 'OVERALL').map(([id, label]) => <option key={id} value={id}>{label}</option>)}</select></div>
         <div className="studio-table-shell">
@@ -117,6 +124,6 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
           {report.differences.length > 200 && <p className="border-t border-gray-100 px-4 py-3 text-xs font-bold text-gray-500">页面仅显示前 200 项，XLSX 包含全部 {report.differences.length} 项。</p>}
         </div>}
       </section>
-    </>}
+    </div>)}
   </div>;
 }

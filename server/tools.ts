@@ -1,7 +1,8 @@
 import type { ApprovalDelegate, ApprovalRuleSetVersion, AuditoriumSetup, Booking, BookingServiceRequirement, BookingUsageFact, CheckInEvent, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, DoorDevice, ExceptionActionRecord, OrganizationSyncBatch, Resource, ServiceArea, ServiceCatalogItem, ServiceInspection, ServiceShift, UsageAppeal, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion, RuleVersion, ResourceImportBatch, ExternalCallback, ExternalCompensation, AccessAuthorizationFact, IntegrationDelivery } from '../types.ts';
 import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, isValidBookingPurpose, validateBookingResource } from '../utils/bookingRules.ts';
 import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
-import { SERVICE_TYPES, isServiceType } from '../constants.ts';
+import { SERVICE_TYPES, SERVICE_TYPE_LABELS, isServiceType } from '../constants.ts';
+import { canUseHelpTopic, HELP_TOPICS, isSystemView, searchHelpTopics, SYSTEM_VIEWS, type SystemView } from '../helpCatalog.ts';
 
 export interface OfficeDb {
   roles?: RoleDefinition[];
@@ -42,8 +43,11 @@ export interface AgentContext {
 }
 
 export type AgentAction =
-  | { type: 'NAVIGATE'; view: string }
-  | { type: 'PROPOSE_BOOKING'; draft: Partial<Booking> ; summary: string }
+  | { type: 'NAVIGATE'; view: SystemView; summary?: string }
+  | { type: 'OPEN_HELP'; topicId: string; summary: string }
+  | { type: 'PROPOSE_BOOKING'; draft: Partial<Booking>; summary: string }
+  | { type: 'PROPOSE_EDIT_BOOKING'; bookingId: string; draft: Partial<Booking>; summary: string }
+  | { type: 'PROPOSE_RENEW_BOOKING'; bookingId: string; summary: string }
   | { type: 'PROPOSE_CANCEL'; bookingId: string; reason?: string; summary: string }
   | { type: 'PROPOSE_APPROVAL'; bookingId: string; bookingIds?: string[]; decision: 'APPROVE' | 'REJECT'; comment?: string; summary: string }
   | { type: 'PROPOSE_CHECK_IN'; bookingId: string; summary: string }
@@ -252,6 +256,30 @@ export const TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'search_help',
+      description: '检索当前角色可见的系统操作指南。用户询问“怎么用/在哪里/如何操作”时优先使用，并给出可打开的帮助卡片。',
+      parameters: {
+        type: 'object',
+        properties: { query: { type: 'string', description: '功能或操作关键词，如 修改预约、长期续期、导出报表、涉密授权' } },
+        required: ['query']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'navigate_system',
+      description: '生成前往指定系统页面的导航卡片，仅允许固定视图和当前角色有权限的页面。高风险维护只导航，不直接执行。',
+      parameters: {
+        type: 'object',
+        properties: { view: { type: 'string', enum: [...SYSTEM_VIEWS], description: '目标系统视图' } },
+        required: ['view']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'list_resources',
       description: '列出全部会议室/工位及其容量、位置、设备特性。用户问"有哪些会议室"时使用。',
       parameters: {
@@ -417,6 +445,36 @@ export const TOOLS = [
   {
     type: 'function' as const,
     function: {
+      name: 'propose_edit_booking',
+      description: '为本人普通或重要会议生成修改预约的表单预填提案。只修改明确给出的时间、用途或人数，确认后打开正式表单，不直接落库。',
+      parameters: {
+        type: 'object',
+        properties: {
+          bookingKeyword: { type: 'string', description: '用于定位本人有效预约的资源名、用途或日期' },
+          startTime: { type: 'string', description: '新的开始时间，ISO 8601 本地时间；不变则省略' },
+          endTime: { type: 'string', description: '新的结束时间，ISO 8601 本地时间；不变则省略' },
+          purpose: { type: 'string', description: '新的明确用途；不变则省略' },
+          participants: { type: 'number', description: '新的人数；不变则省略' }
+        },
+        required: ['bookingKeyword']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'propose_renew_booking',
+      description: '为本人已核准的长期预约生成下一周期续期提案，确认后打开正式续期表单，不直接落库。',
+      parameters: {
+        type: 'object',
+        properties: { bookingKeyword: { type: 'string', description: '长期系列用途、资源名或日期' } },
+        required: ['bookingKeyword']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
       name: 'propose_cancel',
       description: '生成一条取消预订提案，需用户确认后执行。',
       parameters: {
@@ -463,12 +521,14 @@ export const TOOLS = [
 const APPROVER_TOOLS = new Set(['get_pending_approvals', 'propose_approval']);
 const ADMIN_TOOLS = new Set(['get_usage_stats']);
 const SERVICE_TOOLS = new Set(['get_work_orders', 'propose_complete_work_order']);
+const SERVICE_ROLES = new Set(['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK']);
 
 /** 按角色裁剪工具集：员工看不到审批类工具，服务端不依赖模型自觉。 */
-export const toolsForRoles = (roles: string[] = [], workflow: ApprovalNode[] = []) => TOOLS.filter(tool => {
+export const toolsForRoles = (roles: string[] = [], workflow: ApprovalNode[] = [], workOrders: WorkOrder[] = []) => TOOLS.filter(tool => {
   const name = tool.function.name;
   if (APPROVER_TOOLS.has(name)) return roles.includes('APPROVAL_ADMIN') || roles.includes('SYSTEM_ADMIN') || workflow.some(node => roles.includes(node.approverRole));
-  if (ADMIN_TOOLS.has(name) || SERVICE_TOOLS.has(name)) return roles.includes('SYSTEM_ADMIN') || roles.includes('APPROVAL_ADMIN');
+  if (ADMIN_TOOLS.has(name)) return roles.includes('SYSTEM_ADMIN') || roles.includes('APPROVAL_ADMIN');
+  if (SERVICE_TOOLS.has(name)) return roles.some(role => SERVICE_ROLES.has(role)) || workOrders.some(order => roles.includes(order.assigneeRole));
   return true;
 });
 
@@ -488,11 +548,60 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
     delegates: db.approvalDelegates || [],
     now
   };
+  const canAccessApproval = Boolean(me && (
+    getApprovalGroups(bookings, workflow, me, approvalContext).length > 0
+    || workflow.some(node => me.role.includes(node.approverRole))
+    || (db.approvalDelegates || []).some(item => item.delegateId === me.id && Date.parse(item.startsAt) <= now.getTime() && now.getTime() < Date.parse(item.endsAt))
+  ));
+  const ownsWorkOrder = Boolean(me && workOrders.some(order => bookings.some(booking => booking.id === order.bookingId && booking.userId === me.id)));
+  const canAccessWorkOrders = Boolean(me && (ownsWorkOrder || me.role.some(role => SERVICE_ROLES.has(role))));
+  const canAccessExceptions = canAccessApproval || Boolean(me && (
+    me.role.some(role => SERVICE_ROLES.has(role)) || workOrders.some(order => me.role.includes(order.assigneeRole))
+  ));
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
+  if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
+  if (canAccessExceptions) allowedViews.add('EXCEPTIONS');
+  if (me?.role.includes('SYSTEM_ADMIN')) {
+    for (const view of ['WORKFLOW_CONFIG', 'DEPARTMENTS', 'ROLES', 'USERS', 'REPORTS', 'DEVICES', 'DATA_CENTER'] as const) allowedViews.add(view);
+  }
+  if (me?.role.some(role => ['SYSTEM_ADMIN', 'SECURITY_ADMIN'].includes(role))) allowedViews.add('CONFIDENTIALITY');
+  const accessibleHelpTopics = HELP_TOPICS.filter(topic => canUseHelpTopic(topic, me?.role || [], allowedViews));
 
   const needUser = (): ToolResult | null =>
     me ? null : { ok: false, error: '无法识别当前用户身份，请重新登录后再试。' };
 
   const handlers: Record<string, (args: any) => ToolResult> = {
+    search_help: (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      const query = String(args?.query || '').trim();
+      if (!query || query.length > 100) return { ok: false, error: '请提供 100 字以内的功能或操作关键词。' };
+      const matches = searchHelpTopics(query, accessibleHelpTopics).slice(0, 5);
+      if (!matches.length) return { ok: true, data: { total: 0, topics: [] }, hint: '没有匹配的指南，可换个关键词或描述具体操作。' };
+      const top = matches[0];
+      return {
+        ok: true,
+        data: {
+          total: matches.length,
+          topics: matches.map(topic => ({ id: topic.id, title: topic.title, summary: topic.summary, steps: topic.steps, note: topic.note, view: topic.view }))
+        },
+        action: { type: 'OPEN_HELP', topicId: top.id, summary: `查看「${top.title}」操作指南` }
+      };
+    },
+
+    navigate_system: (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      if (!isSystemView(args?.view) || !allowedViews.has(args.view)) return { ok: false, error: '目标页面不存在，或当前角色没有访问权限。' };
+      const topic = HELP_TOPICS.find(item => item.view === args.view && canUseHelpTopic(item, me!.role, allowedViews));
+      return {
+        ok: true,
+        data: { view: args.view, title: topic?.title || args.view },
+        action: { type: 'NAVIGATE', view: args.view, summary: `前往${topic?.title || '目标页面'}` }
+      };
+    },
+
     list_resources: (args) => {
       const list = args?.type ? resources.filter(r => r.type === args.type) : resources;
       return {
@@ -663,7 +772,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         .filter(w => (myRoles.includes('SYSTEM_ADMIN') || myRoles.includes(w.assigneeRole)) && (!args?.status || w.status === args.status))
         .slice(0, 20)
         .map(w => ({
-          id: w.id, type: w.type === 'TEA' ? '茶水服务' : '视频支持',
+          id: w.id, type: SERVICE_TYPE_LABELS[w.type],
           title: w.title, status: w.status, assigneeRole: w.assigneeRole,
           createdAt: fmtRange(new Date(w.createdAt), new Date(w.createdAt))
         }));
@@ -784,9 +893,20 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         };
       }
 
-      const attendeeIds = (Array.isArray(args?.attendeeNames) ? args.attendeeNames : [])
-        .map((n: string) => users.find(u => norm(u.name) === norm(n) || norm(u.name).includes(norm(n)))?.id)
-        .filter(Boolean) as string[];
+      const attendeeIds: string[] = [];
+      for (const rawName of Array.isArray(args?.attendeeNames) ? args.attendeeNames : []) {
+        const name = String(rawName).trim();
+        if (!name) return { ok: false, error: '参会人姓名不能为空。' };
+        const matches = users.filter(user => norm(user.name) === norm(name) || norm(user.name).includes(norm(name)));
+        if (matches.length !== 1) {
+          return {
+            ok: false,
+            error: matches.length ? `参会人“${name}”匹配到多位成员，请提供更完整姓名。` : `没有找到参会人“${name}”，请核对姓名。`,
+            candidates: matches.map(user => ({ id: user.id, name: user.name, department: user.department }))
+          };
+        }
+        if (!attendeeIds.includes(matches[0].id)) attendeeIds.push(matches[0].id);
+      }
 
       const draft: Partial<Booking> = {
         userId: ctx.userId,
@@ -829,6 +949,103 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         ok: true,
         data: { draft, summary, firstApprovalNode: workflow[0]?.name || '无需审批' },
         action: { type: 'PROPOSE_BOOKING', draft, summary }
+      };
+    },
+
+    propose_edit_booking: (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      const editable = bookings.filter(booking => booking.userId === ctx.userId
+        && ['PENDING', 'APPROVED'].includes(booking.status)
+        && booking.meetingType !== 'CONFIDENTIAL'
+        && booking.confidentialityChoice !== 'CONFIDENTIAL');
+      const { booking, candidates } = resolveBooking(editable, resources, users, args?.bookingKeyword);
+      if (!booking) {
+        return {
+          ok: false,
+          error: candidates?.length ? '有多条可修改预约，请让用户确认。' : '没有找到可修改的本人预约；涉密变更请在正式表单按授权流程处理。',
+          candidates: (candidates || []).map(item => bookingBrief(item, resources, users))
+        };
+      }
+      const resource = resources.find(item => item.id === booking.resourceId);
+      if (!resource) return { ok: false, error: '原预约资源已不存在，请取消后重新申请。' };
+      const start = args?.startTime === undefined ? new Date(booking.startTime) : parseTime(args.startTime);
+      const end = args?.endTime === undefined ? new Date(booking.endTime) : parseTime(args.endTime);
+      if (!start || !end) return { ok: false, error: '新的时间格式无法解析，请使用 YYYY-MM-DDTHH:mm。' };
+      if (end <= start) return { ok: false, error: '结束时间必须晚于开始时间。' };
+      if ((end.getTime() - start.getTime()) > 8 * 3600 * 1000) return { ok: false, error: '单次预订不能超过 8 小时。' };
+      if (start.getTime() < now.getTime()) return { ok: false, error: '新的开始时间已经过去，请重新选择。' };
+      if (start.getHours() < WORK_START_HOUR || end.getHours() > WORK_END_HOUR) return { ok: false, error: `可预订时段为每天 ${WORK_START_HOUR}:00–${WORK_END_HOUR}:00。` };
+      const purpose = args?.purpose === undefined ? booking.purpose : String(args.purpose).trim();
+      if (!isValidBookingPurpose(purpose)) return { ok: false, error: '请提供明确且 200 字以内的申请用途。' };
+      const participants = args?.participants === undefined ? booking.participants : Number(args.participants);
+      const requiredFeatures = booking.requiredFeatures || [];
+      const resourceError = validateBookingResource(resource, {
+        startTime: start.toISOString(), endTime: end.toISOString(), participants, requiredFeatures
+      });
+      if (resourceError === 'INVALID_PARTICIPANTS') return { ok: false, error: '参与人数必须为大于 0 的整数。' };
+      if (resourceError === 'CAPACITY_EXCEEDED') return { ok: false, error: `${resource.name} 只能容纳 ${resource.capacity || 1} 人。` };
+      if (resourceError) return { ok: false, error: '新的时间、人数或资源状态不满足预约规则，请调整后重试。' };
+      const conflicts = findBookingConflicts(bookings.filter(item => item.id !== booking.id), {
+        resourceId: resource.id, startTime: start.toISOString(), endTime: end.toISOString()
+      });
+      if (conflicts.length) return { ok: false, error: `${resource.name} 在新时段已被占用，请选择其他时间。` };
+      const draft: Partial<Booking> = {
+        userId: booking.userId,
+        resourceId: booking.resourceId,
+        type: booking.type,
+        startTime: start.toISOString(),
+        endTime: end.toISOString(),
+        purpose,
+        participants,
+        meetingType: booking.meetingType,
+        serviceRequirements: booking.serviceRequirements || [],
+        exclusiveRequestReason: booking.exclusiveRequestReason,
+        auditoriumSetup: booking.auditoriumSetup,
+        hasLeader: booking.hasLeader,
+        leaderDetails: booking.leaderDetails,
+        isVideoConference: booking.isVideoConference,
+        needsTeaService: booking.needsTeaService,
+        requiredFeatures,
+        attendeeIds: booking.attendeeIds || []
+      };
+      return {
+        ok: true,
+        data: { bookingId: booking.id, draft },
+        action: {
+          type: 'PROPOSE_EDIT_BOOKING', bookingId: booking.id, draft,
+          summary: `修改「${booking.purpose}」 · ${resource.name} · ${fmtRange(start, end)} · ${participants || 1} 人`
+        }
+      };
+    },
+
+    propose_renew_booking: (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      const renewable = bookings.filter(booking => booking.userId === ctx.userId
+        && booking.status === 'APPROVED'
+        && booking.seriesKind === 'LONG_TERM'
+        && booking.recurrenceIndex === 0
+        && Boolean(booking.seriesId));
+      const { booking, candidates } = resolveBooking(renewable, resources, users, args?.bookingKeyword);
+      if (!booking) {
+        return {
+          ok: false,
+          error: candidates?.length ? '有多个长期系列匹配，请让用户确认。' : '没有找到可续期的本人长期预约。',
+          candidates: (candidates || []).map(item => bookingBrief(item, resources, users))
+        };
+      }
+      const resource = resources.find(item => item.id === booking.resourceId);
+      if (!resource || !isResourceAcceptingBookings(resource)) return { ok: false, error: '会议室当前维护或待开放，暂不能续期。' };
+      if (bookings.some(item => item.renewalOfSeriesId === booking.seriesId && isActiveBooking(item))) return { ok: false, error: '本期已有审批中或已核准的续期，无需重复提交。' };
+      if (bookings.some(item => item.seriesId === booking.seriesId && item.status === 'PENDING')) return { ok: false, error: '请等待当前长期预订完成审批后再续期。' };
+      return {
+        ok: true,
+        data: { bookingId: booking.id, seriesId: booking.seriesId, seriesEndDate: booking.seriesEndDate },
+        action: {
+          type: 'PROPOSE_RENEW_BOOKING', bookingId: booking.id,
+          summary: `续期「${booking.purpose}」 · 当前周期至 ${booking.seriesEndDate || '系列结束日'}`
+        }
       };
     },
 
@@ -906,7 +1123,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
     propose_check_in: (args) => {
       const deny = needUser();
       if (deny) return deny;
-      const mine = bookings.filter(b => b.userId === ctx.userId && b.status === 'APPROVED');
+      const mine = bookings.filter(b => (b.userId === ctx.userId || b.attendeeIds?.includes(ctx.userId)) && b.status === 'APPROVED');
       const { booking, candidates } = resolveBooking(mine, resources, users, args?.bookingKeyword);
       if (!booking) {
         return {
@@ -917,10 +1134,12 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
       }
       if (booking.checkedInAt) return { ok: false, error: '该预订已经签过到了。' };
       const start = new Date(booking.startTime);
+      const end = new Date(booking.endTime);
       const diffMinutes = (now.getTime() - start.getTime()) / 60000;
-      if (diffMinutes < -30) {
-        return { ok: false, error: `还没到签到时间，预订 ${fmtRange(start, new Date(booking.endTime))} 开始前 15 分钟才能签到。` };
+      if (diffMinutes < -15) {
+        return { ok: false, error: `还没到签到时间，预订 ${fmtRange(start, end)} 开始前 15 分钟才能签到。` };
       }
+      if (now.getTime() >= end.getTime()) return { ok: false, error: '该会议已经结束，不能再签到。' };
       const brief = bookingBrief(booking, resources, users);
       return {
         ok: true,

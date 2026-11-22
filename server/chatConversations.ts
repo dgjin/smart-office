@@ -1,8 +1,9 @@
 import { getDbPool } from './db.ts';
 import { isServiceType } from '../constants.ts';
+import { isSystemView } from '../helpCatalog.ts';
 import { HttpError } from './http.ts';
 
-const ACTION_TYPES = new Set(['PROPOSE_BOOKING', 'PROPOSE_CANCEL', 'PROPOSE_APPROVAL', 'PROPOSE_CHECK_IN', 'PROPOSE_WORK_ORDER', 'NAVIGATE', 'REFRESH']);
+const ACTION_TYPES = new Set(['PROPOSE_BOOKING', 'PROPOSE_EDIT_BOOKING', 'PROPOSE_RENEW_BOOKING', 'PROPOSE_CANCEL', 'PROPOSE_APPROVAL', 'PROPOSE_CHECK_IN', 'PROPOSE_WORK_ORDER', 'OPEN_HELP', 'NAVIGATE', 'REFRESH']);
 const ACTION_STATES = new Set(['done', 'opened', 'dismissed']);
 
 const invalid = (): never => { throw new HttpError(400, 'INVALID_CONVERSATION'); };
@@ -17,6 +18,34 @@ const stringList = (value: any, maxItems: number, maxLength: number) => {
   if (value === undefined) return undefined;
   if (!Array.isArray(value) || value.length > maxItems) invalid();
   return value.map(item => text(item, maxLength));
+};
+
+const sanitizeCatalogSnapshot = (value: any) => {
+  const snapshot = record(value);
+  if (!Number.isSafeInteger(snapshot.catalogVersion) || snapshot.catalogVersion < 1
+    || !Array.isArray(snapshot.fields) || snapshot.fields.length > 50
+    || !Number.isSafeInteger(snapshot.slaResponseMinutes) || snapshot.slaResponseMinutes < 0 || snapshot.slaResponseMinutes > 10080
+    || typeof snapshot.heavyService !== 'boolean' || typeof snapshot.cancellable !== 'boolean') invalid();
+  return {
+    catalogItemId: text(snapshot.catalogItemId, 128),
+    catalogVersion: snapshot.catalogVersion,
+    name: text(snapshot.name, 200),
+    fields: snapshot.fields.map((value: any) => {
+      const field = record(value);
+      if (!['TEXT', 'TEXTAREA', 'NUMBER', 'SELECT'].includes(field.type) || typeof field.required !== 'boolean') invalid();
+      return {
+        key: text(field.key, 50),
+        label: text(field.label, 100),
+        type: field.type,
+        required: field.required,
+        options: stringList(field.options, 100, 200)
+      };
+    }),
+    responsibleRole: text(snapshot.responsibleRole, 128),
+    slaResponseMinutes: snapshot.slaResponseMinutes,
+    heavyService: snapshot.heavyService,
+    cancellable: snapshot.cancellable
+  };
 };
 
 const sanitizeDraft = (value: any) => {
@@ -43,7 +72,12 @@ const sanitizeDraft = (value: any) => {
         if (Object.keys(values).length > 20) invalid();
         fieldValues = Object.fromEntries(Object.entries(values).map(([key, item]) => [text(key, 50), text(item, 500)]));
       }
-      return { type: requirement.type, details: text(requirement.details, 500, true), ...(fieldValues ? { fieldValues } : {}) };
+      return {
+        type: requirement.type,
+        details: text(requirement.details, 500, true),
+        ...(fieldValues ? { fieldValues } : {}),
+        ...(requirement.catalogSnapshot ? { catalogSnapshot: sanitizeCatalogSnapshot(requirement.catalogSnapshot) } : {})
+      };
     });
   }
   let auditoriumSetup;
@@ -84,6 +118,7 @@ const sanitizeAction = (value: any) => {
   const action = record(value);
   if (!ACTION_TYPES.has(action.type)) invalid();
   if (action.decision !== undefined && !['APPROVE', 'REJECT'].includes(action.decision)) invalid();
+  if (action.view !== undefined && !isSystemView(action.view)) invalid();
   return {
     type: action.type,
     draft: action.draft === undefined ? undefined : sanitizeDraft(action.draft),
@@ -93,7 +128,9 @@ const sanitizeAction = (value: any) => {
     workOrderId: text(action.workOrderId, 128, true),
     decision: action.decision,
     comment: text(action.comment, 4000, true),
-    view: text(action.view, 64, true)
+    reason: text(action.reason, 1000, true),
+    topicId: text(action.topicId, 128, true),
+    view: action.view
   };
 };
 

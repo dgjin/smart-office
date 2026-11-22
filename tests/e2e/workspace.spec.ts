@@ -231,6 +231,108 @@ test.describe('MySQL-only 浏览器验收', () => {
     await fresh.context.close();
   });
 
+  test('帮助抽屉按角色检索、联动智能帮助并恢复触发按钮焦点', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '李员工');
+    await page.route('**/api/agent/chat', route => route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: 'data: {"type":"done","reply":"请在我的申请中展开预约并选择修改。","actions":[],"trace":[]}\n\n'
+    }));
+    const trigger = page.getByRole('button', { name: '打开帮助', exact: true });
+    await trigger.click();
+    let drawer = page.getByRole('dialog', { name: '帮助与智能指导' });
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByPlaceholder('搜索预约、审批、报表、设备…')).toBeFocused();
+    await drawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('组织同步');
+    await expect(drawer.getByText('没有找到匹配指南', { exact: true })).toBeVisible();
+    await drawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('修改预约');
+    await expect(drawer.getByRole('heading', { name: '修改、取消与提前结束预约', exact: true })).toBeVisible();
+    await drawer.getByRole('button', { name: '针对此指南提问', exact: true }).click();
+    await expect(page.getByRole('dialog', { name: '对话式办公助手' })).toBeVisible();
+    await expect(page.getByText('请在我的申请中展开预约并选择修改。', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '关闭', exact: true }).click();
+    await trigger.click();
+    drawer = page.getByRole('dialog', { name: '帮助与智能指导' });
+    await page.keyboard.press('Escape');
+    await expect(drawer).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await context.close();
+
+    const admin = await openWorkspace(browser, '超级管理员');
+    await admin.page.getByRole('button', { name: '打开帮助', exact: true }).click();
+    const adminDrawer = admin.page.getByRole('dialog', { name: '帮助与智能指导' });
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('运营报表');
+    await expect(adminDrawer.getByRole('heading', { name: '运营管理看板与明细对账', exact: true })).toBeVisible();
+    await adminDrawer.getByRole('button', { name: '打开功能', exact: true }).click();
+    await expect(admin.page.getByRole('heading', { name: '运营报表', exact: true })).toBeVisible();
+    await admin.context.close();
+  });
+
+  test('修改预约动作跨刷新保留会务快照并只打开正式表单', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '李员工');
+    const purpose = `助手修改预约 ${Date.now()}`;
+    await page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    const row = page.locator('tr').filter({ hasText: 'Alpha 战略会议室' });
+    await row.getByRole('button', { name: '预约', exact: true }).click();
+    const createDialog = page.getByRole('dialog', { name: '预约Alpha 战略会议室' });
+    await createDialog.getByRole('textbox', { name: '申请用途' }).fill(purpose);
+    await createDialog.getByLabel('参与人数', { exact: true }).fill('4');
+    await createDialog.getByLabel('会议类型', { exact: true }).selectOption('NORMAL');
+    await createDialog.getByLabel('涉密确认', { exact: true }).selectOption('NON_CONFIDENTIAL');
+    const start = new Date(Date.now() + 10 * 86400000);
+    const dateValue = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+    await createDialog.getByLabel('自定义预约日期').fill(dateValue);
+    await createDialog.getByLabel('预约开始时间').selectOption('10:00');
+    await createDialog.getByLabel('预约结束时间').selectOption('11:00');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/bookings') && response.status() === 201),
+      createDialog.getByRole('button', { name: '确认预约', exact: true }).click()
+    ]);
+    const bookingRows = await queryTestDb<any[]>("SELECT id, payload FROM bookings WHERE JSON_UNQUOTE(JSON_EXTRACT(payload, '$.purpose')) = ?", [purpose]);
+    const booking = bookingRows[0].payload;
+    const apiUser = await server.login('3');
+    const currentResponse = await server.request('/api/agent/conversation', { headers: { Cookie: apiUser.cookie } });
+    const current = await currentResponse.json();
+    const revisedPurpose = `${purpose} · 已调整`;
+    const seed = await server.request('/api/agent/conversation', {
+      method: 'PUT',
+      headers: { Cookie: apiUser.cookie },
+      body: JSON.stringify({
+        revision: current.revision,
+        state: {
+          turns: [{ role: 'assistant', content: '已生成修改草案。', actions: [{
+            type: 'PROPOSE_EDIT_BOOKING', bookingId: booking.id, summary: `修改「${purpose}」`,
+            draft: {
+              resourceId: booking.resourceId, type: 'ROOM', startTime: booking.startTime, endTime: booking.endTime,
+              purpose: revisedPurpose, participants: 6, meetingType: 'NORMAL',
+              serviceRequirements: [{ type: 'VEHICLE', fieldValues: { quantity: '2' }, catalogSnapshot: {
+                catalogItemId: 'service-vehicle', catalogVersion: 3, name: '历史车辆保障', responsibleRole: 'SERVICE_COORDINATOR',
+                slaResponseMinutes: 15, heavyService: true, cancellable: true,
+                fields: [{ key: 'quantity', label: '车辆数', type: 'NUMBER', required: true }]
+              } }]
+            }
+          }] }],
+          handled: {}, input: ''
+        }
+      })
+    });
+    expect(seed.status).toBe(200);
+    const persistedResponse = await server.request('/api/agent/conversation', { headers: { Cookie: apiUser.cookie } });
+    const persisted = await persistedResponse.json();
+    expect(persisted.state.turns[0].actions[0].draft.serviceRequirements[0].catalogSnapshot.catalogVersion).toBe(3);
+
+    await page.reload();
+    await page.getByRole('button', { name: '打开智能助手', exact: true }).click();
+    await page.getByRole('button', { name: '核对并修改', exact: true }).click();
+    const editDialog = page.getByRole('dialog', { name: '修改预约Alpha 战略会议室' });
+    await expect(editDialog).toBeVisible();
+    await expect(editDialog.getByRole('textbox', { name: '申请用途' })).toHaveValue(revisedPurpose);
+    await expect(editDialog.getByLabel('参与人数', { exact: true })).toHaveValue('6');
+    const unchanged = await queryTestDb<any[]>('SELECT payload FROM bookings WHERE id = ?', [booking.id]);
+    expect(unchanged[0].payload.purpose).toBe(purpose);
+    await context.close();
+  });
+
   test('移动端主导航、更多菜单和智能助手均保持可用', async ({ browser }) => {
     const { context, page } = await openWorkspace(browser, '超级管理员', { width: 390, height: 844 });
     const navigation = page.getByRole('navigation', { name: '移动端主导航' });
@@ -401,6 +503,7 @@ test.describe('MySQL-only 浏览器验收', () => {
     await page.getByRole('button', { name: '运营报表', exact: true }).click();
     await expect(page.getByRole('heading', { name: '利用率与审批效率', exact: true })).toBeVisible();
     await page.getByLabel('报表时间范围', { exact: true }).selectOption('ALL');
+    await page.getByRole('tab', { name: '明细与对账', exact: true }).click();
     await expect(page.getByRole('region', { name: '多维统计', exact: true }).locator('tbody')).toContainText('Alpha 战略会议室');
     const csvDownload = page.waitForEvent('download');
     await page.getByRole('button', { name: '导出 CSV', exact: true }).click();

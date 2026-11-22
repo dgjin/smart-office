@@ -10,7 +10,7 @@ import {
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
-  PanelLeftClose, PanelLeftOpen, LockOpen
+  PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
@@ -22,6 +22,8 @@ import { getResourceBuilding, getResourceFloor, getRoomCategory } from './utils/
 import { addLocalDays, bookingEffectiveEnd, calculateResourceOccupancy, countsTowardOccupancy, localDateKey, resourceOpenMinutes, startOfLocalDay } from './utils/dashboard';
 import { parseCheckInQr } from './utils/checkInQr';
 import ChatDock, { type AgentAction } from './components/ChatDock';
+import HelpDrawer from './components/HelpDrawer';
+import { canUseHelpTopic, getHelpTopic, type SystemView } from './helpCatalog';
 import ServiceOperations, { BookingUsageActions } from './components/ServiceOperations';
 import ExceptionCenter from './components/ExceptionCenter';
 import DeviceManagement from './components/DeviceManagement';
@@ -29,7 +31,7 @@ import OperationsReports from './components/OperationsReports';
 import BuildingExplorer, { BUILDINGS, getFloorNumbers, type BuildingId } from './components/BuildingExplorer';
 import { DEFAULT_RULE_SETTINGS, SERVICE_TYPE_LABELS } from './constants';
 
-type AppView = 'DASHBOARD' | 'RESOURCES' | 'USERS' | 'BOOKINGS' | 'ROLES' | 'DEPARTMENTS' | 'APPROVAL_CENTER' | 'WORK_ORDERS' | 'EXCEPTIONS' | 'DEVICES' | 'REPORTS' | 'WORKFLOW_CONFIG' | 'CONFIDENTIALITY' | 'DATA_CENTER' | 'HQ_3D';
+type AppView = SystemView;
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
@@ -2824,6 +2826,9 @@ const App: React.FC = () => {
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
   const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
   const [showAgent, setShowAgent] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpTopicId, setHelpTopicId] = useState<string>();
+  const [agentRequest, setAgentRequest] = useState<{ id: number; question: string }>();
   const [bookingConflict, setBookingConflict] = useState<{ 
     resource: Resource, 
     requestedStart: string, 
@@ -2940,6 +2945,38 @@ const App: React.FC = () => {
   const canAccessExceptions = canAccessApproval
     || !!currentUser?.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'].includes(role))
     || workOrders.some(order => currentUser?.role.includes(order.assigneeRole));
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
+  if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
+  if (canAccessExceptions) allowedViews.add('EXCEPTIONS');
+  if (currentUser?.role.includes('SYSTEM_ADMIN')) {
+    for (const item of ['WORKFLOW_CONFIG', 'DEPARTMENTS', 'ROLES', 'USERS', 'REPORTS', 'DEVICES', 'DATA_CENTER'] as const) allowedViews.add(item);
+  }
+  if (currentUser?.role.some(role => ['SYSTEM_ADMIN', 'SECURITY_ADMIN'].includes(role))) allowedViews.add('CONFIDENTIALITY');
+
+  const navigateToView = (target: SystemView) => {
+    if (!allowedViews.has(target)) {
+      addNotification('无法打开功能', '目标页面不存在，或当前角色没有访问权限。', 'WARNING');
+      return;
+    }
+    setView(target);
+    setShowHelp(false);
+    setShowMobileMenu(false);
+  };
+  const openHelp = (topicId?: string) => {
+    if (topicId) {
+      const topic = getHelpTopic(topicId);
+      if (!topic || !canUseHelpTopic(topic, currentUser?.role || [], allowedViews)) throw new Error('该指南不存在，或当前角色没有查看权限。');
+    }
+    setHelpTopicId(topicId);
+    setShowHelp(true);
+    setShowAgent(false);
+  };
+  const askAgent = (question: string) => {
+    setAgentRequest({ id: Date.now(), question });
+    setShowHelp(false);
+    setShowAgent(true);
+  };
 
   const fallbackStats = useMemo(() => {
     const totalResources = resources.length;
@@ -3334,21 +3371,21 @@ const App: React.FC = () => {
   };
 
   const handleRenewLongTerm = (booking: Booking) => {
-    if (!currentUser || booking.userId !== currentUser.id || booking.seriesKind !== 'LONG_TERM' || !booking.seriesId) return;
+    if (!currentUser || booking.userId !== currentUser.id || booking.seriesKind !== 'LONG_TERM' || !booking.seriesId) return false;
     const resource = resources.find(item => item.id === booking.resourceId);
-    if (!resource) return;
+    if (!resource) return false;
     if (!isResourceAcceptingBookings(resource)) {
       addNotification('暂不能续期', '会议室当前维护或待开放，请恢复预约服务后再续期。', 'WARNING');
-      return;
+      return false;
     }
     if (bookings.some(item => item.renewalOfSeriesId === booking.seriesId && isActiveBooking(item))) {
       addNotification('续期已存在', '本期已有审批中或已核准的续期，无需重复提交。', 'INFO');
-      return;
+      return false;
     }
     const seriesBookings = bookings.filter(item => item.seriesId === booking.seriesId);
     if (seriesBookings.some(item => item.status === 'PENDING')) {
       addNotification('暂不能续期', '请等待当前长期预订完成审批后再申请续期。', 'WARNING');
-      return;
+      return false;
     }
     const periodEnd = booking.seriesEndDate || formatDate(new Date(Math.max(...seriesBookings.map(item => new Date(item.startTime).getTime()))));
     const nextDate = new Date(`${periodEnd}T12:00:00`);
@@ -3388,6 +3425,7 @@ const App: React.FC = () => {
       }
     });
     setShowBookingModal(true);
+    return true;
   };
 
   const handleCancelBooking = async (id: string) => {
@@ -3518,8 +3556,67 @@ const App: React.FC = () => {
       return;
     }
 
+    if (action.type === 'PROPOSE_EDIT_BOOKING' && action.bookingId && action.draft) {
+      const booking = bookings.find(item => item.id === action.bookingId);
+      if (!booking || booking.userId !== currentUser?.id || !['PENDING', 'APPROVED'].includes(booking.status)) throw new Error('预约已变化，请刷新后重新定位可修改的申请。');
+      if (booking.meetingType === 'CONFIDENTIAL' || booking.confidentialityChoice === 'CONFIDENTIAL') throw new Error('涉密预约请在正式表单中按授权流程修改。');
+      const resource = resources.find(item => item.id === action.draft!.resourceId);
+      if (!resource) throw new Error('预约资源已不存在，请刷新后重试。');
+      const draftError = validateBookingDraft(action.draft, resources, bookings.filter(item => item.id !== booking.id));
+      if (draftError) throw new Error(draftError);
+      setEditingBooking(booking);
+      setSelectedResource(resource);
+      setCalendarDateForBooking(null);
+      setBookingPrefill({
+        id: booking.id,
+        userId: booking.userId,
+        purpose: action.draft.purpose,
+        start: action.draft.startTime,
+        end: action.draft.endTime,
+        participants: action.draft.participants,
+        extras: {
+          meetingType: action.draft.meetingType || booking.meetingType,
+          confidentialityChoice: booking.confidentialityChoice,
+          serviceRequirements: action.draft.serviceRequirements || booking.serviceRequirements || [],
+          exclusiveRequestReason: action.draft.exclusiveRequestReason ?? booking.exclusiveRequestReason,
+          auditoriumSetup: action.draft.auditoriumSetup ?? booking.auditoriumSetup,
+          hasLeader: action.draft.hasLeader ?? booking.hasLeader,
+          leaderDetails: action.draft.leaderDetails ?? booking.leaderDetails,
+          isVideoConference: action.draft.isVideoConference ?? booking.isVideoConference,
+          needsTeaService: action.draft.needsTeaService ?? booking.needsTeaService,
+          requiredFeatures: action.draft.requiredFeatures || booking.requiredFeatures || [],
+          attendeeIds: action.draft.attendeeIds || booking.attendeeIds || []
+        }
+      });
+      setShowAgent(false);
+      setShowBookingModal(true);
+      return;
+    }
+
+    if (action.type === 'PROPOSE_RENEW_BOOKING' && action.bookingId) {
+      const booking = bookings.find(item => item.id === action.bookingId);
+      if (!booking || !handleRenewLongTerm(booking)) throw new Error('当前预约不能续期，请核对审批状态、续期记录和资源状态。');
+      setShowAgent(false);
+      return;
+    }
+
+    if (action.type === 'OPEN_HELP') {
+      openHelp(action.topicId);
+      return;
+    }
+
     if (action.type === 'NAVIGATE' && action.view) {
-      setView(action.view as any);
+      if (!allowedViews.has(action.view)) throw new Error('目标页面不存在，或当前角色没有访问权限。');
+      navigateToView(action.view);
+      setShowAgent(false);
+      return;
+    }
+
+    if (action.type === 'REFRESH') {
+      const data = await loadWorkspace();
+      if (!data) throw new Error('数据刷新失败，请检查网络后重试。');
+      await refreshOperations();
+      addNotification('数据已刷新', '已重新读取当前权限范围内的数据。', 'SUCCESS');
       return;
     }
 
@@ -4687,15 +4784,36 @@ const App: React.FC = () => {
         onClose={() => setRecurringPlan(null)}
       />}
 
-      {!showMobileMenu && <button
-        onClick={() => setShowAgent(true)}
-        aria-label="打开智能助手"
-        className="studio-agent-launcher fixed right-4 bottom-24 lg:bottom-6 z-[90] flex items-center gap-3 p-3 lg:px-4 lg:py-3 transition-all active:scale-[0.97]"
-      >
-        <MessageSquare size={18} />
-        <span className="hidden lg:block text-left"><span className="block text-[12.5px] font-semibold">智办助手</span><small className="block mt-0.5">ASK YOUR OFFICE</small></span>
-      </button>}
+      {!showMobileMenu && <div className="studio-help-tools fixed right-4 bottom-24 lg:bottom-6 z-[90] flex items-center gap-3">
+        <button
+          type="button"
+          onClick={() => openHelp()}
+          aria-label="打开帮助"
+          className="studio-help-launcher"
+        >
+          <CircleHelp size={19} />
+          <span className="hidden lg:inline">帮助</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setShowAgent(true)}
+          aria-label="打开智能助手"
+          className="studio-agent-launcher flex items-center gap-3 p-3 lg:px-4 lg:py-3 transition-all active:scale-[0.97]"
+        >
+          <MessageSquare size={18} />
+          <span className="hidden lg:block text-left"><span className="block text-[12.5px] font-semibold">智办助手</span><small className="block mt-0.5">ASK YOUR OFFICE</small></span>
+        </button>
+      </div>}
 
+      <HelpDrawer
+        open={showHelp}
+        topicId={helpTopicId}
+        roles={currentUser.role}
+        allowedViews={allowedViews}
+        onClose={() => setShowHelp(false)}
+        onNavigate={navigateToView}
+        onAsk={askAgent}
+      />
       <ChatDock
         open={showAgent}
         onClose={() => setShowAgent(false)}
@@ -4707,7 +4825,8 @@ const App: React.FC = () => {
         users={users}
         serviceCatalog={serviceCatalog}
         onAction={handleAgentAction}
-        onNavigate={(view) => setView(view as any)}
+        onNavigate={navigateToView}
+        request={agentRequest}
       />
     </div>
   );
