@@ -2087,24 +2087,25 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
   };
 
   return (
-    <div ref={modalRef} role="dialog" aria-modal="true" aria-label={`${initialValues?.id ? '修改预约' : '预约'}${resource.name}`} className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2.5rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in max-h-[90vh] overflow-y-auto custom-scrollbar">
-        <h3 className="font-black text-xl mb-6 flex items-center gap-2">
-            {isRoom ? <Monitor size={24} className={`text-${theme}-600`}/> : <Coffee size={24} className={`text-${theme}-600`}/>}
-            <span>{initialValues?.id ? '修改预约' : isRenewal ? '长期预订续期' : '预约'} {resource.name}</span>
-        </h3>
-        <div className="mb-5 p-3 rounded-2xl bg-gray-50 border border-gray-100 space-y-2" aria-label="会议室当前配置">
-          <div className="flex items-center justify-between gap-3"><span className="text-[11px] font-bold text-gray-500">{resource.location} · 最多 {resource.capacity || 0} 人</span><StatusBadge status={resource.status} theme={theme}/></div>
-          <div className="flex flex-wrap gap-1.5">
-            {(resource.features || []).map((feature: string) => <span key={feature} className="px-2 py-1 bg-white rounded-lg text-[10px] font-bold text-gray-600 border border-gray-100">{feature}</span>)}
-            {!resource.features?.length && <span className="text-[11px] text-gray-500">未配置特殊设备</span>}
+    <div ref={modalRef} role="dialog" aria-modal="true" aria-label={`${initialValues?.id ? '修改预约' : '预约'}${resource.name}`} className="booking-modal-shell fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+      <div className="booking-modal bg-white w-full animate-in zoom-in">
+        <header className="booking-modal-header">
+          <div>
+            <span className="booking-modal-kicker">{initialValues?.id ? '修改会议安排' : isRenewal ? '长期预订续期' : '提交会议预约'}</span>
+            <h3>{isRoom ? <Monitor size={22}/> : <Coffee size={22}/>}<span>{initialValues?.id ? '修改预约' : isRenewal ? '长期预订续期' : '预约'} {resource.name}</span></h3>
           </div>
-          {!isResourceAcceptingBookings(resource) && <p role="alert" className="text-[11px] font-bold text-rose-600">当前状态暂停新预约，请返回选择其他会议室。</p>}
-        </div>
-        
-        <div className="space-y-6">
+          <div className="booking-resource-summary" aria-label="会议室当前配置">
+            <div><span>{resource.location} · 最多 {resource.capacity || 0} 人</span><StatusBadge status={resource.status} theme={theme}/></div>
+            <p>{(resource.features || []).join(' · ') || '未配置特殊设备'}</p>
+            {!isResourceAcceptingBookings(resource) && <p role="alert" className="booking-resource-warning">当前状态暂停新预约，请返回选择其他会议室。</p>}
+          </div>
+        </header>
+
+        <div className="booking-modal-body custom-scrollbar">
+          <section className="booking-form-section" aria-labelledby="booking-section-info">
+            <div className="booking-form-section-heading"><span>01</span><div><h4 id="booking-section-info">会议信息</h4><p>填写主题、会议类型和涉密属性，带必填标记的内容需完整填写。</p></div></div>
           <div className="space-y-2">
-            <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">申请用途</label>
+            <label htmlFor="booking-purpose" className="text-[11px] font-black text-gray-500 uppercase tracking-widest">申请用途</label>
             <input
               id="booking-purpose"
               aria-label="申请用途"
@@ -2140,7 +2141,10 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
             <label htmlFor="booking-exclusive-reason" className="text-[11px] font-black text-gray-500 uppercase tracking-widest">专属会议室临时申请理由</label>
             <textarea id="booking-exclusive-reason" aria-required="true" rows={3} maxLength={500} value={exclusiveRequestReason} onChange={e => setExclusiveRequestReason(e.target.value)} placeholder={`该资源默认关闭，仅会前 ${ruleSettings.exclusiveRequestOpenHours} 小时内可申请，请说明临时使用理由`} className="w-full p-3 bg-amber-50 rounded-xl border border-amber-100 text-xs font-bold outline-none" />
           </div>}
+          </section>
 
+          <section className="booking-form-section" aria-labelledby="booking-section-schedule">
+            <div className="booking-form-section-heading"><span>02</span><div><h4 id="booking-section-schedule">日期与时段</h4><p>灰色时段不可选；也可先选开始时间，再使用快捷时长。</p></div></div>
           {/* Date Picker - Horizontal Scroll */}
           <div className="space-y-2">
              <div className="flex items-center justify-between">
@@ -2189,7 +2193,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                   <span className="text-[11px] font-bold text-gray-500 shrink-0">快捷时长</span>
                   {[30, 60, 90, 120].map(minutes => <button key={minutes} disabled={!selectedTimeRange.start || timeToMinutes(selectedTimeRange.start) + minutes > timeToMinutes(finalTimeSlot)} onClick={() => selectRange(selectedTimeRange.start!, minutesToTime(timeToMinutes(selectedTimeRange.start!) + minutes))} className={`flex-1 py-1.5 rounded-lg text-[11px] font-bold border disabled:opacity-30 ${selectedTimeRange.start && selectedTimeRange.end && timeToMinutes(selectedTimeRange.end) - timeToMinutes(selectedTimeRange.start) === minutes ? `border-${theme}-300 bg-${theme}-50 text-${theme}-600` : 'border-gray-100 text-gray-500 hover:bg-gray-50'}`}>{minutes < 60 ? `${minutes}分钟` : `${minutes / 60}小时`}</button>)}
                 </div>
-                <div className="grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
+                <div className="booking-time-grid grid grid-cols-4 gap-2 max-h-60 overflow-y-auto custom-scrollbar pr-1">
                     {timeSlots.map(time => {
                         const booked = isSlotBooked(time);
                         const past = isSlotPast(time);
@@ -2224,7 +2228,10 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
                 <input type="date" value={formatDate(deskEndDate)} onChange={e => setDeskEndDate(new Date(e.target.value))} className="w-full bg-gray-50 p-4 rounded-2xl border-none outline-none font-bold shadow-inner text-sm" />
             </div>
           )}
+          </section>
 
+          <section className="booking-form-section" aria-labelledby="booking-section-attendees">
+            <div className="booking-form-section-heading"><span>03</span><div><h4 id="booking-section-attendees">参会与重复</h4><p>确认人数和参会人；需要长期或周期会议时，在此设置重复方式。</p></div></div>
           <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex justify-between">
               <span>人数</span>
@@ -2249,7 +2256,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
 
           <div className="space-y-2">
             <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest">参会人（可选）</label>
-            <div id="booking-attendees" tabIndex={-1} className="max-h-32 overflow-y-auto grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-2xl outline-none">
+            <div id="booking-attendees" tabIndex={-1} className="booking-attendee-grid max-h-32 overflow-y-auto grid grid-cols-2 gap-2 p-3 bg-gray-50 rounded-2xl outline-none">
               {availableUsers.filter((u: User) => u.id !== contactUser?.id).map((u: User) => <label key={u.id} className="flex items-center gap-2 text-xs font-bold text-gray-600 cursor-pointer"><input type="checkbox" checked={attendeeIds.includes(u.id)} onChange={() => setAttendeeIds(prev => prev.includes(u.id) ? prev.filter(id => id !== u.id) : [...prev, u.id])} className="accent-indigo-600"/><span>{u.name}<small className="block text-gray-500 font-medium">{u.department}</small></span></label>)}
             </div>
           </div>
@@ -2271,9 +2278,11 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
               </div>
             ) : repeatFrequency !== 'NONE' && <p className="text-[11px] text-gray-500">提交后逐次检测冲突，冲突单次可跳过或改期</p>}
           </div>}
+          </section>
 
-          {/* New Fields Section */}
-          <div className="space-y-4 pt-4 border-t border-gray-100">
+          <section className="booking-form-section" aria-labelledby="booking-section-services">
+            <div className="booking-form-section-heading"><span>04</span><div><h4 id="booking-section-services">会务与保障</h4><p>按需选择领导参会、视频会议、茶水及其他会务服务。</p></div></div>
+          <div className="space-y-4">
              <div className="flex items-center justify-between">
                 <label className="text-[11px] font-black text-gray-500 uppercase tracking-widest flex items-center space-x-1">
                     <Crown size={12}/> <span>公司领导参会{resource.isExclusive ? '（专属会议室必填）' : ''}</span>
@@ -2342,6 +2351,7 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
              </div>
              {serviceRequirements.map(item => <React.Fragment key={item.type}>{renderServiceFields(item)}</React.Fragment>)}
           </div>
+          </section>
 
           {selectedRange && <div className="p-3 rounded-2xl bg-gray-50 border border-gray-100 text-[11px] leading-relaxed text-gray-600" aria-label="部门额度提示">
             <p className="font-black text-gray-700">本部门在当前会议室的每日净额度 · 每日 {ruleSettings.departmentDailyNetMinutes} 分钟</p>
@@ -2356,17 +2366,20 @@ const BookingFormModal = ({ resource, theme, initialDate, initialValues, onClose
             <p id="booking-form-error" ref={errorRef} tabIndex={-1} role="alert" className="text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-4 py-3 outline-none">{formError}</p>
           )}
 
-          <div className="flex space-x-3 mt-6 pt-4 border-t border-gray-100">
-            <button onClick={onClose} className="flex-1 py-3 rounded-2xl bg-gray-50 font-bold text-gray-500 hover:bg-gray-100 transition-colors">取消</button>
+        </div>
+        <footer className="booking-modal-footer">
+          <p>提交时将再次校验时段冲突、容量和预约规则。</p>
+          <div>
+            <button onClick={onClose} className="booking-cancel-button">取消</button>
             <button
               onClick={() => void handleSubmit()}
               disabled={submitting}
-              className={`flex-1 py-4 bg-${theme}-600 text-white rounded-2xl font-black shadow-lg shadow-${theme}-100 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-60 disabled:scale-100`}
+              className={`booking-submit-button bg-${theme}-600`}
             >
               {submitting ? '正在校验并提交…' : initialValues?.id ? '保存修改' : isRenewal ? '提交续期审批' : '确认预约'}
             </button>
           </div>
-        </div>
+        </footer>
       </div>
     </div>
   );
@@ -3727,7 +3740,7 @@ const App: React.FC = () => {
   ];
   const primaryWorkflowItem = canAccessApproval ? workflowNavItems.find(item => item.id === 'APPROVAL_CENTER') : workflowNavItems.find(item => item.id === 'WORK_ORDERS');
   const mobilePrimaryItems: NavItem[] = [
-    { id: 'DASHBOARD', label: '数据全景看板', shortLabel: '看板', icon: LayoutDashboard },
+    { id: 'DASHBOARD', label: '会议工作台', shortLabel: '看板', icon: LayoutDashboard },
     { id: 'RESOURCES', label: '空间资源库', shortLabel: '资源', icon: MapPin },
     { id: 'BOOKINGS', label: '我的申请', shortLabel: '申请', icon: Calendar },
     ...(primaryWorkflowItem ? [primaryWorkflowItem] : [])
@@ -3759,7 +3772,7 @@ const App: React.FC = () => {
       <aside className="studio-sidebar w-[268px] hidden lg:flex flex-col p-6 shrink-0">
         <div className="studio-brand shrink-0">
           <div className="studio-brand-mark"><Cpu size={21} strokeWidth={1.5}/></div>
-          <div><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">THE OFFICE JOURNAL</div></div>
+          <div><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">MEETING & SPACE</div></div>
           <button
             type="button"
             className="studio-sidebar-toggle"
@@ -3773,7 +3786,7 @@ const App: React.FC = () => {
           </button>
         </div>
         <nav id="studio-sidebar-navigation" aria-label="桌面主导航" className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">
-          <SidebarItem icon={LayoutDashboard} label="数据全景看板" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
+          <SidebarItem icon={LayoutDashboard} label="会议工作台" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
           <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} />
           <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} />
           <SidebarItem icon={Layers} label="总部楼层 3D" id="HQ_3D" active={view === 'HQ_3D'} onClick={setView} />
@@ -3836,11 +3849,11 @@ const App: React.FC = () => {
       <main className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
         <header className="studio-topbar backdrop-blur-md flex items-center justify-between gap-3 sticky top-0 z-40">
           <div className="flex items-center gap-6 flex-1 max-w-2xl">
-            <div className="shrink-0"><span className="studio-page-kicker">SMARTOFFICE / WORKSPACE</span><h2 className="studio-page-title">
-              {view === 'DASHBOARD' && '数据全景看板'}
+            <div className="shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title">
+              {view === 'DASHBOARD' && '会议工作台'}
               {view === 'RESOURCES' && '空间资源库'}
               {view === 'USERS' && '成员中心'}
-              {view === 'BOOKINGS' && '我的申请记录'}
+              {view === 'BOOKINGS' && '我的会议与申请'}
               {view === 'APPROVAL_CENTER' && '审批中心'}
               {view === 'WORK_ORDERS' && '服务工单中心'}
               {view === 'EXCEPTIONS' && '异常中心'}
@@ -3922,34 +3935,34 @@ const App: React.FC = () => {
 
           {view === 'DASHBOARD' && (
             <div className="space-y-6 animate-in fade-in">
-              <section className="agenda-hero" aria-label="今日办公议程">
+              <section className="agenda-hero" aria-label="今日会议安排">
                 <div className="agenda-date">
                   <span className="agenda-date-year">{new Date().getFullYear()} / {pad2(new Date().getMonth() + 1)}</span>
                   <span className="agenda-date-day">{pad2(new Date().getDate())}</span>
-                  <span className="agenda-date-week">{new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}<br/>TODAY'S EDITION</span>
+                  <span className="agenda-date-week">{new Date().toLocaleDateString('zh-CN', { weekday: 'long' })}<br/>今日议程</span>
                 </div>
                 <div className="agenda-intro">
-                  <p className="agenda-eyebrow">YOUR DAY, BEAUTIFULLY ORGANIZED.</p>
-                  <h1>{currentUser.name}，<br/>今天也<em>从容相见。</em></h1>
-                  <p>空间已经就绪，时间各有归处。从这里安排会议、协调资源，让每一次协作都有清晰的开场。</p>
+                  <p className="agenda-eyebrow">MEETING & SPACE / 会议与空间</p>
+                  <h1>您好，{currentUser.name}<br/><em>安排会议，从这里开始。</em></h1>
+                  <p>查找合适的会议室，确认时间与参会人；提交后可在“我的申请”中跟踪审批和会务进度。</p>
                   <div className="agenda-actions">
                     <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-primary"><Monitor size={16}/> 预订会议室 <ArrowUpRight size={15}/></button>
-                    <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-secondary"><Coffee size={16}/> 申请工位</button>
+                    <button onClick={() => setView('BOOKINGS')} className="studio-secondary"><Calendar size={16}/> 查看我的会议</button>
                   </div>
                 </div>
                 <button className="agenda-next text-left" onClick={() => nextBooking ? setDayDetail({ resource: nextBookingResource, date: new Date(nextBooking.startTime), bookings: [nextBooking] }) : setView('BOOKINGS')}>
-                  <span className="agenda-next-label">NEXT UP / 下一场</span>
+                  <span className="agenda-next-label">下一场会议</span>
                   <span className="agenda-next-time">{nextBooking ? `${toLocalTimeString(nextBooking.startTime)} — ${toLocalTimeString(nextBooking.endTime)}` : '— : —'}</span>
-                  <span className="agenda-next-title">{nextBooking?.purpose || '议程留白，专注当下'}</span>
-                  <span className="agenda-next-meta">{nextBooking ? <>{nextBookingResource?.name || '会议空间'}<br/>{nextBookingResource?.location}</> : '暂无已核准的后续会议'}</span>
-                  <span className="agenda-next-foot">{nextBooking ? 'VIEW DETAILS →' : `${stats.availableRooms} 间会议室 · ${stats.availableDesks} 个工位可用`}</span>
+                  <span className="agenda-next-title">{nextBooking?.purpose || '暂无后续会议'}</span>
+                  <span className="agenda-next-meta">{nextBooking ? <>{nextBookingResource?.name || '会议空间'}<br/>{nextBookingResource?.location}</> : '可前往空间资源库查找可用会议室'}</span>
+                  <span className="agenda-next-foot">{nextBooking ? '查看会议详情 →' : `${stats.availableRooms} 间会议室 · ${stats.availableDesks} 个工位可用`}</span>
                 </button>
               </section>
 
               <div className="studio-stat-grid">
-                <StatCard title="资源资产总量" value={stats.totalResources} icon={MapPin} trend={`${stats.availableRooms + stats.availableDesks} 个空间可用`} color={theme} onClick={() => setView('RESOURCES')} />
-                <StatCard title="活跃核准单" value={stats.activeBookings} icon={Activity} trend="空间预约 · 实时统计" color="emerald" onClick={() => setView('BOOKINGS')} />
-                {canAccessApproval ? <StatCard title="待处理任务" value={pendingCount} icon={ShieldCheck} trend={pendingCount ? '等待你的处理' : '今日任务已清零'} color="amber" onClick={() => setView('APPROVAL_CENTER')} /> : <StatCard title="我的进行中申请" value={bookings.filter(b => b.userId === currentUser.id && b.status === 'PENDING').length} icon={Activity} trend="个人申请 · 流程跟进" color="amber" onClick={() => setView('BOOKINGS')} />}
+                <StatCard title="空间资源总数" value={stats.totalResources} icon={MapPin} trend={`${stats.availableRooms + stats.availableDesks} 个空间当前可用`} color={theme} onClick={() => setView('RESOURCES')} />
+                <StatCard title="已核准会议" value={stats.activeBookings} icon={Activity} trend="实时统计 · 点击查看会议" color="emerald" onClick={() => setView('BOOKINGS')} />
+                {canAccessApproval ? <StatCard title="待我审批" value={pendingCount} icon={ShieldCheck} trend={pendingCount ? '有申请等待处理' : '当前没有待办审批'} color="amber" onClick={() => setView('APPROVAL_CENTER')} /> : <StatCard title="我的待审批申请" value={bookings.filter(b => b.userId === currentUser.id && b.status === 'PENDING').length} icon={Activity} trend="点击查看申请进度" color="amber" onClick={() => setView('BOOKINGS')} />}
               </div>
 
               {dashboard?.executive && <ExecutiveDashboard executive={dashboard.executive} resources={resources} bookings={bookings} exceptions={exceptions}
@@ -3986,7 +3999,7 @@ const App: React.FC = () => {
                     <ResourceUsageGrid days={scheduleRange === 'WEEK' ? weekDays : monthDays} resources={resources} bookings={bookings} onDayClick={openScheduleDay} />
                   )}
                 </div>
-                <div className="studio-schedule-foot"><span>{resources.length} SPACES · REALTIME</span><span>ONLY ONE VIEW, THE FULL PICTURE.</span></div>
+                <div className="studio-schedule-foot"><span>{resources.length} 个空间 · 实时日程</span><span>点击会议可查看时间、地点与预约详情</span></div>
               </section>
             </div>
           )}
@@ -3995,17 +4008,17 @@ const App: React.FC = () => {
           {view === 'RESOURCES' && (
             <div className="space-y-6 animate-in fade-in">
               <div className="studio-page-head">
-                <div><span className="studio-page-kicker">SPACE DIRECTORY / 资源目录</span><h3>空间资产</h3><p>查看及预约全公司物理空间资源。</p></div>
+                <div><span className="studio-page-kicker">MEETING & SPACE / 会议与空间</span><h3>找到合适的会议空间</h3><p>按楼栋、楼层、时间和设备筛选会议室，查看排期后直接提交预约。</p></div>
                 <div className="studio-page-actions">
                   <button onClick={() => setShowResourceFinder(prev => !prev)} aria-expanded={showResourceFinder} className="studio-secondary"><Search size={16}/> <span>按条件找会议室</span></button>
                   {currentUser.role.includes('SYSTEM_ADMIN') && <><button onClick={() => setShowImportModal('RESOURCES')} className="studio-secondary"><Upload size={16}/> <span>批量导入</span></button>
                   <button onClick={() => { setEditingResource(null); setShowResourceModal(true); }} className="studio-primary"><Plus size={16}/> <span>新增资源</span></button></>}
                 </div>
               </div>
-              <section className="bg-white rounded-2xl border border-gray-100 p-4 space-y-3" aria-label="资源组合筛选">
+              <section className="resource-filter-panel" aria-label="资源组合筛选">
                 <div className="flex items-center justify-between gap-3">
-                  <span className="flex items-center gap-2 text-xs font-black text-gray-600"><Filter size={14}/>组合筛选</span>
-                  <span role="status" className="text-[11px] font-bold text-gray-500">显示 {filteredResources.length} / {resources.length} 个资源</span>
+                  <span className="flex items-center gap-2 text-xs font-black text-gray-600"><Filter size={14}/>筛选空间</span>
+                  <span role="status" className="text-[11px] font-bold text-gray-500">符合 {filteredResources.length} 个 · 共 {resources.length} 个</span>
                 </div>
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-2">
                   <select aria-label="筛选楼栋" value={resourceBuildingFilter} onChange={e => setResourceBuildingFilter(e.target.value as any)} className="p-2.5 bg-gray-50 rounded-xl text-xs font-bold outline-none"><option value="ALL">全部楼栋</option>{Object.values(BUILDINGS).map(item => <option key={item.id} value={item.id}>{item.name} · {item.kind}</option>)}</select>
@@ -4035,6 +4048,7 @@ const App: React.FC = () => {
                 onDelete={handleDeleteResource}
               />
               <div className="studio-table-shell">
+                <div className="resource-list-head"><div><strong>资源清单</strong><span>查看详情与排期，或选择可预约空间</span></div><span>{filteredResources.length} 个结果</span></div>
                 <table className="w-full min-w-[720px] text-left">
                   <thead>
                     <tr className="bg-gray-50 border-b">
@@ -4200,16 +4214,19 @@ const App: React.FC = () => {
           {view === 'BOOKINGS' && (
              <div className="space-y-6 animate-in fade-in">
                  <div className="studio-page-head">
-                     <div><span className="studio-page-kicker">MY REQUESTS / 申请档案</span><h3>我的申请动态</h3></div>
-                     <span className="studio-secondary !cursor-default">
-                         共 {myBookings.length} 条记录
-                     </span>
+                     <div><span className="studio-page-kicker">MY MEETINGS / 我的会议</span><h3>我的会议与申请</h3><p>查看预约进度、审批结果、签到和会务服务状态。</p></div>
+                     <div className="studio-page-actions">
+                       <span className="resource-count-label">共 {myBookings.length} 条记录</span>
+                       <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-primary"><Plus size={16}/> 预订会议室</button>
+                     </div>
                  </div>
 
                  {myBookings.length === 0 ? (
-                   <div className="text-center py-32 bg-white rounded-[3rem] border border-dashed text-gray-500 font-bold">
-                     <History size={48} className="mx-auto mb-4 opacity-20"/>
-                     暂无预约申请记录，去资源库看看吧。
+                   <div className="booking-empty-state">
+                     <History size={40}/>
+                     <h4>还没有会议或空间申请</h4>
+                     <p>从空间资源库选择会议室，确认时间后即可提交预约。</p>
+                     <button onClick={() => { setView('RESOURCES'); setSearchQuery(''); }} className="studio-primary"><Monitor size={16}/> 查找会议室</button>
                    </div>
                  ) : (
                    <>
@@ -4224,9 +4241,14 @@ const App: React.FC = () => {
                                return (
                                    <div key={b.id} className={`bg-white rounded-[2rem] border transition-all duration-300 overflow-hidden ${isExpanded ? 'shadow-lg border-indigo-100' : 'shadow-sm border-gray-100 hover:border-gray-200'}`}>
                                        {/* Header - Click to Toggle */}
-                                       <div 
+                                       <div
+                                           role="button"
+                                           tabIndex={0}
+                                           aria-expanded={isExpanded}
+                                           aria-controls={`booking-details-${b.id}`}
                                            onClick={() => toggleBookingExpand(b.id)}
-                                           className="p-6 cursor-pointer flex items-center justify-between hover:bg-gray-50/50 transition-colors"
+                                           onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleBookingExpand(b.id); } }}
+                                           className="booking-record-head"
                                        >
                                            <div className="flex items-center space-x-4">
                                                <div className={`w-12 h-12 rounded-2xl ${isExpanded ? `bg-${theme}-100 text-${theme}-600` : 'bg-gray-50 text-gray-500'} flex items-center justify-center transition-colors`}>
@@ -4242,7 +4264,7 @@ const App: React.FC = () => {
                                                </div>
                                            </div>
                                            
-                                           <div className="flex items-center space-x-4">
+                                           <div className="booking-record-badges">
                                                {b.userId !== currentUser.id && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">受邀会议</span>}
                                                {b.checkedInAt && <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-lg">已签到 {toLocalTimeString(b.checkedInAt)}</span>}
                                                {b.seriesKind === 'LONG_TERM' && <span className="text-[11px] font-bold text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">{b.renewalOfSeriesId ? '续期' : '长期预订'} · {longTermSeries.length} 天</span>}
@@ -4255,7 +4277,7 @@ const App: React.FC = () => {
 
                                        {/* Expanded Content */}
                                        {isExpanded && (
-                                           <div className="px-6 pb-8 pt-2 border-t border-gray-50 animate-in slide-in-from-top-2 fade-in">
+                                           <div id={`booking-details-${b.id}`} className="px-6 pb-8 pt-2 border-t border-gray-50 animate-in slide-in-from-top-2 fade-in">
                                                {b.seriesKind === 'LONG_TERM' && <div className="mb-5 p-4 rounded-2xl bg-indigo-50 border border-indigo-100 text-xs text-indigo-700"><strong>{b.renewalOfSeriesId ? '续期申请' : '长期预订'} · 每天 {toLocalTimeString(b.startTime)} - {toLocalTimeString(b.endTime)}</strong><p className="mt-1">本期至 {b.seriesEndDate}，共 {longTermSeries.length} 个有效会议日。续期审批只影响新周期，当前周期保持不变。</p></div>}
                                                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8 text-xs text-gray-500">
                                                    <div className="space-y-1">

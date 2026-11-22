@@ -326,7 +326,7 @@ test.describe('MRP2 核心预约规则真实 Chrome 验收', () => {
     await login(page);
     const purpose = `MRP2移动端验收 ${Date.now()}`;
     const dialog = await openBooking(page, 'Alpha 战略会议室');
-    const body = dialog.locator(':scope > div');
+    const body = dialog.locator('.booking-modal-body');
     const bounds = await body.boundingBox();
     expect(bounds).not.toBeNull();
     expect(bounds!.x).toBeGreaterThanOrEqual(0);

@@ -143,9 +143,9 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
     <section ref={explorerRef} className="building-explorer" aria-labelledby="building-explorer-title">
       <header className="building-explorer-head">
         <div>
-          <span className="studio-page-kicker">SPATIAL MAP / TOWER {building.code}</span>
-          <h4 id="building-explorer-title">{building.totalFloors} 层{isAnnex ? ' L 型' : ''}空间导航</h4>
-          <p>从整栋楼到一间会议室，点击楼层即可定位真实空间与当前状态。</p>
+          <span className="studio-page-kicker">SPACE NAVIGATION / 空间导航</span>
+          <h4 id="building-explorer-title">{building.name} · {building.totalFloors} 层{isAnnex ? ' L 型' : ''}空间导航</h4>
+          <p>选择楼栋和楼层，查看会议室实时状态、排期并发起预约。</p>
         </div>
         <div className="building-switch" role="group" aria-label="切换楼栋">
           {Object.values(BUILDINGS).map(item => (
@@ -176,7 +176,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
       <div className="building-workspace">
         <div className="building-scene" data-floor-count={String(building.totalFloors).padStart(2, '0')}>
           <div className="building-scene-top">
-            <div><span>SMARTOFFICE {isAnnex ? 'L-SHAPED ANNEX' : 'TOWER'}</span><strong>{building.name} · {isAnnex ? 'L 型配楼' : '立体楼层索引'}</strong></div>
+            <div><span>总部空间 / 3D 楼层剖切</span><strong>{building.name} · {isAnnex ? 'L 型配楼' : '主楼'}</strong></div>
             <label>
               <span>快速定位</span>
               <select aria-label={`快速选择${building.name}楼层`} value={selectedFloor} onChange={event => selectFloor(Number(event.target.value))}>
@@ -206,7 +206,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
           <header className="building-floor-head" aria-live="polite">
             <div className="building-floor-number">{String(selectedFloor).padStart(2, '0')}<small>F</small></div>
             <div>
-              <span>FLOOR DIRECTORY / 楼层名录</span>
+              <span>楼层会议室</span>
               <h4>{selectedFloor} 层</h4>
               <p>{selectedRooms.length ? `${selectedRooms.length} 间会议室 · ${selectedAvailable} 间当前空闲` : resultContext ? '本层无匹配会议室' : '本层暂未录入会议室'}</p>
             </div>
@@ -214,7 +214,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
 
           {selectedRooms.length > 0 ? (
             <div className="building-plan">
-              <div className="building-plan-meta"><span>ROOM INDEX / 房间分布示意</span><span>{selectedFloor}F · {selectedRooms.length} SPACES</span></div>
+              <div className="building-plan-meta"><span>会议室列表</span><span>{selectedFloor} 层 · {selectedRooms.length} 间</span></div>
               <div className="building-room-grid">
                 {selectedRooms.map((room, index) => {
                   const locked = isResourceLocked(room.resource.id);

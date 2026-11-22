@@ -126,12 +126,6 @@ test.describe('MRP6 真实 Chrome 驾驶舱、异常、设备与报表', () => {
       id: 'mrp6-browser-released', resourceId: 'r1', purpose: 'Chrome 确认未使用会议', status: 'CANCELLED', releaseType: 'UNUSED_CONFIRMED',
       startTime: atToday(11), endTime: atToday(12)
     }));
-    for (let index = 1; index <= 4; index += 1) {
-      await insertBooking(booking({
-        id: `mrp6-browser-next-${index}`, resourceId: 'r1', purpose: `GAP09 后续会议 ${index}`,
-        startTime: new Date(now + index * 10 * 60000).toISOString(), endTime: new Date(now + (index * 10 + 50) * 60000).toISOString()
-      }));
-    }
   });
 
   test.afterAll(async () => {
@@ -310,6 +304,13 @@ test.describe('MRP6 真实 Chrome 驾驶舱、异常、设备与报表', () => {
   });
 
   test('设备一次性密钥驱动门口屏，离线保留快照，轮换与吊销立即清空权限', async ({ browser }) => {
+    const now = Date.now();
+    for (let index = 1; index <= 4; index += 1) {
+      await insertBooking(booking({
+        id: `mrp6-browser-next-${index}`, resourceId: 'r1', purpose: `GAP09 后续会议 ${index}`,
+        startTime: new Date(now + index * 10 * 60000).toISOString(), endTime: new Date(now + (index * 10 + 50) * 60000).toISOString()
+      }));
+    }
     const admin = await openWorkspace(browser, 'admin');
     await openAdminView(admin.page, '门口屏设备');
     await admin.page.getByLabel('设备名称', { exact: true }).fill('Chrome Alpha 门口屏');
