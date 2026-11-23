@@ -422,6 +422,13 @@ test.describe('MySQL-only 浏览器验收', () => {
     const admin = await openWorkspace(browser, '超级管理员');
     await admin.page.getByRole('button', { name: '打开帮助', exact: true }).click();
     const adminDrawer = admin.page.getByRole('dialog', { name: '帮助与智能指导' });
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('所属公司');
+    await expect(adminDrawer.getByRole('heading', { name: '维护、加锁与删除空间资源', exact: true })).toBeVisible();
+    await expect(adminDrawer).toContainText('资源“所属公司”与流程配置的“资源公司范围”使用同一台账值');
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('资源公司范围');
+    await adminDrawer.getByRole('button', { name: /动态审批规则与流程版本/ }).click();
+    await expect(adminDrawer.getByRole('heading', { name: '动态审批规则与流程版本', exact: true })).toBeVisible();
+    await expect(adminDrawer).toContainText('新申请冻结提交时的资源公司，在途申请不因后续资源或流程修改而改变历史范围');
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('运营报表');
     await expect(adminDrawer.getByRole('heading', { name: '运营管理看板与明细对账', exact: true })).toBeVisible();
     await adminDrawer.getByRole('button', { name: '打开功能', exact: true }).click();
@@ -597,21 +604,66 @@ test.describe('MySQL-only 浏览器验收', () => {
     await context.close();
   });
 
-  test('管理端维护资源园区、发布节点范围、创建代理并查询审计', async ({ browser }) => {
+  test('业务错误码在界面统一显示中文且接口契约保持不变', async ({ browser }) => {
     const { context, page } = await openWorkspace(browser, '超级管理员');
-    const campus = `浏览器验收园区 ${Date.now()}`;
+    let apiError = '';
+    await page.route('**/api/approval-delegates', async route => {
+      if (route.request().method() !== 'POST') return route.continue();
+      apiError = 'REQUESTER_NOT_FOUND';
+      await route.fulfill({
+        status: 404,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: apiError, detail: apiError })
+      });
+    });
+
+    await page.getByRole('button', { name: '系统管理', exact: true }).click();
+    await page.getByRole('button', { name: '流程配置', exact: true }).click();
+    await page.getByRole('button', { name: '新增代理', exact: true }).click();
+    await page.getByRole('button', { name: '创建代理', exact: true }).click();
+
+    await expect(page.getByRole('alert')).toHaveText('申请人信息不存在或已失效，请联系管理员核对成员档案后重试。');
+    await expect(page.locator('body')).not.toContainText('REQUESTER_NOT_FOUND');
+    expect(apiError).toBe('REQUESTER_NOT_FOUND');
+    await context.close();
+  });
+
+  test('管理端维护资源公司、发布节点范围、创建代理并查询审计', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '超级管理员');
+    const campus = `浏览器验收公司 ${Date.now()}`;
 
     await page.getByRole('button', { name: '空间资源库', exact: true }).click();
     const resourceRow = page.locator('tr').filter({ hasText: 'Alpha 战略会议室' });
     await expect(resourceRow.getByRole('button', { name: '编辑Alpha 战略会议室', exact: true })).toBeDisabled();
     await resourceRow.getByRole('button', { name: '解锁Alpha 战略会议室', exact: true }).click();
     await resourceRow.getByRole('button', { name: '编辑Alpha 战略会议室', exact: true }).click();
-    await page.getByLabel('资源所属园区', { exact: true }).fill(campus);
+    await page.getByLabel('资源所属公司', { exact: true }).fill(campus);
     await Promise.all([
       page.waitForResponse(response => response.url().includes('/api/resources/') && response.request().method() === 'PUT' && response.ok()),
       page.getByRole('button', { name: '保存', exact: true }).click()
     ]);
     await expect(resourceRow).toContainText(campus);
+
+    await page.getByRole('button', { name: '批量导入', exact: true }).click();
+    const templateDownload = page.waitForEvent('download');
+    await page.getByRole('button', { name: '下载模板', exact: true }).click();
+    const templatePath = await (await templateDownload).path();
+    const template = await readFile(templatePath!, 'utf8');
+    expect(template).toContain('公共资源(是/否),公司(可选),设备(竖线分隔)');
+    expect(template).toContain(',总部公司,');
+    expect(template).not.toContain('园区');
+
+    const legacyCsv = `永久编码,资源名称,类型(会议室/工位),容量,楼栋(主楼/配楼),楼层,房间号,位置补充(可选),容量分类(自动/礼堂),开放开始(可选),开放结束(可选),专属(是/否),适用领导层级(可选),公共资源(是/否),园区(可选),设备(竖线分隔),状态(可选),备注(可选)\nR1,Alpha 战略会议室,会议室,10,主楼,10,,,自动,08:00,20:00,否,,是,${campus}·旧模板,投屏显示器|视频会议系统,空闲,`;
+    await page.getByLabel('批量导入数据', { exact: true }).fill(legacyCsv);
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/resources/ledger/preflight') && response.request().method() === 'POST' && response.ok()),
+      page.getByRole('button', { name: '生成预检报告', exact: true }).click()
+    ]);
+    const preflightReport = page.getByRole('region', { name: '资源台账预检报告', exact: true });
+    await expect(preflightReport).toContainText('R1');
+    await expect(preflightReport).toContainText('公司');
+    await expect(preflightReport).toContainText('可导入 1 条变更。');
+    await page.getByRole('button', { name: '取消', exact: true }).click();
 
     await page.getByRole('button', { name: '系统管理', exact: true }).click();
     await page.getByRole('button', { name: '流程配置', exact: true }).click();
@@ -619,13 +671,13 @@ test.describe('MySQL-only 浏览器验收', () => {
     await nodeCard.hover();
     await nodeCard.locator('button').nth(2).click();
     await page.getByLabel('市场部', { exact: true }).check();
-    await page.getByLabel('审批资源园区范围', { exact: true }).fill(campus);
+    await page.getByLabel('审批资源公司范围', { exact: true }).fill(campus);
     await Promise.all([
       page.waitForResponse(response => response.url().endsWith('/api/workflow') && response.request().method() === 'PUT' && response.ok()),
       page.getByRole('button', { name: '保存并发布新版本', exact: true }).click()
     ]);
     await expect(nodeCard).toContainText('部门：市场部');
-    await expect(nodeCard).toContainText(`园区：${campus}`);
+    await expect(nodeCard).toContainText(`公司：${campus}`);
 
     await page.getByRole('button', { name: '新增代理', exact: true }).click();
     await page.getByLabel('代理审批委托人', { exact: true }).selectOption('2');

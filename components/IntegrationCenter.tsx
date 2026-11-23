@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle, RefreshCw, RotateCcw, ShieldCheck } from 'lucide-react';
 import { toLocalDateTimeString } from '../utils/dateTime';
+import { formatUserError } from '../utils/userErrors';
 
 type IntegrationEvent = {
   eventKey: string;
@@ -41,7 +42,7 @@ export default function IntegrationCenter({ apiRequest, notify }: {
       setData(await apiRequest('/api/integrations', 'GET'));
       setError('');
     } catch (reason: any) {
-      setError(reason?.message || '集成运维数据加载失败');
+      setError(formatUserError(reason, '集成运维数据加载失败，请刷新后重试。'));
     }
   }, [apiRequest]);
   useEffect(() => { void load(); }, [load]);
@@ -52,7 +53,7 @@ export default function IntegrationCenter({ apiRequest, notify }: {
       const result = await apiRequest('/api/integrations/reconcile', 'POST', {});
       notify('对账已完成', `已核对 ${result.checkedBookings} 条有效预约，缺失事件按原幂等键补齐。`, 'SUCCESS');
       await load();
-    } catch (reason: any) { setError(reason?.message || '对账未完成'); }
+    } catch (reason: any) { setError(formatUserError(reason, '对账未完成，请刷新后重试。')); }
     finally { setBusy(''); }
   };
   const replay = async (eventKey: string) => {
@@ -61,7 +62,7 @@ export default function IntegrationCenter({ apiRequest, notify }: {
       await apiRequest('/api/integrations/replay', 'POST', { eventKey });
       notify('已加入安全重放队列', '保留原事件键，处理前会再次核对预约与人员状态。', 'SUCCESS');
       await load();
-    } catch (reason: any) { setError(reason?.message || '事件当前不可重放'); }
+    } catch (reason: any) { setError(formatUserError(reason, '事件当前不可重放，请刷新后核对状态。')); }
     finally { setBusy(''); }
   };
   const compensate = async () => {
@@ -72,7 +73,7 @@ export default function IntegrationCenter({ apiRequest, notify }: {
       notify('人工补偿记录已保存', '仅记录线下处理事实，不伪造供应商回执或修改授权事实。', 'SUCCESS');
       setCompensationEvent(''); setNote('');
       await load();
-    } catch (reason: any) { setError(reason?.message || '补偿记录未保存'); }
+    } catch (reason: any) { setError(formatUserError(reason, '补偿记录未保存，请刷新后重试。')); }
     finally { setBusy(''); }
   };
 
@@ -91,7 +92,7 @@ export default function IntegrationCenter({ apiRequest, notify }: {
         <div className="min-w-0"><p className="text-[10px] font-black uppercase tracking-wide text-gray-400">{event.eventType === 'CALENDAR_SYNC' ? '企业日历' : '门禁授权'} · {event.operation} · v{event.scheduleVersion}</p><h5 className="mt-1 break-all text-sm font-black text-gray-800">{event.eventKey}</h5><p className="mt-2 text-xs text-gray-500">预约 {event.bookingId} · 尝试 {event.attempts}/{event.maxAttempts} · {toLocalDateTimeString(event.createdAt)}</p></div>
         <div className="flex shrink-0 flex-wrap items-center gap-2"><span className={`rounded-lg px-2.5 py-1 text-[11px] font-black ${event.status === 'FAILED' ? 'bg-rose-50 text-rose-600' : event.status === 'DONE' ? 'bg-emerald-50 text-emerald-600' : 'bg-amber-50 text-amber-600'}`}>{statusText[event.status] || event.status}</span>{event.delivery && <span className="rounded-lg bg-gray-100 px-2.5 py-1 text-[11px] font-bold text-gray-600">{outcomeText[event.delivery.outcome] || event.delivery.outcome}</span>}{event.status === 'FAILED' && <button disabled={busy === event.eventKey} onClick={() => void replay(event.eventKey)} className="rounded-xl bg-indigo-600 px-3 py-2 text-xs font-black text-white disabled:opacity-40"><RotateCcw size={13} className="mr-1 inline"/>安全重放</button>}<button onClick={() => { setCompensationEvent(compensationEvent === event.eventKey ? '' : event.eventKey); setNote(''); }} aria-expanded={compensationEvent === event.eventKey} className="rounded-xl border border-gray-200 px-3 py-2 text-xs font-black text-gray-600">补偿记录</button></div>
       </div>
-      {event.lastError && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-[11px] font-bold text-rose-600"><AlertTriangle size={13} className="mr-1 inline"/>{event.lastError}</p>}
+      {event.lastError && <p className="mt-3 rounded-xl bg-rose-50 p-3 text-[11px] font-bold text-rose-600"><AlertTriangle size={13} className="mr-1 inline"/>{formatUserError(event.lastError, '外部事件投递失败，请查看技术日志后重试。')}</p>}
       {compensationEvent === event.eventKey && <div className="mt-4 border-t border-gray-100 pt-4"><label className="text-[11px] font-black text-gray-500">线下核实与处理说明<textarea aria-label={`${event.eventKey}补偿说明`} rows={2} maxLength={1000} value={note} onChange={input => setNote(input.target.value)} className="mt-1 w-full rounded-xl border border-gray-200 px-3 py-2 text-xs outline-none focus:border-indigo-300" placeholder="记录实际处理人、时间和结果；不会改写供应商回执"/></label><button disabled={busy === event.eventKey || note.trim().length < 2} onClick={() => void compensate()} className="mt-2 rounded-xl bg-gray-900 px-4 py-2 text-xs font-black text-white disabled:opacity-40">保存补偿记录</button></div>}
     </article>)}</div>
     <div className="grid gap-4 xl:grid-cols-2">

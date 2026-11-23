@@ -16,6 +16,7 @@ import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNod
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
 import { BOOKING_DISPLAY_STATUS_LABELS, findAttendeeOverlaps, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getBookingDisplayStatus, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, isValidBookingPurpose, resourceSupportsFeature, splitBookingByNaturalDay, validateBookingResource } from './utils/bookingRules';
 import { validateBookingDraft } from './utils/bookingDraft';
+import { formatUserError } from './utils/userErrors';
 import { filterResources } from './utils/resourceSearch';
 import { getApprovalGroups, getBookingWorkflow } from './utils/approval';
 import { getResourceBuilding, getResourceFloor, getRoomCategory } from './utils/resourceDomain';
@@ -137,7 +138,7 @@ const downloadBookingIcs = async (booking: Booking) => {
   const response = await fetch(`/api/bookings/${encodeURIComponent(booking.id)}/ics`);
   if (!response.ok) {
     const result = await response.json().catch(() => ({}));
-    throw new Error(BOOKING_ERROR_MESSAGES[result.error] || '日历导出失败，请稍后重试。');
+    throw new Error(formatUserError(result, '日历导出失败，请稍后重试。', BOOKING_ERROR_MESSAGES));
   }
   const blob = await response.blob();
   const url = URL.createObjectURL(blob);
@@ -893,7 +894,7 @@ const RESOURCE_IMPORT_ERROR_MESSAGES: Record<string, string> = {
 
 const RESOURCE_FIELD_LABELS: Record<string, string> = {
   name: '名称', type: '类型', capacity: '容量', location: '位置', building: '楼栋', floor: '楼层',
-  roomNumber: '房间号', roomCategory: '容量分类', campus: '园区', features: '设备', status: '状态',
+  roomNumber: '房间号', roomCategory: '容量分类', campus: '公司', features: '设备', status: '状态',
   isExclusive: '专属', exclusiveLeaderLevel: '领导层级', openStart: '开放开始', openEnd: '开放结束',
   isPublic: '公共资源', notes: '备注'
 };
@@ -926,7 +927,7 @@ const BatchImportModal = ({ type, onClose, onImport, onPreflight, theme, existin
   
   const getTemplate = () => {
     if (type === 'USERS') return "姓名,邮箱,部门,角色(可选),办公电话(可选),移动电话(可选)\n张三,zhangsan@company.com,市场部,正式员工,010-88886666,13800000001";
-    if (type === 'RESOURCES') return "永久编码,资源名称,类型(会议室/工位),容量,楼栋(主楼/配楼),楼层,房间号,位置补充(可选),容量分类(自动/礼堂),开放开始(可选),开放结束(可选),专属(是/否),适用领导层级(可选),公共资源(是/否),园区(可选),设备(竖线分隔),状态(可选),备注(可选)\nANNEX-02F-201,Gamma 演示厅,会议室,20,配楼,2,201,,自动,08:00,20:00,否,,是,总部园区,投屏显示器|视频会议系统,空闲,演示数据，请替换为实际台账";
+    if (type === 'RESOURCES') return "永久编码,资源名称,类型(会议室/工位),容量,楼栋(主楼/配楼),楼层,房间号,位置补充(可选),容量分类(自动/礼堂),开放开始(可选),开放结束(可选),专属(是/否),适用领导层级(可选),公共资源(是/否),公司(可选),设备(竖线分隔),状态(可选),备注(可选)\nANNEX-02F-201,Gamma 演示厅,会议室,20,配楼,2,201,,自动,08:00,20:00,否,,是,总部公司,投屏显示器|视频会议系统,空闲,演示数据，请替换为实际台账";
     if (type === 'DEPARTMENTS') return "部门名称,上级部门名称(可选)\n华北区,\n北京分公司,华北区";
     return "";
   };
@@ -1045,7 +1046,7 @@ const BatchImportModal = ({ type, onClose, onImport, onPreflight, theme, existin
         setReport(await onPreflight(data));
       } else await onImport(data);
     } catch (error: any) {
-      setFormError(error?.message || '数据解析或预检失败，请检查格式。');
+      setFormError(formatUserError(error, '数据解析或预检失败，请检查格式。', BOOKING_ERROR_MESSAGES));
     } finally {
       setBusy(null);
     }
@@ -1058,7 +1059,7 @@ const BatchImportModal = ({ type, onClose, onImport, onPreflight, theme, existin
     try {
       await onImport(parsedItems);
     } catch (error: any) {
-      setFormError(error?.message || '正式导入失败，请刷新后重试。');
+      setFormError(formatUserError(error, '正式导入失败，请刷新后重试。', BOOKING_ERROR_MESSAGES));
     } finally {
       setBusy(null);
     }
@@ -1437,7 +1438,7 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
         notes: formData.notes.trim() || undefined
       });
     } catch (error: any) {
-      setFormError(error?.message || '保存失败，请稍后重试');
+      setFormError(formatUserError(error, '保存失败，请稍后重试。', BOOKING_ERROR_MESSAGES));
     } finally {
       setSaving(false);
     }
@@ -1469,8 +1470,8 @@ const ResourceModal = ({ resource, onClose, onSave, theme }: any) => {
             </label>}
           </div>
           <label className="block">
-            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">所属园区</span>
-            <input aria-label="资源所属园区" value={formData.campus} onChange={e => setFormData({ ...formData, campus: e.target.value })} placeholder="如：总部园区（用于审批范围）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">所属公司</span>
+            <input aria-label="资源所属公司" value={formData.campus} onChange={e => setFormData({ ...formData, campus: e.target.value })} placeholder="如：总部公司（用于审批范围）" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           </label>
           {formData.type === 'ROOM' && <>
             <div className="grid grid-cols-2 gap-3">
@@ -1615,8 +1616,8 @@ const WorkflowModal = ({ node, roles, departments, onClose, onSave, theme }: any
             </div>
           </fieldset>
           <label className="block">
-            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">资源园区范围</span>
-            <input aria-label="审批资源园区范围" value={formData.campuses} onChange={e => setFormData({ ...formData, campuses: e.target.value })} placeholder="留空表示全部园区；多个园区用逗号分隔" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
+            <span className="text-xs text-gray-500 font-bold ml-1 mb-1 block">资源公司范围</span>
+            <input aria-label="审批资源公司范围" value={formData.campuses} onChange={e => setFormData({ ...formData, campuses: e.target.value })} placeholder="留空表示全部公司；多个公司用逗号分隔" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           </label>
         </div>
         <div className="flex space-x-3 mt-6">
@@ -1661,7 +1662,7 @@ const ApprovalDelegateModal = ({ users, onClose, onSave, theme }: any) => {
         DELEGATION_EXPIRED: '代理结束时间已过，请重新选择',
         DELEGATION_USER_NOT_FOUND: '委托人或代理人不存在，请刷新后重试'
       };
-      setError(messages[reason?.message] || reason?.message || '保存失败，请稍后重试');
+      setError(formatUserError(reason, '保存失败，请稍后重试。', messages));
     } finally {
       setSaving(false);
     }
@@ -2549,7 +2550,7 @@ const ConfidentialityAdminPanel = ({ users, authorizationTargets, whitelist, aut
     setBusy(true);
     setError('');
     try { await operation(); }
-    catch (cause: any) { setError(BOOKING_ERROR_MESSAGES[cause?.message] || cause?.message || '操作失败，请刷新后重试。'); }
+    catch (cause: any) { setError(formatUserError(cause, '操作失败，请刷新后重试。', BOOKING_ERROR_MESSAGES)); }
     finally { setBusy(false); }
   };
   return <div className="space-y-6 animate-in fade-in">
@@ -2729,7 +2730,11 @@ const App: React.FC = () => {
         body: ['GET', 'HEAD'].includes(method.toUpperCase()) ? undefined : JSON.stringify(body)
       });
       const result = await res.json().catch(() => ({}));
-      if (!res.ok) throw new Error(BOOKING_ERROR_MESSAGES[result.error] || result.detail || result.error || '操作失败，请刷新后重试。');
+      if (!res.ok) {
+        const error = new Error(formatUserError(result, '操作失败，请刷新后重试。', BOOKING_ERROR_MESSAGES)) as Error & { code?: string };
+        if (typeof result.error === 'string') error.code = result.error;
+        throw error;
+      }
       if (result.workspace) applyWorkspace(result.workspace);
       setSaveStatus('saved');
       setIsOnline(true);
@@ -2922,7 +2927,8 @@ const App: React.FC = () => {
   };
 
   const addNotification = (title: string, content: string, type: 'INFO' | 'SUCCESS' | 'WARNING' = 'INFO', userId?: string, id?: string) => {
-    const newNotif: Notification = { id: id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, userId: userId || currentUser?.id || 'sys', title, content, timestamp: new Date().toISOString(), isRead: false, type };
+    const displayContent = type === 'WARNING' ? formatUserError(content, '操作未完成，请刷新后重试。', BOOKING_ERROR_MESSAGES) : content;
+    const newNotif: Notification = { id: id || `${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, userId: userId || currentUser?.id || 'sys', title, content: displayContent, timestamp: new Date().toISOString(), isRead: false, type };
     if (newNotif.userId === currentUser?.id || newNotif.userId === 'sys') setNotifications(prev => prev.some(n => n.id === newNotif.id) ? prev : [newNotif, ...prev].slice(0, 50));
   };
 
@@ -3485,7 +3491,7 @@ const App: React.FC = () => {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
       });
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || '当前不可提前结束');
+      if (!res.ok) throw new Error(formatUserError(result, '当前不可提前结束。', BOOKING_ERROR_MESSAGES));
       if (result.workspace) applyWorkspace(result.workspace);
       addNotification('会议已提前结束', result.message || '剩余时段已释放。', 'SUCCESS');
     } catch (err: any) {
@@ -3513,7 +3519,7 @@ const App: React.FC = () => {
       });
       setSelectedApprovalIds(prev => key === 'BULK' ? [] : prev.filter(id => id !== booking.id));
     } catch (err: any) {
-      setApprovalActionErrors(prev => ({ ...prev, [key]: err?.message || '审批未完成，请刷新后重试。' }));
+      setApprovalActionErrors(prev => ({ ...prev, [key]: formatUserError(err, '审批未完成，请刷新后重试。', BOOKING_ERROR_MESSAGES) }));
     } finally {
       approvalActionLocks.current.delete(key);
       setPendingApprovalActions(prev => {
@@ -3656,7 +3662,7 @@ const App: React.FC = () => {
           body: JSON.stringify({ action })
         });
         const result = await res.json();
-        if (!res.ok) throw new Error(result.detail || result.error || '操作失败');
+        if (!res.ok) throw new Error(formatUserError(result, '操作失败，请刷新后重试。', BOOKING_ERROR_MESSAGES));
         if (result.workspace) applyWorkspace(result.workspace);
         if (result.notifications) setNotifications(result.notifications);
         addNotification('操作成功', result.message || '待办已处理。', 'SUCCESS');
@@ -3668,7 +3674,6 @@ const App: React.FC = () => {
   };
 
   const adminError = (error: any) => {
-    const code = error?.message || '';
     const messages: Record<string, string> = {
       DEPARTMENT_HAS_CHILDREN: '请先删除或移动子部门。',
       DEPARTMENT_HAS_USERS: '该部门仍有成员，请先调整成员部门。',
@@ -3684,7 +3689,7 @@ const App: React.FC = () => {
       RESOURCE_HAS_BOOKINGS: '该资源存在预约记录，不能删除。请改为维护或待开放状态以停止新预约。',
       RESOURCE_HAS_DEVICES: '该资源仍有关联门口屏设备记录，不能删除。'
     };
-    addNotification('操作未完成', messages[code] || code || '请刷新后重试。', 'WARNING');
+    addNotification('操作未完成', formatUserError(error, '请刷新后重试。', messages), 'WARNING');
   };
 
   const handleSaveDepartment = async (data: { name: string, parentId?: string }) => {
@@ -3807,10 +3812,10 @@ const App: React.FC = () => {
       }
       const res = await fetch(`/api/audit?${params}`);
       const result = await res.json();
-      if (!res.ok) throw new Error(result.error || '审计记录读取失败');
+      if (!res.ok) throw new Error(formatUserError(result, '审计记录读取失败，请稍后重试。'));
       setAuditEvents(result.events || []);
     } catch (error: any) {
-      setAuditError(error?.message || '审计记录读取失败，请稍后重试。');
+      setAuditError(formatUserError(error, '审计记录读取失败，请稍后重试。'));
     } finally {
       setAuditLoading(false);
     }
@@ -4503,7 +4508,7 @@ const App: React.FC = () => {
                    <div key={node.id} className="bg-white p-6 rounded-3xl border border-gray-100 shadow-sm flex items-center justify-between group hover:border-gray-200 transition-all">
                      <div className="flex items-center space-x-6">
                        <div className={`w-10 h-10 rounded-xl bg-gray-50 flex items-center justify-center font-black text-${theme}-600 border border-gray-100 shadow-inner`}>{index + 1}</div>
-                       <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-500 mt-1 font-medium">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p><p className="mt-1 text-[11px] font-medium text-gray-500">部门：{node.departmentIds?.length ? node.departmentIds.map(id => departments.find(department => department.id === id)?.name || id).join('、') : '全部'} · 园区：{node.campuses?.length ? node.campuses.join('、') : '全部'}</p></div>
+                       <div><h5 className="font-bold text-gray-800">{node.name}</h5><p className="text-xs text-gray-500 mt-1 font-medium">负责角色：{roles.find(r => r.id === node.approverRole)?.name}</p><p className="mt-1 text-[11px] font-medium text-gray-500">部门：{node.departmentIds?.length ? node.departmentIds.map(id => departments.find(department => department.id === id)?.name || id).join('、') : '全部'} · 公司：{node.campuses?.length ? node.campuses.join('、') : '全部'}</p></div>
                      </div>
                      <div className="flex items-center space-x-2 opacity-0 group-hover:opacity-100 transition-all">
                        <button onClick={() => { const nw = [...workflow]; if(index > 0) { [nw[index], nw[index-1]] = [nw[index-1], nw[index]]; void handleSaveWorkflow(nw); } }} disabled={index === 0} className="p-2 text-gray-500 hover:text-indigo-600 disabled:opacity-30"><ChevronUp size={16}/></button>
@@ -4639,7 +4644,7 @@ const App: React.FC = () => {
                       try {
                         const res = await fetch('/api/backup');
                         const backup = await res.json();
-                        if (!res.ok) throw new Error(backup.error || '备份失败');
+                        if (!res.ok) throw new Error(formatUserError(backup, '备份失败，请稍后重试。'));
                         const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
                         const url = URL.createObjectURL(blob);
                         const link = document.createElement('a');
@@ -4671,7 +4676,7 @@ const App: React.FC = () => {
                              if (!confirm('恢复将替换当前组织、资源、预约和工单数据，确定继续吗？')) return;
                              await apiRequest('/api/backup/restore', 'POST', imported);
                              addNotification('恢复成功', '备份已通过服务端一致性校验并替换写入 MySQL。', 'SUCCESS');
-                           } catch(err: any) { alert(err?.message || "文件格式错误或保存失败"); }
+                           } catch(err: any) { alert(formatUserError(err, '文件格式错误或保存失败，请检查后重试。')); }
                          };
                          reader.readAsText(file);
                        };

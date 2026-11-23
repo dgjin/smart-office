@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { Copy, Key, Monitor, Plus, Power, RefreshCw, RotateCcw, Smartphone, X } from 'lucide-react';
 import type { DoorDevice, Resource } from '../types';
 import { toLocalDateTimeString } from '../utils/dateTime';
+import { formatUserError } from '../utils/userErrors';
 
 type PublicDevice = Omit<DoorDevice, 'tokenHash'>;
 
@@ -28,7 +29,7 @@ export default function DeviceManagement({ devices, resources, apiRequest, onCha
       setConfirmation(null); setName('');
       await onChanged();
       notify('设备状态已更新', success, 'SUCCESS');
-    } catch (reason: any) { setError(reason?.message || '设备操作未完成。'); }
+    } catch (reason: any) { setError(formatUserError(reason, '设备操作未完成，请刷新后重试。')); }
     finally { setBusy(false); }
   };
   const copy = async () => {

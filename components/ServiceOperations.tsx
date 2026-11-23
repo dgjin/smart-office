@@ -3,6 +3,7 @@ import { AlertTriangle, CheckCircle, Clock, Coffee, Edit2, MapPin, Plus, QrCode,
 import type { Booking, BookingUsageFact, CheckInEvent, Resource, RoleDefinition, ServiceArea, ServiceCatalogItem, ServiceFieldTemplate, ServiceInspection, ServiceShift, UsageAppeal, User, WorkOrder } from '../types';
 import { toLocalDateTimeString, toLocalTimeString } from '../utils/dateTime';
 import { SERVICE_TYPE_LABELS } from '../constants';
+import { formatUserError } from '../utils/userErrors';
 
 type Notify = (title: string, content: string, type?: 'INFO' | 'SUCCESS' | 'WARNING') => void;
 type ApiRequest = (path: string, method: string, body?: any) => Promise<any>;
@@ -63,7 +64,7 @@ export default function ServiceOperations({ currentUser, users, resources, booki
       notify('操作成功', success, 'SUCCESS');
       return true;
     } catch (reason: any) {
-      setError(reason?.message || '操作未完成，请刷新后重试。');
+      setError(formatUserError(reason, '操作未完成，请刷新后重试。'));
       return false;
     } finally {
       setBusy(false);
@@ -231,7 +232,7 @@ export function BookingUsageActions({ booking, fact, appeals, apiRequest, notify
       setNote('');
       setAppealReason('');
     } catch (reason: any) {
-      setError(reason?.message || '操作未完成，请刷新后重试。');
+      setError(formatUserError(reason, '操作未完成，请刷新后重试。'));
     } finally {
       setBusy(false);
     }

@@ -5,6 +5,7 @@ import { SERVICE_TYPE_LABELS } from '../constants';
 import { formatDate, formatTime } from '../utils/dateTime';
 import { isResourceAcceptingBookings } from '../utils/bookingRules';
 import { validateBookingDraft } from '../utils/bookingDraft';
+import { formatUserError } from '../utils/userErrors';
 import type { SystemView } from '../helpCatalog';
 
 export interface BookingDraft {
@@ -543,7 +544,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
     void fetch('/api/agent/conversation')
       .then(async res => {
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.detail || data.error || String(res.status));
+        if (!res.ok) throw new Error(formatUserError(data, '对话服务暂时不可用，请稍后重试。'));
         if (generation !== conversationGeneration.current) return;
         const state = data.state as ConversationState;
         conversationRevision.current = Number(data.revision || 0);
@@ -555,7 +556,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
       })
       .catch(err => {
         if (generation !== conversationGeneration.current) return;
-        setConversationError(`对话恢复失败，当前内容未保存：${err?.message || '请检查连接后重试。'}`);
+        setConversationError(`对话恢复失败，当前内容未保存：${formatUserError(err, '请检查连接后重试。')}`);
       });
 
     return () => {
@@ -592,13 +593,13 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
             setConversationConflict(true);
             throw new Error('对话已在其他窗口更新。为避免覆盖，当前变更未保存，请刷新页面恢复服务端版本。');
           }
-          if (!res.ok) throw new Error(data.detail || data.error || String(res.status));
+          if (!res.ok) throw new Error(formatUserError(data, '对话服务暂时不可用，请稍后重试。'));
           conversationRevision.current = Number(data.revision || conversationRevision.current);
           conversationLastSaved.current = serialized;
           if (JSON.stringify(conversationSnapshot(conversationLatest.current)) === serialized) setConversationDirty(false);
         } catch (err: any) {
           if (generation === conversationGeneration.current) {
-            setConversationError(err?.message?.includes('其他窗口') ? err.message : `对话保存失败，当前变更未保存：${err?.message || '请检查连接后重试。'}`);
+            setConversationError(err?.message?.includes('其他窗口') ? err.message : `对话保存失败，当前变更未保存：${formatUserError(err, '请检查连接后重试。')}`);
           }
         } finally {
           if (generation === conversationGeneration.current) setConversationSaving(false);
@@ -690,7 +691,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
         flushNow();
         patchStreaming(turn => ({
           ...turn,
-          content: payload.message || '服务暂时不可用，请稍后再试。',
+          content: formatUserError(payload.message, '服务暂时不可用，请稍后再试。'),
           failed: true,
           streaming: false
         }));
@@ -767,7 +768,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
         const detail = await res.json().catch(() => ({}));
         const reason = res.status === 503
           ? 'AI 服务尚未配置，请联系管理员设置 DEEPSEEK_API_KEY。'
-          : `服务暂时不可用（${res.status}）。${detail?.detail || ''}`;
+          : `服务暂时不可用（${res.status}）。${formatUserError(detail, '请稍后重试。')}`;
         patchStreaming(turn => ({ ...turn, content: reason, failed: true, streaming: false }));
         return;
       }
@@ -804,7 +805,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
       } else {
         patchStreaming(turn => ({
           ...turn,
-          content: `网络请求失败：${err?.message || err}`,
+          content: `网络请求失败：${formatUserError(err, '请检查网络连接后重试。')}`,
           failed: true,
           streaming: false
         }));
@@ -860,7 +861,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
       }));
       await refreshTodos();
     } catch (err: any) {
-      setActionErrors(prev => ({ ...prev, [key]: err?.message || '操作未完成，请稍后重试。' }));
+      setActionErrors(prev => ({ ...prev, [key]: formatUserError(err, '操作未完成，请稍后重试。') }));
     } finally {
       actionLocks.current.delete(key);
       setPendingActions(prev => {

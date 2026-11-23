@@ -3,6 +3,7 @@ import { Calendar, CheckCircle, Clock, CloudOff, Key, MapPin, Monitor, RefreshCw
 import { toLocalDateTimeString, toLocalTimeString } from '../utils/dateTime';
 import { DOOR_CACHE_KEY_PREFIX, doorCacheKey, doorSnapshotStatus, formatDoorCountdown, upcomingDoorBookings } from '../utils/doorDisplay';
 import { BOOKING_DISPLAY_STATUS_LABELS } from '../utils/bookingRules';
+import { formatUserError } from '../utils/userErrors';
 import type { BookingDisplayStatus } from '../types';
 
 type Snapshot = {
@@ -101,7 +102,7 @@ export default function DoorDisplay() {
           setAuthenticated(false); setSnapshot(null); snapshotRef.current = null; setToken(''); setError('设备凭证无效、已轮换或已吊销，请重新配置。');
           return;
         }
-        if (!response.ok) throw new Error(result.error || String(response.status));
+        if (!response.ok) throw new Error(formatUserError(result, '门口屏服务暂不可用，请稍后重试。'));
         acceptSnapshot(result, tokenRef.current);
       } catch { if (active) { setOnline(false); setError(snapshotRef.current ? '连接中断，正在限时显示最后一次成功快照；不作为门禁或签到凭证。' : '无法获取有效日程快照，请检查网络、设备时间和设备凭证。'); } }
       finally { inFlight.current = false; }
@@ -135,7 +136,7 @@ export default function DoorDisplay() {
     } catch (reason: any) {
       sessionStorage.removeItem(TOKEN_KEY); clearCache(credential);
       setAuthenticated(false); setSnapshot(null); snapshotRef.current = null;
-      setError(reason?.message || '连接失败。');
+      setError(formatUserError(reason, '连接失败，请检查网络和设备凭证后重试。'));
     } finally { setConnecting(false); }
   };
   const disconnect = () => {

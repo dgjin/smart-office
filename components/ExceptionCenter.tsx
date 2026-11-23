@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { AlertTriangle, CheckCircle, Clock, ShieldCheck } from 'lucide-react';
 import type { OperationalException, RoleDefinition, User } from '../types';
 import { toLocalDateTimeString } from '../utils/dateTime';
+import { formatUserError } from '../utils/userErrors';
 import IntegrationCenter from './IntegrationCenter';
 
 const kindLabels = { APPROVAL_OVERDUE: '审批超时', NO_SHOW: '未签到释放', SERVICE_EXCEPTION: '服务异常', DEVICE_OFFLINE: '设备离线' };
@@ -35,7 +36,7 @@ export default function ExceptionCenter({ currentUser, users, roles, exceptions,
       setSelectedId(''); setNote('');
       notify('异常记录已更新', action === 'RESOLVE' ? '复核记录已保存，异常已关闭。' : '责任人和处理说明已保存。', 'SUCCESS');
     } catch (reason: any) {
-      setError(reason?.message || '处理未完成，请刷新后核对异常事实。');
+      setError(formatUserError(reason, '处理未完成，请刷新后核对异常事实。'));
     } finally { setBusy(false); }
   };
   const sectionTabs = <div role="tablist" aria-label="异常中心功能" className="flex w-fit gap-2 rounded-2xl bg-gray-100 p-1.5"><button role="tab" aria-selected={section === 'BUSINESS'} onClick={() => setSection('BUSINESS')} className={`rounded-xl px-4 py-2 text-xs font-black ${section === 'BUSINESS' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>业务异常</button>{currentUser.role.includes('SYSTEM_ADMIN') && <button role="tab" aria-selected={section === 'INTEGRATIONS'} onClick={() => setSection('INTEGRATIONS')} className={`rounded-xl px-4 py-2 text-xs font-black ${section === 'INTEGRATIONS' ? 'bg-white text-gray-800 shadow-sm' : 'text-gray-500'}`}>集成运维</button>}</div>;

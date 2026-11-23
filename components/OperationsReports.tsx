@@ -4,6 +4,7 @@ import type { Booking, OperationsReport, OperationsReportDimension } from '../ty
 import { formatDate, toLocalDateTimeString } from '../utils/dateTime';
 import { BOOKING_DISPLAY_STATUS_LABELS } from '../utils/bookingRules';
 import { calendarReportRange, localDateInputValue } from '../utils/reports';
+import { formatUserError } from '../utils/userErrors';
 import OperationsDashboard from './OperationsDashboard';
 
 type Notify = (title: string, content: string, type?: 'INFO' | 'SUCCESS' | 'WARNING') => void;
@@ -40,10 +41,10 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
     try {
       const response = await fetch(`/api/reports?start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`);
       const data = await response.json();
-      if (!response.ok) throw new Error(data.error || '报表读取失败。');
+      if (!response.ok) throw new Error(formatUserError(data, '报表读取失败，请稍后重试。'));
       if (requestId === requestRef.current) setReport(data);
     } catch (reason: any) {
-      if (requestId === requestRef.current) setError(reason?.message || '报表读取失败，请稍后重试。');
+      if (requestId === requestRef.current) setError(formatUserError(reason, '报表读取失败，请稍后重试。'));
     } finally {
       if (requestId === requestRef.current) setLoading(false);
     }
@@ -61,7 +62,7 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
           setError('报表数据已更新，已刷新到最新快照，请重新导出。');
           return;
         }
-        throw new Error(data.error || '导出失败。');
+        throw new Error(formatUserError(data, '导出失败，请稍后重试。'));
       }
       const blob = await response.blob();
       const url = URL.createObjectURL(blob);
@@ -72,7 +73,7 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
       link.click(); link.remove(); URL.revokeObjectURL(url);
       notify('报表已导出', `${format.toUpperCase()} 已按当前权限和时间范围生成。`, 'SUCCESS');
     } catch (reason: any) {
-      setError(reason?.message || '导出失败，请稍后重试。');
+      setError(formatUserError(reason, '导出失败，请稍后重试。'));
     } finally { setExporting(''); }
   };
   const rows = report?.rows.filter(row => dimension === 'ALL' || row.dimension === dimension) || [];
