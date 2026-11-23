@@ -3,12 +3,12 @@ import test from 'node:test';
 import { DEFAULT_RULE_SETTINGS, DEFAULT_SERVICE_CATALOG } from '../constants.ts';
 import { DbError } from '../server/errors.ts';
 import {
-  assertCancellationAuthorized, createBookingWorkOrders, freezeServiceRequirements,
-  syncWorkOrdersForBookingChange
+  assertCancellationAuthorized, createBookingWorkOrders, ensureServiceDomain, freezeServiceRequirements,
+  serviceAreaForResource, syncWorkOrdersForBookingChange
 } from '../server/serviceDomain.ts';
 import { applyWorkOrderTransition } from '../server/serviceOperations.ts';
 import type { OfficeDb } from '../server/tools.ts';
-import { completeBookingUsage, recordCheckIn, releaseBooking } from '../server/usageDomain.ts';
+import { completeBookingNormally, completeBookingUsage, recordCheckIn, releaseBooking } from '../server/usageDomain.ts';
 import type { Booking, Resource, ServiceType, User, WorkOrder } from '../types.ts';
 
 const requester: User = {
@@ -49,6 +49,28 @@ const makeOrder = (booking: Booking, overrides: Partial<WorkOrder> = {}): WorkOr
     responsibleRole: 'SERVICE_COORDINATOR', slaResponseMinutes: 10, heavyService: false, cancellable: true
   } },
   statusHistory: [{ to: 'TODO', at: booking.createdAt }], ...overrides
+});
+
+test('默认责任区只接收未分配会议室，派单不会误入首个自定义责任区', () => {
+  const db = makeDb();
+  db.resources = [
+    resource,
+    { ...resource, id: 'r2', name: 'Beta 会议室' },
+    { ...resource, id: 'r3', name: 'Gamma 会议室' }
+  ];
+  db.serviceAreas = [
+    { id: 'area-custom', name: '自定义责任区', resourceIds: ['r1', 'r2'] },
+    { id: 'area-default', name: '默认会务责任区', resourceIds: ['r1', 'r2', 'r3'] }
+  ];
+  ensureServiceDomain(db);
+  assert.deepEqual(db.serviceAreas.find(area => area.id === 'area-default')?.resourceIds, ['r3']);
+  assert.equal(serviceAreaForResource(db, db.resources[0])?.id, 'area-custom');
+  assert.equal(serviceAreaForResource(db, db.resources[2])?.id, 'area-default');
+
+  db.serviceAreas = [{ id: 'area-custom', name: '自定义责任区', resourceIds: ['r1', 'r2'] }];
+  ensureServiceDomain(db);
+  assert.equal(serviceAreaForResource(db, db.resources[2])?.id, 'area-default');
+  assert.deepEqual(serviceAreaForResource(db, db.resources[2])?.resourceIds, ['r3']);
 });
 
 test('服务目录在提交时冻结，字段和资源范围严格校验且升级不改写历史快照', () => {
@@ -259,4 +281,27 @@ test('no-show 与提前结束分别保存释放、门禁和实际时长事实并
   assert.equal(earlyDb.usageFacts![0].actualMinutes, 35);
   assert.equal(earlyDb.usageFacts![0].scheduledMinutes, 60);
   assert.equal(earlyDb.workOrders![0].status, 'CANCELLED');
+});
+
+test('正常结束按计划时间结算，不混用提前结束字段或 Worker 延迟时间', () => {
+  const db = makeDb();
+  assertDbError('BOOKING_NOT_COMPLETABLE', () => completeBookingNormally(db, db.bookings![0], '2026-11-21T03:00:00.000Z'));
+  const checked = recordCheckIn(db, db.bookings![0], requester, { source: 'MANUAL', at: '2026-11-21T01:55:00.000Z' });
+  db.bookings = [checked.booking];
+  db.workOrders = [makeOrder(checked.booking)];
+  assertDbError('BOOKING_NOT_COMPLETABLE', () => completeBookingNormally(db, checked.booking, '2026-11-21T02:59:59.000Z'));
+
+  const completed = completeBookingNormally(db, checked.booking, '2026-11-21T03:05:00.000Z');
+  assert.equal(completed.status, 'COMPLETED');
+  assert.equal(completed.actualEndTime, completed.endTime);
+  assert.equal(completed.accessRevokedAt, completed.endTime);
+  assert.equal(completed.endedEarlyAt, undefined);
+  assert.equal(completed.releasedAt, undefined);
+  assert.equal(completed.releaseType, undefined);
+  assert.equal(db.usageFacts![0].source, 'SYSTEM');
+  assert.equal(db.usageFacts![0].actualEndTime, completed.endTime);
+  assert.equal(db.usageFacts![0].actualMinutes, 65);
+  assert.equal(db.workOrders![0].status, 'CANCELLED');
+  assert.equal(db.workOrders![0].cancelledAt, completed.endTime);
+  assertDbError('BOOKING_NOT_COMPLETABLE', () => completeBookingNormally(db, completed, '2026-11-21T03:06:00.000Z'));
 });

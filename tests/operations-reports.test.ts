@@ -252,6 +252,27 @@ test('对账识别独立事实不一致、使用事实缺口和签到事实缺�
   assert.equal(buildReport(missingCheckIn).bookings[0].reconciliationStatus, '签到事实缺口');
 });
 
+test('正常完成、待结算与缺少实际结束的异常状态分别对账', () => {
+  const db = makeDb();
+  const ids = ['b-normal', 'b-settlement', 'b-missing-end'];
+  db.bookings = [
+    booking({ id: ids[0], actualStartTime: iso(10, 9, 5), actualEndTime: iso(10, 11), endedEarlyAt: undefined }),
+    booking({ id: ids[1], status: 'APPROVED', actualStartTime: iso(10, 9, 5), endedEarlyAt: undefined }),
+    booking({ id: ids[2], actualStartTime: iso(10, 9, 5), endedEarlyAt: undefined })
+  ];
+  db.usageFacts = [
+    usageFact({ bookingId: ids[0], actualEndTime: iso(10, 11), actualMinutes: 115 }),
+    usageFact({ bookingId: ids[1], actualEndTime: undefined, actualMinutes: 0 }),
+    usageFact({ bookingId: ids[2], actualEndTime: undefined, actualMinutes: 0 })
+  ];
+  db.checkInEvents = ids.map((id, index) => checkIn({ id: `ci-normal-${index}`, bookingId: id }));
+  const report = buildReport(db);
+  assert.equal(report.bookings.find(item => item.id === ids[0])?.reconciliationStatus, '一致');
+  assert.equal(report.bookings.find(item => item.id === ids[0])?.actualMinutes, 115);
+  assert.equal(report.bookings.find(item => item.id === ids[1])?.reconciliationStatus, '待结算');
+  assert.equal(report.bookings.find(item => item.id === ids[2])?.reconciliationStatus, '事实异常');
+});
+
 test('获授权读取涉密预约时仍只导出遮蔽主题和会务标题', () => {
   const db = makeDb();
   db.confidentialAccessGrants = [{ id: 'grant-1', bookingId: 'b-confidential', userId: 'admin', access: 'SECURITY', grantedBy: 'admin', grantedAt: iso(9) }];

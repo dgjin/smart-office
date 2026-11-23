@@ -4,7 +4,7 @@ import { isServiceType } from '../constants.ts';
 import { mutateDb } from './db.ts';
 import { DbError } from './errors.ts';
 import type { OfficeDb } from './tools.ts';
-import { bookingNoticePurpose } from './confidentiality.ts';
+import { assertConfidentialOperation, bookingNoticePurpose } from './confidentiality.ts';
 import { canManageServiceOperations, canManageWorkOrder, ensureServiceDomain } from './serviceDomain.ts';
 
 const text = (value: unknown, code: string, max = 500, required = true) => {
@@ -88,6 +88,7 @@ export const applyWorkOrderTransition = (db: OfficeDb, order: WorkOrder, actor: 
   const requester = booking?.userId === actor.id;
   const manager = canManageWorkOrder(actor, order);
   if (!manager && !(requester && input.action === 'PROVIDE_INFO')) throw new DbError('FORBIDDEN', 403);
+  if (booking && !manager) assertConfidentialOperation(db, booking, actor);
   const targets: Record<WorkOrderTransitionInput['action'], WorkOrderStatus> = {
     REQUEST_INFO: 'PENDING_INFO', PROVIDE_INFO: 'TODO', START: 'IN_PROGRESS', COMPLETE: 'DONE',
     CANCEL: 'CANCELLED', EXCEPTION: 'EXCEPTION', RESUME: 'IN_PROGRESS'

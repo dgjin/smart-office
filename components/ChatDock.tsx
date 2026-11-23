@@ -450,7 +450,11 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
   const [conversationSaving, setConversationSaving] = useState(false);
   const [saveRetry, setSaveRetry] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const shellRef = useRef<HTMLElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   const abortRef = useRef<AbortController | null>(null);
   const actionLocks = useRef(new Set<string>());
   const conversationGeneration = useRef(0);
@@ -607,18 +611,37 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
   }, [userId, conversationReady, turns, handled, input, saveRetry]);
 
   useEffect(() => {
-    if (open) {
-      setTimeout(() => inputRef.current?.focus(), 120);
-      void refreshTodos();
-    }
-  }, [open, userId]);
-
-  useEffect(() => {
     if (!open) return;
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose(); };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const timer = window.setTimeout(() => inputRef.current?.focus(), 120);
+    void refreshTodos();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab' || !shellRef.current) return;
+      const focusable = [...shellRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])')]
+        .filter(element => element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0);
+      if (!focusable.length) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('keydown', onKey);
+      if (returnFocusRef.current?.isConnected) returnFocusRef.current.focus();
+    };
+  }, [open, userId]);
 
   useEffect(() => () => {
     abortRef.current?.abort();
@@ -854,6 +877,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
     <div className="fixed inset-0 z-[150] flex justify-end">
       <div className="absolute inset-0 bg-black/20" onClick={onClose} />
       <aside
+        ref={shellRef}
         role="dialog"
         aria-modal="true"
         aria-label="对话式办公助手"
@@ -872,6 +896,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
               <button
                 onClick={() => { setTurns([]); setHandled({}); setActionErrors({}); }}
                 className="p-2 text-gray-400 hover:text-gray-700 rounded-lg hover:bg-gray-50"
+                aria-label="清空对话"
                 title="清空对话"
               >
                 <Trash2 size={15} />
@@ -1072,11 +1097,13 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
               value={input}
               onChange={event => setInput(event.target.value)}
               onKeyDown={event => {
-                if (event.key === 'Enter' && !event.shiftKey) {
+                if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing && event.keyCode !== 229) {
                   event.preventDefault();
                   send(input);
                 }
               }}
+              aria-label="输入办公需求"
+              enterKeyHint="send"
               placeholder={conversationReady ? '描述你的需求，Enter 发送' : '正在从 MySQL 恢复对话…'}
               disabled={!conversationReady}
               className="flex-1 bg-transparent text-[13px] text-gray-800 placeholder-gray-400 resize-none outline-none max-h-28 leading-relaxed disabled:opacity-50"
@@ -1090,7 +1117,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
               <Send size={14} />
             </button>
           </div>
-          <div className={`text-[10.5px] mt-1.5 px-1 ${conversationError ? 'text-rose-500' : 'text-gray-400'}`}>
+          <div className={`text-[10.5px] mt-1.5 px-1 ${conversationError ? 'text-rose-500' : 'text-gray-600'}`}>
             {conversationError
               ? '当前变更未保存 · 不会写入浏览器存储'
               : conversationDirty || conversationSaving

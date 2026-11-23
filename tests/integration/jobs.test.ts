@@ -54,11 +54,13 @@ const insertDueApprovalJob = async (bookingId: string, type: 'APPROVAL_REMINDER'
     [crypto.randomUUID(), `${keyPrefix}:${bookingId}:${token}${suffix}`, type, JSON.stringify({ bookingId, ...payload })]);
 };
 
-const insertApprovedBooking = async (input: { id: string; resourceId: string; start: Date; end: Date; purpose: string; tea?: boolean; exclusive?: boolean }) => {
+const insertApprovedBooking = async (input: { id: string; resourceId: string; start: Date; end: Date; purpose: string; tea?: boolean; exclusive?: boolean; checkedIn?: boolean; scheduleVersion?: number }) => {
+  const checkedInAt = input.checkedIn ? new Date(input.start.getTime() + 5 * 60000).toISOString() : undefined;
   const payload = {
     id: input.id, userId: '3', resourceId: input.resourceId, type: 'ROOM', startTime: input.start.toISOString(), endTime: input.end.toISOString(),
     status: 'APPROVED', purpose: input.purpose, participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 1,
-    approvalHistory: [], attendeeIds: ['4'], needsTeaService: Boolean(input.tea),
+    approvalHistory: [], attendeeIds: ['4'], needsTeaService: Boolean(input.tea), scheduleVersion: input.scheduleVersion || 1,
+    checkedInAt, actualStartTime: checkedInAt,
     exclusiveAccessType: input.exclusive ? 'TEMPORARY' : undefined, exclusiveRequestReason: input.exclusive ? '专属临时授权' : undefined,
     hasLeader: input.exclusive ? true : undefined
   };
@@ -158,6 +160,50 @@ describe('MySQL Job Worker 与 Outbox', { skip: !integrationEnabled, concurrency
       return rows[0]?.status === 'FAILED';
     });
     assert.equal((await queryTestDb<any[]>('SELECT status FROM bookings WHERE id = ?', [reminderId]))[0].status, 'APPROVED');
+  });
+
+  it('双 Worker 按计划结束时间幂等正常结算，旧排期版本任务安全失效', async () => {
+    const state = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'resources'");
+    const resources = typeof state[0].payload === 'string' ? JSON.parse(state[0].payload) : state[0].payload;
+    const completedId = `job-complete-${crypto.randomUUID()}`;
+    const staleId = `job-complete-stale-${crypto.randomUUID()}`;
+    const start = new Date(Date.now() - 70 * 60000);
+    const end = new Date(Date.now() - 10 * 60000);
+    await insertApprovedBooking({ id: completedId, resourceId: resources[0].id, start, end, purpose: '正常结束结算', checkedIn: true });
+    await insertApprovedBooking({ id: staleId, resourceId: resources[1].id, start, end, purpose: '旧版本正常结束任务', checkedIn: true, scheduleVersion: 2 });
+    await queryTestDb(`INSERT INTO scheduled_jobs (id, job_key, job_type, payload, run_at)
+      VALUES (?, ?, 'BOOKING_COMPLETION', ?, DATE_SUB(UTC_TIMESTAMP(3), INTERVAL 1 SECOND))`,
+      [crypto.randomUUID(), `completion:${staleId}:v1`, JSON.stringify({ bookingId: staleId, scheduleVersion: 1 })]);
+
+    await waitFor(async () => {
+      const bookings = await queryTestDb<any[]>('SELECT id, status FROM bookings WHERE id IN (?, ?)', [completedId, staleId]);
+      const jobs = await queryTestDb<any[]>('SELECT job_key, status FROM scheduled_jobs WHERE job_key IN (?, ?, ?)',
+        [`completion:${completedId}:v1`, `completion:${staleId}:v1`, `completion:${staleId}:v2`]);
+      return bookings.length === 2 && bookings.every(booking => booking.status === 'COMPLETED')
+        && jobs.length === 3 && jobs.every(job => job.status === 'DONE');
+    });
+
+    for (const [id, scheduleVersion] of [[completedId, 1], [staleId, 2]] as const) {
+      const rows = await queryTestDb<any[]>('SELECT payload FROM bookings WHERE id = ?', [id]);
+      const booking = typeof rows[0].payload === 'string' ? JSON.parse(rows[0].payload) : rows[0].payload;
+      assert.equal(booking.status, 'COMPLETED');
+      assert.equal(booking.scheduleVersion, scheduleVersion);
+      assert.equal(booking.actualEndTime, end.toISOString());
+      assert.equal(booking.accessRevokedAt, end.toISOString());
+      assert.equal(booking.endedEarlyAt, undefined);
+      assert.equal(booking.releasedAt, undefined);
+      assert.equal((await queryTestDb<any[]>('SELECT id FROM audit_events WHERE action = ? AND entity_id = ?', ['BOOKING_COMPLETE', id])).length, 1);
+      assert.equal((await queryTestDb<any[]>('SELECT id FROM notifications WHERE id LIKE ?', [`completion-${id}-%`])).length, 2);
+    }
+    const usageState = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'usageFacts'");
+    const usageFacts = typeof usageState[0].payload === 'string' ? JSON.parse(usageState[0].payload) : usageState[0].payload;
+    for (const id of [completedId, staleId]) {
+      const fact = usageFacts.find((item: any) => item.bookingId === id);
+      assert.equal(fact.actualEndTime, end.toISOString());
+      assert.equal(fact.actualMinutes, 55);
+      assert.equal(fact.source, 'SYSTEM');
+      assert.equal(fact.revision, 1);
+    }
   });
 
   it('双 Worker 幂等执行审批提醒、升级和会前未核准自动关闭', async () => {

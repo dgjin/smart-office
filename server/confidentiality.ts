@@ -27,7 +27,7 @@ export const redactBooking = (booking: Booking): Booking => ({
   approvalHistory: [],
   currentNodeIndex: 0,
   attendeeIds: [],
-  overlapParticipantIds: [...new Set([booking.userId, ...(booking.attendeeIds || [])])],
+  overlapParticipantIds: isConfidentialBooking(booking) ? [] : [...new Set([booking.userId, ...(booking.attendeeIds || [])])],
   hasLeader: false,
   leaderDetails: undefined,
   isVideoConference: false,
@@ -103,6 +103,12 @@ export const canReadConfidentialBooking = (db: OfficeDb, booking: Booking, actor
   });
 };
 
+export const assertConfidentialOperation = (db: OfficeDb, booking: Booking, actor: User) => {
+  if (!canReadConfidentialBooking(db, booking, actor)) {
+    throw new ConfidentialityError('CONFIDENTIAL_OPERATION_FORBIDDEN', 403);
+  }
+};
+
 export const canReadBookingDetails = (db: OfficeDb, booking: Booking, actor: User) => {
   if (isConfidentialBooking(booking)) return canReadConfidentialBooking(db, booking, actor);
   const isAdmin = actor.role.includes('SYSTEM_ADMIN');
@@ -121,7 +127,8 @@ export const getActorDbView = (db: OfficeDb, actor: User): OfficeDb => ({
   workOrders: (db.workOrders || []).filter(order => {
     const booking = (db.bookings || []).find(item => item.id === order.bookingId);
     const manager = actor.role.includes('SYSTEM_ADMIN') || actor.role.includes(order.assigneeRole);
-    if (!manager && booking?.userId !== actor.id) return false;
-    return !booking || !isConfidentialBooking(booking) || canReadConfidentialBooking(db, booking, actor);
+    if (manager) return true;
+    if (booking?.userId !== actor.id) return false;
+    return !isConfidentialBooking(booking) || canReadConfidentialBooking(db, booking, actor);
   })
 });

@@ -32,11 +32,14 @@ export const ensureServiceDomain = (db: OfficeDb) => {
   if (!db.usageFacts) db.usageFacts = [];
   if (!db.usageAppeals) db.usageAppeals = [];
   const resourceIds = (db.resources || []).filter(resource => resource.type === 'ROOM').map(resource => resource.id);
-  if (!db.serviceAreas.length && resourceIds.length) {
-    db.serviceAreas.push({ id: 'area-default', name: '默认会务责任区', resourceIds });
+  if (resourceIds.length && !db.serviceAreas.some(area => area.id === 'area-default')) {
+    db.serviceAreas.push({ id: 'area-default', name: '默认会务责任区', resourceIds: [] });
   }
+  const customResourceIds = new Set(db.serviceAreas
+    .filter(area => area.id !== 'area-default')
+    .flatMap(area => area.resourceIds));
   for (const area of db.serviceAreas) {
-    if (area.id === 'area-default') area.resourceIds = resourceIds;
+    if (area.id === 'area-default') area.resourceIds = resourceIds.filter(id => !customResourceIds.has(id));
   }
   db.workOrders = (db.workOrders || []).map(order => {
     const booking = (db.bookings || []).find(item => item.id === order.bookingId);
@@ -60,7 +63,7 @@ export const serviceAreaForResource = (db: OfficeDb, resource?: Resource): Servi
   (db.serviceAreas || []).find(area => resource && area.resourceIds.includes(resource.id))
   || (db.serviceAreas || []).find(area => resource?.campus && area.campus === resource.campus)
   || (db.serviceAreas || []).find(area => resource?.building && area.building === resource.building)
-  || db.serviceAreas?.[0];
+  || (db.serviceAreas || []).find(area => area.id === 'area-default');
 
 const catalogSnapshot = (item: ServiceCatalogItem): ServiceCatalogSnapshot => ({
   catalogItemId: item.id,

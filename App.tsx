@@ -21,21 +21,24 @@ import { getApprovalGroups, getBookingWorkflow } from './utils/approval';
 import { getResourceBuilding, getResourceFloor, getRoomCategory } from './utils/resourceDomain';
 import { addLocalDays, bookingEffectiveEnd, calculateResourceOccupancy, countsTowardOccupancy, localDateKey, resourceOpenMinutes, startOfLocalDay } from './utils/dashboard';
 import { parseCheckInQr } from './utils/checkInQr';
-import ChatDock, { type AgentAction } from './components/ChatDock';
-import HelpDrawer from './components/HelpDrawer';
+import { type AgentAction } from './components/ChatDock';
 import { canUseHelpTopic, getHelpTopic, type SystemView } from './helpCatalog';
 import ServiceOperations, { BookingUsageActions } from './components/ServiceOperations';
 import ExceptionCenter from './components/ExceptionCenter';
 import DeviceManagement from './components/DeviceManagement';
-import OperationsReports from './components/OperationsReports';
 import BuildingExplorer, { BUILDINGS, getFloorNumbers, type BuildingId } from './components/BuildingExplorer';
 import { DEFAULT_RULE_SETTINGS, SERVICE_TYPE_LABELS } from './constants';
+
+const ChatDock = React.lazy(() => import('./components/ChatDock'));
+const HelpDrawer = React.lazy(() => import('./components/HelpDrawer'));
+const OperationsReports = React.lazy(() => import('./components/OperationsReports'));
 
 type AppView = SystemView;
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
 const THEMES = [
+  { id: 'coamc', name: '东方蓝', color: 'bg-coamc-600', text: 'text-coamc-600', border: 'border-coamc-100', bg: 'bg-coamc-50' },
   { id: 'indigo', name: '商务蓝', color: 'bg-indigo-600', text: 'text-indigo-600', border: 'border-indigo-100', bg: 'bg-indigo-50' },
   { id: 'emerald', name: '翡翠绿', color: 'bg-emerald-600', text: 'text-emerald-600', border: 'border-emerald-100', bg: 'bg-emerald-50' },
   { id: 'orange', name: '活力橙', color: 'bg-orange-600', text: 'text-orange-600', border: 'border-orange-100', bg: 'bg-orange-50' },
@@ -121,7 +124,7 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   BOOKING_NOT_CONFIRMABLE: '仅已核准预约可以确认实际使用。',
   INVALID_USAGE_CONFIRMATION: '请选择正常使用或确认未使用。',
   USAGE_CONFIRMATION_NOTE_REQUIRED: '确认未使用时必须填写原因，说明不能超过 500 字。',
-  BOOKING_NOT_APPEALABLE: '仅本人已释放的预约可以发起申诉。',
+  BOOKING_NOT_APPEALABLE: '仅本人因未签到、确认未使用或人工异常释放的预约可以申诉，主动取消不可申诉。',
   USAGE_APPEAL_EXISTS: '该预约已有待处理申诉，请勿重复提交。',
   USAGE_APPEAL_REASON_REQUIRED: '请填写 2 至 1000 字的申诉理由。',
   USAGE_APPEAL_NOT_FOUND: '申诉不存在或已处理，请刷新后查看结果。',
@@ -1292,14 +1295,18 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
     name: user?.name || '',
     email: user?.email || '',
     department: user?.department || departments[0]?.name || '',
-    role: user?.role?.[0] || 'EMPLOYEE',
+    role: user?.role?.length ? [...user.role] : ['EMPLOYEE'],
     mobile: user?.mobile || '',
     landline: user?.landline || ''
   });
+  const toggleRole = (roleId: string) => setFormData((current: any) => ({
+    ...current,
+    role: current.role.includes(roleId) ? current.role.filter((id: string) => id !== roleId) : [...current.role, roleId]
+  }));
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+      <div className="max-h-[90vh] w-full max-w-md overflow-y-auto rounded-[2rem] bg-white p-8 shadow-2xl animate-in zoom-in">
         <h3 className="font-black text-xl mb-6">{user ? '编辑成员' : '录入新成员'}</h3>
         <div className="space-y-4">
           <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="姓名" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
@@ -1307,15 +1314,18 @@ const UserModal = ({ user, departments, roles, onClose, onSave, theme }: any) =>
           <select value={formData.department} onChange={e => setFormData({...formData, department: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
             {departments.map((d: any) => <option key={d.id} value={d.name}>{d.name}</option>)}
           </select>
-          <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100">
-            {roles.map((r: any) => <option key={r.id} value={r.id}>{r.name}</option>)}
-          </select>
+          <fieldset className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+            <legend className="px-1 text-xs font-bold text-gray-600">成员角色（可多选）</legend>
+            <div className="grid grid-cols-2 gap-2">
+              {roles.map((r: any) => <label key={r.id} className="flex min-h-11 items-center gap-2 rounded-lg px-2 text-xs font-bold text-gray-700"><input type="checkbox" checked={formData.role.includes(r.id)} onChange={() => toggleRole(r.id)} />{r.name}</label>)}
+            </div>
+          </fieldset>
           <input value={formData.mobile} onChange={e => setFormData({...formData, mobile: e.target.value})} placeholder="移动电话" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           <input value={formData.landline} onChange={e => setFormData({...formData, landline: e.target.value})} placeholder="办公电话" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
         </div>
         <div className="flex space-x-3 mt-6">
           <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-          <button onClick={() => onSave({...formData, role: [formData.role]})} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+          <button disabled={!formData.role.length} onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold disabled:opacity-40`}>保存</button>
         </div>
       </div>
     </div>
@@ -2686,21 +2696,22 @@ const App: React.FC = () => {
     const requestId = ++operationSequenceRef.current;
     operationRequestRef.current = { id: requestId, owner };
     try {
-      const [workspaceResponse, dashboardResponse, exceptionResponse] = await Promise.all([
-        fetch('/api/workspace'), fetch('/api/dashboard'), fetch('/api/exceptions')
+      const [workspaceResponse, dashboardResponse, exceptionResponse, notificationResponse] = await Promise.all([
+        fetch('/api/workspace'), fetch('/api/dashboard'), fetch('/api/exceptions'), fetch('/api/notifications')
       ]);
-      const [workspaceData, dashboardData, exceptionData] = await Promise.all([
-        workspaceResponse.json(), dashboardResponse.json(), exceptionResponse.json()
+      const [workspaceData, dashboardData, exceptionData, notificationData] = await Promise.all([
+        workspaceResponse.json(), dashboardResponse.json(), exceptionResponse.json(), notificationResponse.json()
       ]);
-      if ([workspaceResponse, dashboardResponse, exceptionResponse].some(response => response.status === 401) && operationOwnerRef.current === owner) {
+      if ([workspaceResponse, dashboardResponse, exceptionResponse, notificationResponse].some(response => response.status === 401) && operationOwnerRef.current === owner) {
         setCurrentUser(null);
       }
-      if (!workspaceResponse.ok || !dashboardResponse.ok || !exceptionResponse.ok) throw new Error('OPERATIONS_REFRESH_FAILED');
+      if (!workspaceResponse.ok || !dashboardResponse.ok || !exceptionResponse.ok || !notificationResponse.ok) throw new Error('OPERATIONS_REFRESH_FAILED');
       if (operationOwnerRef.current !== owner) return;
       applyWorkspace(workspaceData);
       setWorkspaceLoaded(true);
       setDashboard(dashboardData);
       setExceptions(exceptionData.exceptions || []);
+      setNotifications(notificationData.notifications || []);
       setIsOnline(true);
     } catch {
       if (operationOwnerRef.current === owner) setIsOnline(false);
@@ -2998,11 +3009,25 @@ const App: React.FC = () => {
   const nextBookingResource = nextBooking ? resources.find(r => r.id === nextBooking.resourceId) : null;
   const activeSchedule = SCHEDULE_RANGES.find(range => range.id === scheduleRange)!;
 
+  const recordConfidentialDetails = (items: Booking[]) => {
+    for (const booking of items) {
+      if (booking.meetingType !== 'CONFIDENTIAL' && booking.confidentialityChoice !== 'CONFIDENTIAL') continue;
+      void fetch(`/api/bookings/${encodeURIComponent(booking.id)}/confidential-read`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}'
+      }).catch(() => {});
+    }
+  };
+
+  const openDayDetail = (detail: any) => {
+    setDayDetail(detail);
+    recordConfidentialDetails(detail.bookings || []);
+  };
+
   const openScheduleDay = (resourceId: string | null, date: Date) => {
     const dayStart = startOfLocalDay(date);
     const dayEnd = addLocalDays(dayStart, 1);
     const now = new Date();
-    setDayDetail({
+    openDayDetail({
       resource: resourceId ? resources.find(r => r.id === resourceId) : { name: '全公司资源概览' },
       date,
       bookings: bookings.filter(b => countsTowardOccupancy(b, now) && (!resourceId || b.resourceId === resourceId)
@@ -3096,7 +3121,11 @@ const App: React.FC = () => {
   const toggleBookingExpand = (id: string) => {
       const next = new Set(expandedBookingIds);
       if (next.has(id)) next.delete(id);
-      else next.add(id);
+      else {
+        next.add(id);
+        const booking = bookings.find(item => item.id === id);
+        if (booking) recordConfidentialDetails([booking]);
+      }
       setExpandedBookingIds(next);
   };
 
@@ -3868,8 +3897,12 @@ const App: React.FC = () => {
 
       <aside className="studio-sidebar w-[268px] hidden lg:flex flex-col p-6 shrink-0">
         <div className="studio-brand shrink-0">
-          <div className="studio-brand-mark"><Cpu size={21} strokeWidth={1.5}/></div>
-          <div><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">MEETING & SPACE</div></div>
+          <div className="studio-brand-mark"><Cpu className="studio-brand-icon-classic" size={21} strokeWidth={1.5}/></div>
+          <div className="studio-brand-orient">
+            <img className="studio-brand-logo-orient" src="/images/china-orient-logo-horizontal.png" alt="中国东方" />
+            <img className="studio-brand-symbol-orient" src="/images/china-orient-logo-horizontal.png" alt="" aria-hidden="true" />
+          </div>
+          <div className="studio-brand-copy"><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">MEETING & SPACE</div></div>
           <button
             type="button"
             className="studio-sidebar-toggle"
@@ -3900,10 +3933,13 @@ const App: React.FC = () => {
         </nav>
 
         <div className="studio-sidebar-themes mt-4 pt-4 border-t shrink-0">
-          <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest mb-3 px-2">系统主题风格</p>
-          <div className="flex items-center justify-around px-2">
+          <div className="mb-3 flex items-center justify-between gap-2 px-2">
+            <p className="text-[11px] font-black text-gray-500 uppercase tracking-widest">界面风格</p>
+            <span className="studio-theme-current">{THEMES.find(item => item.id === theme)?.name}</span>
+          </div>
+          <div className="studio-theme-swatches flex items-center justify-around px-2" role="group" aria-label="界面主题风格">
             {THEMES.map(t => (
-              <button key={t.id} onClick={() => setTheme(t.id)} title={t.name} className={`w-6 h-6 rounded-full ${t.color} border-2 transition-all ${theme === t.id ? 'border-gray-900 scale-125 shadow-md' : 'border-transparent hover:scale-110'}`} />
+              <button key={t.id} type="button" data-theme-option={t.id} aria-label={`切换到${t.name}主题`} aria-pressed={theme === t.id} onClick={() => setTheme(t.id)} title={t.name} className={`studio-theme-swatch w-6 h-6 rounded-full ${t.color} border-2 transition-all ${theme === t.id ? 'border-gray-900 scale-125 shadow-md' : 'border-transparent hover:scale-110'}`} />
             ))}
           </div>
         </div>
@@ -3945,8 +3981,8 @@ const App: React.FC = () => {
 
       <main className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
         <header className="studio-topbar backdrop-blur-md flex items-center justify-between gap-3 sticky top-0 z-40">
-          <div className="flex items-center gap-6 flex-1 max-w-2xl">
-            <div className="shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title">
+          <div className="flex items-center gap-6 flex-1 min-w-0 max-w-2xl">
+            <div className="min-w-0 lg:shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title truncate">
               {view === 'DASHBOARD' && '会议工作台'}
               {view === 'RESOURCES' && '空间资源库'}
               {view === 'USERS' && '成员中心'}
@@ -3978,10 +4014,14 @@ const App: React.FC = () => {
               </div>
             )}
           </div>
-          <div className="flex items-center space-x-4">
-             <button className="studio-secondary !min-h-9 !px-3" onClick={() => setShowQRScanner(true)}>
+          <div className="studio-topbar-actions flex items-center gap-2 sm:gap-4 shrink-0">
+             <button className="studio-secondary studio-topbar-checkin !min-h-11 !px-3" onClick={() => setShowQRScanner(true)} aria-label="扫码签到">
                <QrCode size={14}/>
                <span>扫码签到</span>
+             </button>
+             <button type="button" onClick={() => openHelp()} aria-label="打开帮助" aria-expanded={showHelp} className="studio-help-launcher">
+               <CircleHelp size={19}/>
+               <span className="hidden xl:inline">帮助</span>
              </button>
              <div className="relative">
                <button onClick={() => setShowNotificationPanel(v => !v)} className="studio-icon-button" aria-label="通知中心" aria-expanded={showNotificationPanel}>
@@ -4017,13 +4057,11 @@ const App: React.FC = () => {
         </header>
 
         <div className="studio-content">
-          {/* 3D 楼层图是独立单页（自带 Three.js 场景与侧栏），整页视角才有意义。
-              负 margin 抵消 .studio-content 的 30/32/56 内边距，再把高度顶到可视区；
-              不用 portal / 改布局，是为了不影响其它视图的排版。 */}
+          {/* 负 margin 抵消 .studio-content 的响应式内边距，让独立 3D 页面使用完整可用画面。 */}
           {view === 'HQ_3D' && (
-            <div className="animate-in fade-in" style={{ margin: '-30px -32px -56px', height: 'calc(100vh - 132px)', minHeight: 560 }}>
+            <div className="hq3d-view animate-in fade-in">
               <iframe
-                src="/hq3d.html"
+                src={`/hq3d.html?theme=${theme === 'coamc' ? 'coamc' : 'classic'}`}
                 title="总部楼层 3D 分布图"
                 style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#dfeaf8' }}
               />
@@ -4047,7 +4085,7 @@ const App: React.FC = () => {
                     <button onClick={() => setView('BOOKINGS')} className="studio-secondary"><Calendar size={16}/> 查看我的会议</button>
                   </div>
                 </div>
-                <button className="agenda-next text-left" onClick={() => nextBooking ? setDayDetail({ resource: nextBookingResource, date: new Date(nextBooking.startTime), bookings: [nextBooking] }) : setView('BOOKINGS')}>
+                <button className="agenda-next text-left" onClick={() => nextBooking ? openDayDetail({ resource: nextBookingResource, date: new Date(nextBooking.startTime), bookings: [nextBooking] }) : setView('BOOKINGS')}>
                   <span className="agenda-next-label">下一场会议</span>
                   <span className="agenda-next-time">{nextBooking ? `${toLocalTimeString(nextBooking.startTime)} — ${toLocalTimeString(nextBooking.endTime)}` : '— : —'}</span>
                   <span className="agenda-next-title">{nextBooking?.purpose || '暂无后续会议'}</span>
@@ -4091,7 +4129,7 @@ const App: React.FC = () => {
                 </div>
                 <div key={scheduleRange} id="schedule-panel" className="studio-schedule-panel" role="tabpanel" aria-labelledby={`schedule-tab-${scheduleRange}`}>
                   {scheduleRange === 'TODAY' ? (
-                    <TodayResourceUsage resources={resources} bookings={bookings} users={users} onBookingClick={(detail: any) => setDayDetail(detail)} />
+                    <TodayResourceUsage resources={resources} bookings={bookings} users={users} onBookingClick={openDayDetail} />
                   ) : (
                     <ResourceUsageGrid days={scheduleRange === 'WEEK' ? weekDays : monthDays} resources={resources} bookings={bookings} onDayClick={openScheduleDay} />
                   )}
@@ -4127,6 +4165,7 @@ const App: React.FC = () => {
               </section>
               {showResourceFinder && <ResourceFinder matches={resourceFinderResults} criteria={resourceFinderCriteria} onCriteriaChange={setResourceFinderCriteria} theme={theme} onBook={(resource: Resource, prefill: any) => { setSelectedResource(resource); setEditingBooking(null); setBookingPrefill(prefill); setCalendarDateForBooking(null); setShowBookingModal(true); }} />}
               <BuildingExplorer
+                theme={theme}
                 resources={spatialResources}
                 bookings={bookings}
                 focusLocation={activeSpatialFocus}
@@ -4583,7 +4622,9 @@ const App: React.FC = () => {
           />}
 
           {view === 'REPORTS' && currentUser.role.includes('SYSTEM_ADMIN') && (
-            <OperationsReports bookings={bookings} notify={addNotification} />
+            <React.Suspense fallback={<p role="status" className="p-6 text-sm text-gray-500">正在加载运营报表…</p>}>
+              <OperationsReports bookings={bookings} notify={addNotification} />
+            </React.Suspense>
           )}
 
           {view === 'DATA_CENTER' && (
@@ -4784,50 +4825,41 @@ const App: React.FC = () => {
         onClose={() => setRecurringPlan(null)}
       />}
 
-      {!showMobileMenu && <div className="studio-help-tools fixed right-4 bottom-24 lg:bottom-6 z-[90] flex items-center gap-3">
-        <button
-          type="button"
-          onClick={() => openHelp()}
-          aria-label="打开帮助"
-          className="studio-help-launcher"
-        >
-          <CircleHelp size={19} />
-          <span className="hidden lg:inline">帮助</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setShowAgent(true)}
-          aria-label="打开智能助手"
-          className="studio-agent-launcher flex items-center gap-3 p-3 lg:px-4 lg:py-3 transition-all active:scale-[0.97]"
-        >
-          <MessageSquare size={18} />
-          <span className="hidden lg:block text-left"><span className="block text-[12.5px] font-semibold">智办助手</span><small className="block mt-0.5">ASK YOUR OFFICE</small></span>
-        </button>
-      </div>}
+      {!showMobileMenu && <button
+        type="button"
+        onClick={() => setShowAgent(true)}
+        aria-label="打开智能助手"
+        className="studio-agent-launcher fixed right-4 bottom-24 lg:bottom-6 z-[90] flex items-center gap-3 p-3 lg:px-4 lg:py-3 transition-all active:scale-[0.97]"
+      >
+        <MessageSquare size={18} />
+        <span className="hidden lg:block text-left"><span className="block text-[12.5px] font-semibold">智办助手</span><small className="block mt-0.5">ASK YOUR OFFICE</small></span>
+      </button>}
 
-      <HelpDrawer
-        open={showHelp}
-        topicId={helpTopicId}
-        roles={currentUser.role}
-        allowedViews={allowedViews}
-        onClose={() => setShowHelp(false)}
-        onNavigate={navigateToView}
-        onAsk={askAgent}
-      />
-      <ChatDock
-        open={showAgent}
-        onClose={() => setShowAgent(false)}
-        userId={currentUser.id}
-        userName={currentUser.name}
-        theme={theme}
-        resources={resources}
-        bookings={bookings}
-        users={users}
-        serviceCatalog={serviceCatalog}
-        onAction={handleAgentAction}
-        onNavigate={navigateToView}
-        request={agentRequest}
-      />
+      <React.Suspense fallback={null}>
+        <HelpDrawer
+          open={showHelp}
+          topicId={helpTopicId}
+          roles={currentUser.role}
+          allowedViews={allowedViews}
+          onClose={() => setShowHelp(false)}
+          onNavigate={navigateToView}
+          onAsk={askAgent}
+        />
+        <ChatDock
+          open={showAgent}
+          onClose={() => setShowAgent(false)}
+          userId={currentUser.id}
+          userName={currentUser.name}
+          theme={theme}
+          resources={resources}
+          bookings={bookings}
+          users={users}
+          serviceCatalog={serviceCatalog}
+          onAction={handleAgentAction}
+          onNavigate={navigateToView}
+          request={agentRequest}
+        />
+      </React.Suspense>
     </div>
   );
 };

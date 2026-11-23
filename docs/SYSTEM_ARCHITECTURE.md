@@ -103,11 +103,14 @@ flowchart TB
 ### 3.1 表现层
 
 - `App.tsx` 是主应用协调者：加载权限化工作区、维护当前视图、打开正式预约/修改/续期表单、处理助手固定动作、挂载帮助和 ChatDock。
+- 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。品牌区使用同源透明横式标志 `public/images/china-orient-logo-horizontal.png`，展开时显示完整组合，折叠时仅裁显图形标，原五套主题继续使用 SmartOffice 标识。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
 - `components/OperationsReports.tsx` 与 `components/OperationsDashboard.tsx` 共用一次 `/api/reports` 返回的 `OperationsReport`，分别呈现“管理看板”和“明细与对账”；SVG 图表不引入大型图表库。
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
-- `components/HelpDrawer.tsx` 提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
+- 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
 - `helpCatalog.ts` 是帮助与助手共享的功能目录，定义固定系统视图、主题、关键词、步骤和访问边界。
-- `public/hq3d.html` 是独立同源 Three.js 页面，通过 `/api/hq3d/snapshot` 获取布局和业务覆盖；主应用以 iframe 嵌入完整页面或空间剖切。
+- `public/hq3d.html` 是独立同源 Three.js 页面，通过 `/api/hq3d/snapshot` 获取布局和业务覆盖；主应用以 iframe 嵌入完整页面或空间剖切，并传递白名单 `theme=coamc|classic`。东方蓝在两个入口同步使用同源横式标志、白色面板、蓝色交互态和深海蓝模型背景，原五套主题恢复经典 3D 皮肤；主题仅改变界面外观，不改变房间类别色、空间状态语义或业务数据。`public/hq3d-auditorium.js` 为礼堂/报告厅提供纯几何排座：按房间宽深确定主席台、台前通道、侧向边距、中央过道及行列数，观众席最多 320 座；主席台、讲台、主席桌椅和观众席继续合批到楼层共享 InstancedMesh，不新增逐座 Mesh 或业务容量事实。
+- 工作区每 10 秒轮询，使用请求防重入和身份隔离，页面隐藏或离线时跳过；自动刷新只读取权限化视图，不触发涉密详情读取审计。
+- `ChatDock`、`HelpDrawer` 和 `OperationsReports` 通过 `React.lazy` 按需加载；总部 3D 在 `document.hidden` 时取消 RAF，恢复可见后继续。这些优化不改变业务操作流程。
 
 ### 3.2 应用与领域层
 
@@ -115,8 +118,8 @@ flowchart TB
 - `server/bookingService.ts` 和 `utils/bookingRules.ts` 统一预约时间、资源、容量、设备、参会人、冲突、部门日额度和批次校验。
 - `server/approvalDomain.ts`、`utils/approval.ts` 与动态规则模块处理冻结流程、节点范围、代理、自审阻断和长期系列审批。
 - `server/confidentiality.ts` 负责涉密识别、白名单、访问授权和读模型裁剪。
-- `server/serviceDomain.ts`、`server/serviceOperations.ts` 处理服务目录冻结、工单状态机、区域、班次、巡查、成本与 SLA。
-- `server/usageDomain.ts`、`server/usageOperations.ts` 处理签到事件、实际使用事实、提前结束、no-show、使用申诉和释放。
+- `server/serviceDomain.ts`、`server/serviceOperations.ts` 处理服务目录冻结、工单状态机、区域、班次、巡查、成本与 SLA；默认责任区只包含未分配资源，资源、园区和楼栋匹配失败后由 `area-default` 兜底。
+- `server/usageDomain.ts`、`server/usageOperations.ts` 处理签到事件、使用确认、实际使用事实、正常完成、提前结束、no-show、使用申诉和释放。
 - `server/reports.ts`、`utils/reports.ts` 统一计划/实际使用、部门投入、备料和对账口径；`server/calendarExport.ts` 负责 ICS。
 - `server/agent.ts`、`server/tools.ts`、`server/actions.ts` 和 `server/chatConversations.ts` 组成助手闭环。
 - `server/hq3d*.ts` 处理 3D 布局、稳定 UID、房间资料、维护、资源映射和受控同步。
@@ -164,6 +167,7 @@ Node 启动时启动 Job Worker，收到 SIGINT/SIGTERM 后停止接收连接、
 - 仅当代理会覆盖外部传入的 `X-Forwarded-For` 时启用 `SMART_OFFICE_TRUST_PROXY`。
 -  secrets 仅通过受控环境注入，不进入前端 bundle、文档、聊天、日志或报告。
 - 应用回滚与数据库回滚分开处理；数据库没有自动 down migration，不能让旧应用直接承接不兼容新库写入。
+- Tailwind CSS 经 PostCSS 在构建期生成，字体从同源 `/vendor/fonts/` 加载；生产 CSP 以 `default-src 'self'` 为基础，不依赖 Tailwind CDN 或 Google Fonts 运行时资源，也不为其增加外部放行。
 
 ## 5. 数据架构
 
@@ -171,8 +175,8 @@ Node 启动时启动 Job Worker，收到 SIGINT/SIGTERM 后停止接收连接、
 
 MySQL 是唯一事实来源。当前数据面由两类结构组成：
 
-1. **核心办公聚合与投影**：`office_state` 保存带版本的核心聚合 JSON；`bookings`、`notifications` 等表支撑关键查询和写入。领域事务同时维护聚合、投影、任务、Outbox 和审计，不能只更新其中一处。
-2. **独立关系表**：身份、OIDC 请求、会话、用户偏好、ChatDock 会话、定时任务、Outbox、审计、总部 3D 布局/资料/维护、资源映射/处置/退役归档等使用专门表。
+1. **核心办公聚合与投影**：`office_state` 保存带版本的核心聚合 JSON；`bookings`、`notifications` 等表支撑关键查询和写入。领域事务同时维护聚合、投影、任务、Outbox 和审计，不能只更新其中一处。普通 mutation 比较前后内容，仅写变化集合、预约和通知；`replaceBookings` 仍按设计全量替换预约投影。
+2. **独立关系表**：身份、OIDC 请求、会话、用户偏好、ChatDock 会话、定时任务、Outbox、审计、总部 3D 布局/资料/维护、资源映射/处置/退役归档等使用专门表。通知列表直接查询 `notifications` 关系表；定向通知沿用通知行已读字段，`sys` 广播通过 `notification_read_states(notification_id,user_id)` 独立保存每个用户的已读事实，读取互不影响。已读更新保留 `smart_office_write` 锁和事务并幂等写入，但不推进核心 revision、不重复写 Outbox。迁移 `017_notification_read_path.sql` 增加通知读取索引，`017z_notification_read_states_collation.sql` 先按既有 `notifications.id` 排序规则兼容建表，`018_notification_read_states.sql` 再幂等确认按用户广播已读表，兼容升级库与新初始化库且不改写通知数据。
 
 主要数据分组：
 
@@ -207,9 +211,11 @@ MySQL 是唯一事实来源。当前数据面由两类结构组成：
 ### 6.2 授权与数据裁剪
 
 - 导航可见性不是安全边界；API 每次从当前会话重新获取 actor。
-- `getActorDbView` 对无权限预约做字段级脱敏，对工单按职责和涉密权限过滤。
+- `getActorDbView` 对无权限预约做字段级脱敏；涉密不可见模型清空申请人、参会人及人员冲突投影 ID，普通预约保留去重的人员投影用于冲突提示。
 - 普通预约详情仅向申请人、参会人、授权审批人、相关会务角色和管理员开放。
-- 涉密预约还要求访问授权、申请人/参会人身份、保密角色或可审批范围；通知和报表中的涉密用途统一隐藏。
+- 涉密预约还要求访问授权、申请人/参会人身份、保密角色或可审批范围；系统管理员身份不自动获得涉密读取或直接写操作权限，通知和报表中的涉密用途统一隐藏。
+- 涉密工单和巡查按具体负责角色开放最小履约范围，不授予完整涉密预约读取权；履约视图继续隐藏主题、申请人、参会人、联系人和其他非必需字段，申请人补录及无关会务角色仍受原专用授权约束。
+- 工作区轮询不记录 `CONFIDENTIAL_READ`；用户主动展开详情通过 `POST /api/bookings/:id/confidential-read` 重检同一专用读取授权，并记录 `source=BOOKING_DETAIL` 审计。
 - 助手工具集按角色、审批节点和实际工单职责裁剪，模型不能通过提示词获得额外工具。
 
 ### 6.3 Web 与设备安全
@@ -259,6 +265,7 @@ sequenceDiagram
 ```
 
 - 最多 6 轮工具循环、20 条历史消息、单条输入 4000 字符；SSE 每 15 秒发送心跳。
+- DeepSeek 请求默认采用有界 60 秒超时（可由配置调整），组合内部 `AbortController`、外部取消信号和定时器；流式读取在中止时取消 reader，客户端 `aborted`/`close` 会向上游传播取消。
 - 工具只返回白名单动作，模型不能指定 URL、HTTP 方法或任意请求体。
 - `PROPOSE_BOOKING`、`PROPOSE_EDIT_BOOKING`、`PROPOSE_RENEW_BOOKING` 仅打开正式表单。
 - `PROPOSE_CANCEL`、`PROPOSE_APPROVAL`、`PROPOSE_CHECK_IN`、`PROPOSE_WORK_ORDER` 由 `/api/agent/action` 再次鉴权并在事务中执行。
@@ -294,7 +301,13 @@ sequenceDiagram
   → 报表对账、通知、审计和可选集成事件
 ```
 
+签到和使用确认的窗口均为 `startTime - 15min <= now < endTime`；确认 `UNUSED` 必须填写说明并复用取消授权。签到、使用确认、人工释放、申诉和提前结束等涉密直接写路径复用涉密专用读取授权，系统管理员身份不能绕过；具体工单和巡查仅按责任范围开放最小履约权限，不因此开放完整涉密预约。
+
+已签到且仍为 `APPROVED` 的预约在计划结束时间由 `BOOKING_COMPLETION` 正常结算为 `COMPLETED`，`actualEndTime` 等于计划 `endTime`；该路径与 no-show、确认未使用和提前结束分离。提前结束按实际操作时间核算额度，正常完成按计划时段核算。
+
 取消和释放需要联动剩余时段、部门额度、未完成服务和门禁授权；旧排期版本的异步任务必须失效。
+
+使用申诉只接受 `NO_SHOW`、`MANUAL_EXCEPTION`、`UNUSED_CONFIRMED` 三类释放，主动取消不可申诉。恢复前重检冲突、额度、资源和涉密白名单；原冻结审批流程为空才直接恢复核准并重建工单与使用任务，流程非空则恢复待审批、清空旧审批历史并从首节点重审，核准前只创建审批任务。
 
 ### 8.2 总部 3D 与资源库
 
@@ -309,18 +322,20 @@ sequenceDiagram
 
 - 管理看板：核心指标、计划/实际趋势、空间使用、部门投入、会务状态、管理关注事项。
 - 明细与对账：预约、签到、实际使用、服务成本、备料和差异原因。
-- 导出：CSV 和 XLSX 与当前筛选使用同一数据快照。
-- 跨范围时长裁剪到统计范围及每日开放区间；提前结束、no-show 和使用事实差异有独立口径。
+- 导出：CSV 和 XLSX 与当前筛选使用同一数据快照；请求必须携带页面 `report.revision`，缺失返回 400，快照变化返回 409，前端刷新后要求重新导出。
+- 跨范围时长裁剪到统计范围及每日开放区间；报表区分未到使用结算、待结算、正常完成、提前结束、no-show、取消、待确认实际使用和事实异常，不把正常结算与提前结束或 no-show 混算。
 
 ## 9. 异步任务与集成架构
 
 Job Worker 与 Node 同进程运行，浏览器关闭后仍可执行：
 
-1. `reconcileJobs` 根据当前预约和规则补齐提醒、审批升级/关闭、no-show、服务 SLA 和巡查任务。
+1. `reconcileJobs` 根据当前预约和规则补齐提醒、审批升级/关闭、`BOOKING_COMPLETION`、no-show、服务 SLA 和巡查任务；正常完成 key 包含预约 ID 与 `scheduleVersion`。
 2. `FOR UPDATE SKIP LOCKED` 领取任务或 Outbox，设置 worker 租约。
 3. 执行前重查当前业务状态、提交批次、审批节点和 `scheduleVersion`。
 4. 成功标记 DONE；失败按次数指数退避，超过上限进入 FAILED。
 5. 通知使用确定性 ID 去重，外部事件使用确定性 event key 和投递事实支持对账。
+
+`BOOKING_COMPLETION` 只处理已到计划结束、仍为 `APPROVED` 且已签到的预约，在事务中重检状态，并通过确定性通知 ID 和任务版本保证重试幂等；旧排期版本安全失效。
 
 外部集成采用 Outbox，不在核心预约事务中直接依赖远端可用性。补偿、重放和 OA 回调有专门权限与幂等边界；默认关闭的适配器不影响本地核心流程。
 
@@ -330,6 +345,7 @@ Job Worker 与 Node 同进程运行，浏览器关闭后仍可执行：
 - 重点指标：数据库可用性、HTTP 状态/延迟、认证失败与限流、API 失败、Job tick 失败。
 - 告警应至少覆盖 readiness 连续失败、5xx 增长、认证/任务异常激增，并路由到真实值班人。
 - 原生备份使用 `mysqldump --single-transaction`，生成 SHA-256 校验文件；凭据写入临时 0600 配置文件。
+- native restore 在启动 `mysql` 前强制校验非空 SQL、同名 `.sha256` 侧车、侧车内原始文件名和实际 SHA-256；`SMART_OFFICE_RESTORE_CONFIRM` 必须与目标 `DATABASE_NAME` 完全一致。
 - 恢复是覆盖性操作，必须停止写入、确认目标库、校验备份并获得数据库负责人批准。
 - 隔离演练只允许 `smart_office_test_` 前缀，验证核心表行数和迁移要求，仅清理自己创建的临时库。
 - 企业需另行确认 RPO/RTO、加密、异地副本、保留期和恢复责任人。
@@ -341,7 +357,7 @@ Job Worker 与 Node 同进程运行，浏览器关闭后仍可执行：
 | TypeScript | 全项目静态类型 | 浏览器交互和真实权限组合 |
 | Node 单测 | 领域规则、工具、报表、3D、任务等 | MySQL 事务和并发 |
 | 隔离集成测试 | 真实 Node + 隔离 MySQL + Fake OIDC/端点 | 真实企业平台联调 |
-| Chrome E2E | 真实 UI、移动导航、表单、审批、助手/帮助恢复 | 全企业容量和现场设备 |
+| Chrome E2E | 真实 UI、移动导航、表单、审批、助手/帮助恢复 | 真机、真实 IME、读屏、企业浏览器、低端设备能耗和全企业容量 |
 | 容量工具 | 原始延迟、吞吐、错误率、资源曲线和指标快照 | 未确认模型下的正式 P9-03 |
 | 恢复演练 | 隔离库备份恢复、迁移和对账 | 生产恢复签字 |
 | wb/CI | 类型、单测、构建、迁移、集成、E2E、恢复 | 企业安全、UAT、灰度和稳定观察 |
@@ -358,6 +374,7 @@ Job Worker 与 Node 同进程运行，浏览器关闭后仍可执行：
 4. 资源与 3D 的未确认映射、PENDING 容量和候选空间需管理员在 UAT 中维护或确认。
 5. 旧应用对新 schema 的直接写入不具备完整兼容性；无损回滚路径是停止写入并恢复兼容备份，而非直接切换旧代码继续写入。
 6. 智能助手依赖外部模型可用性，但模型不可用不影响正式页面、静态帮助和核心业务。
+7. 真机、真实中文 IME、读屏、企业浏览器和低端设备能耗仍需外部验收，本地 Chrome 或模拟移动视口不能替代。
 
 ## 13. 文档与实现同步约定
 

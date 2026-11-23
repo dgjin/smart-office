@@ -50,12 +50,17 @@ export default function OperationsReports({ bookings, notify }: { bookings: Book
   };
   useEffect(() => { void load(); }, [range.start, range.end]);
   const download = async (format: 'csv' | 'xlsx') => {
-    if (exporting) return;
+    if (exporting || !report) return;
     setExporting(format); setError('');
     try {
-      const response = await fetch(`/api/reports/export?format=${format}&start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`);
+      const response = await fetch(`/api/reports/export?format=${format}&revision=${report.revision}&start=${encodeURIComponent(range.start)}&end=${encodeURIComponent(range.end)}`);
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
+        if (response.status === 409 && data.error === 'REPORT_SNAPSHOT_CHANGED') {
+          await load();
+          setError('报表数据已更新，已刷新到最新快照，请重新导出。');
+          return;
+        }
         throw new Error(data.error || '导出失败。');
       }
       const blob = await response.blob();

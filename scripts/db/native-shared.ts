@@ -223,14 +223,31 @@ export async function createNativeBackup(
   }
 }
 
+export async function verifyNativeBackup(requestedInputPath: string): Promise<{ inputPath: string; checksumPath: string; sha256: string }> {
+  const inputPath = path.resolve(requestedInputPath);
+  const stat = await fs.stat(inputPath);
+  if (!stat.isFile() || stat.size === 0) throw new Error('恢复输入必须是非空 SQL 文件');
+  const checksumPath = `${inputPath}.sha256`;
+  let checksumText = '';
+  try {
+    checksumText = await fs.readFile(checksumPath, 'utf8');
+  } catch {
+    throw new Error('恢复校验文件不存在或不可读，必须提供同名 .sha256 文件');
+  }
+  const match = checksumText.trim().match(/^([a-fA-F0-9]{64})[ \t]+\*?([^\r\n]+)$/);
+  if (!match) throw new Error('恢复校验文件格式无效，应为 SHA-256 与原始文件名');
+  if (match[2] !== path.basename(inputPath)) throw new Error('恢复校验文件名与输入文件不一致');
+  const sha256 = await calculateSha256(inputPath);
+  if (sha256 !== match[1].toLowerCase()) throw new Error('恢复输入 SHA-256 校验失败');
+  return { inputPath, checksumPath, sha256 };
+}
+
 export async function restoreNativeBackup(
   requestedInputPath: string,
   databaseName = DATABASE_NAME
 ): Promise<{ inputPath: string }> {
   assertNativeDatabaseName(databaseName);
-  const inputPath = path.resolve(requestedInputPath);
-  const stat = await fs.stat(inputPath);
-  if (!stat.isFile() || stat.size === 0) throw new Error('恢复输入必须是非空 SQL 文件');
+  const { inputPath } = await verifyNativeBackup(requestedInputPath);
 
   const config = { ...dbConfig(true), database: databaseName };
   await withPasswordFile(config.password, async passwordFilePath => {

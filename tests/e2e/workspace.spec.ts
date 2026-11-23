@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { test, expect, type Browser, type Page } from '@playwright/test';
+import AxeBuilder from '@axe-core/playwright';
 import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../support/testServer.ts';
 
 const server = new TestServer();
@@ -83,6 +84,118 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(fresh.page.locator('.studio-app')).toHaveAttribute('data-sidebar', 'collapsed');
     expect(await fresh.page.evaluate(() => Object.keys(localStorage))).toEqual([]);
     await fresh.context.close();
+  });
+
+  test('东方蓝与原主题可在桌面和移动端互换并跨刷新恢复', async ({ browser }) => {
+    const desktop = await openWorkspace(browser, '李员工');
+    if (await desktop.page.locator('.studio-app').getAttribute('data-sidebar') === 'collapsed') {
+      await desktop.page.getByRole('button', { name: '展开侧边栏', exact: true }).click();
+    }
+    await expect(desktop.page.getByTitle('东方蓝', { exact: true })).toBeVisible();
+    const desktopWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+    await desktop.page.getByTitle('东方蓝', { exact: true }).click();
+    await desktopWrite;
+    await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', 'coamc');
+    const orientLogo = desktop.page.getByRole('img', { name: '中国东方', exact: true });
+    await expect(orientLogo).toBeVisible();
+    await expect(orientLogo).toHaveAttribute('src', '/images/china-orient-logo-horizontal.png');
+    await expect(desktop.page.locator('.studio-brand-copy')).toBeHidden();
+    await expect(desktop.page.locator('.studio-sidebar')).toHaveCSS('background-color', 'rgb(255, 255, 255)');
+    await expect(desktop.page.getByRole('button', { name: '会议工作台', exact: true })).toHaveCSS('background-color', 'rgb(0, 66, 127)');
+    await desktop.page.reload();
+    await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', 'coamc');
+    await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+    await desktop.page.getByRole('button', { name: '收起侧边栏', exact: true }).click();
+    await expect(desktop.page.locator('.studio-brand-symbol-orient')).toBeVisible();
+    await expect(desktop.page.locator('.studio-brand-logo-orient')).toBeHidden();
+    await desktop.page.getByRole('button', { name: '展开侧边栏', exact: true }).click();
+    await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+
+    const classicWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+    await desktop.page.getByTitle('翡翠绿', { exact: true }).click();
+    await classicWrite;
+    await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', 'emerald');
+    await expect(desktop.page.locator('.studio-brand-name')).toHaveText('SmartOffice');
+    await expect(desktop.page.locator('.studio-brand-copy')).toBeVisible();
+    await expect(desktop.page.locator('.studio-brand-orient')).toBeHidden();
+    await desktop.context.close();
+
+    const mobile = await openWorkspace(browser, '李员工', { width: 375, height: 812 });
+    await mobile.page.getByRole('button', { name: '更多', exact: true }).click();
+    const sheet = mobile.page.getByRole('dialog', { name: '更多功能', exact: true });
+    await expect(sheet).toBeVisible();
+    const mobileWrite = mobile.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+    await sheet.getByRole('button', { name: '东方蓝', exact: true }).click();
+    await mobileWrite;
+    await expect(sheet.getByRole('button', { name: '东方蓝', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await sheet.getByRole('button', { name: '关闭更多功能', exact: true }).last().click();
+    await expect(mobile.page.locator('.studio-app')).toHaveAttribute('data-theme', 'coamc');
+    await mobile.page.reload();
+    await expect(mobile.page.locator('.studio-app')).toHaveAttribute('data-theme', 'coamc');
+    const mobileNav = mobile.page.getByRole('navigation', { name: '移动端主导航', exact: true });
+    await expect(mobileNav).toBeVisible();
+    await expect(mobileNav.getByRole('button', { name: '看板', exact: true })).toHaveCSS('background-color', 'rgb(0, 66, 127)');
+    expect(await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mobileNav.getByRole('button', { name: '资源', exact: true }).click();
+    await expect(mobile.page.locator('.studio-page-title')).toHaveText('空间资源库');
+    await mobile.context.close();
+  });
+
+  test('东方蓝同步总部3D与空间导航并保留经典主题和移动交互', async ({ browser }) => {
+    const desktop = await openWorkspace(browser, '李员工');
+    if (await desktop.page.locator('.studio-app').getAttribute('data-sidebar') === 'collapsed') {
+      await desktop.page.getByRole('button', { name: '展开侧边栏', exact: true }).click();
+    }
+    if (await desktop.page.locator('.studio-app').getAttribute('data-theme') !== 'coamc') {
+      const preferenceWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+      await desktop.page.getByTitle('东方蓝', { exact: true }).click();
+      await preferenceWrite;
+    }
+    await desktop.page.getByRole('button', { name: '总部楼层 3D', exact: true }).click();
+    const hqFrameElement = desktop.page.locator('iframe[title="总部楼层 3D 分布图"]');
+    await expect(hqFrameElement).toHaveAttribute('src', '/hq3d.html?theme=coamc');
+    const hq = desktop.page.frameLocator('iframe[title="总部楼层 3D 分布图"]');
+    await expect(hq.locator('html')).toHaveAttribute('data-theme', 'coamc');
+    await expect(hq.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+    await expect(hq.locator('.seg button.on').first()).toHaveCSS('background-color', 'rgb(0, 66, 127)');
+    await hq.locator('.fitem').filter({ hasText: /^2F/ }).click();
+    await hq.locator('#paneTabs [data-pane="rooms"]').click();
+    await hq.locator('#roomList .rm').filter({ hasText: '礼堂' }).click();
+    await expect(hq.locator('#dName')).toHaveText('礼堂');
+
+    await desktop.page.getByRole('button', { name: '空间资源库', exact: true }).click();
+    const spatialFrameElement = desktop.page.locator('.building-cutaway');
+    await expect(spatialFrameElement).toHaveAttribute('src', '/hq3d.html?embed=spatial&theme=coamc');
+    const spatial = desktop.page.frameLocator('.building-cutaway');
+    await expect(spatial.locator('html')).toHaveAttribute('data-theme', 'coamc');
+    await expect(spatial.locator('html')).toHaveClass(/spatial-embed/);
+
+    const classicWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+    await desktop.page.getByTitle('翡翠绿', { exact: true }).click();
+    await classicWrite;
+    await expect(spatialFrameElement).toHaveAttribute('src', '/hq3d.html?embed=spatial&theme=classic');
+    await expect(spatial.locator('html')).not.toHaveAttribute('data-theme', 'coamc');
+    const orientWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+    await desktop.page.getByTitle('东方蓝', { exact: true }).click();
+    await orientWrite;
+    await expect(spatial.locator('html')).toHaveAttribute('data-theme', 'coamc');
+    await desktop.context.close();
+
+    const mobile = await openWorkspace(browser, '李员工', { width: 375, height: 812 });
+    const mobileNav = mobile.page.getByRole('navigation', { name: '移动端主导航', exact: true });
+    await mobileNav.getByRole('button', { name: '更多', exact: true }).click();
+    await mobile.page.getByRole('dialog', { name: '更多功能', exact: true })
+      .getByRole('button', { name: '总部楼层 3D', exact: true }).click();
+    const mobileHq = mobile.page.frameLocator('iframe[title="总部楼层 3D 分布图"]');
+    await expect(mobileHq.locator('html')).toHaveAttribute('data-theme', 'coamc');
+    await expect(mobileHq.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+    expect(await mobile.page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await mobileHq.locator('html').evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    expect(await mobileHq.locator('html').evaluate(() => innerWidth)).toBe(375);
+    const mobileFrameBox = await mobile.page.locator('iframe[title="总部楼层 3D 分布图"]').boundingBox();
+    expect(mobileFrameBox?.x).toBeGreaterThanOrEqual(0);
+    expect((mobileFrameBox?.x ?? 0) + (mobileFrameBox?.width ?? 0)).toBeLessThanOrEqual(375);
+    await mobile.context.close();
   });
 
   test('真实预约表单完成两级审批，并由服务端持久化预约与工单', async ({ browser }) => {
@@ -231,6 +344,52 @@ test.describe('MySQL-only 浏览器验收', () => {
     await fresh.context.close();
   });
 
+  test('ChatDock 保护中文组词、约束焦点与移动触控，并通过对话框 axe 检查', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '李员工', { width: 375, height: 812 });
+    let chatRequests = 0;
+    await page.route('**/api/agent/chat', async route => {
+      chatRequests += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body: 'data: {"type":"done","reply":"已收到需求。","actions":[],"trace":[]}\n\n'
+      });
+    });
+    const trigger = page.getByRole('button', { name: '打开智能助手', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog', { name: '对话式办公助手' });
+    const input = dialog.getByRole('textbox', { name: '输入办公需求' });
+    const send = dialog.getByRole('button', { name: '发送', exact: true });
+    const close = dialog.getByRole('button', { name: '关闭', exact: true });
+    await expect(input).toBeFocused();
+    await input.fill('项目组评审');
+    for (const control of [send, close]) {
+      const bounds = await control.boundingBox();
+      expect(bounds).not.toBeNull();
+      expect(bounds!.width).toBeGreaterThanOrEqual(44);
+      expect(bounds!.height).toBeGreaterThanOrEqual(44);
+    }
+    const firstControl = dialog.getByRole('button').first();
+    await send.focus();
+    await page.keyboard.press('Tab');
+    await expect(firstControl).toBeFocused();
+    await input.focus();
+    await input.dispatchEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, isComposing: true });
+    await page.waitForTimeout(100);
+    expect(chatRequests).toBe(0);
+    const sent = page.waitForRequest(request => request.url().endsWith('/api/agent/chat') && request.method() === 'POST');
+    await input.press('Enter');
+    await sent;
+    expect(chatRequests).toBe(1);
+    await expect(dialog.getByText('已收到需求。', { exact: true })).toBeVisible();
+    const accessibility = await new AxeBuilder({ page }).include('.chat-shell').withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze();
+    expect(accessibility.violations).toEqual([]);
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await context.close();
+  });
+
   test('帮助抽屉按角色检索、联动智能帮助并恢复触发按钮焦点', async ({ browser }) => {
     const { context, page } = await openWorkspace(browser, '李员工');
     await page.route('**/api/agent/chat', route => route.fulfill({
@@ -238,7 +397,9 @@ test.describe('MySQL-only 浏览器验收', () => {
       contentType: 'text/event-stream',
       body: 'data: {"type":"done","reply":"请在我的申请中展开预约并选择修改。","actions":[],"trace":[]}\n\n'
     }));
-    const trigger = page.getByRole('button', { name: '打开帮助', exact: true });
+    const trigger = page.locator('.studio-topbar').getByRole('button', { name: '打开帮助', exact: true });
+    await expect(trigger).toBeVisible();
+    await expect(page.getByRole('button', { name: '打开帮助', exact: true })).toHaveCount(1);
     await trigger.click();
     let drawer = page.getByRole('dialog', { name: '帮助与智能指导' });
     await expect(drawer).toBeVisible();
@@ -333,8 +494,8 @@ test.describe('MySQL-only 浏览器验收', () => {
     await context.close();
   });
 
-  test('移动端主导航、更多菜单和智能助手均保持可用', async ({ browser }) => {
-    const { context, page } = await openWorkspace(browser, '超级管理员', { width: 390, height: 844 });
+  test('移动端主导航、顶部帮助、更多菜单和智能助手均保持可用', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '超级管理员', { width: 375, height: 812 });
     const navigation = page.getByRole('navigation', { name: '移动端主导航' });
     await expect(navigation).toBeVisible();
     await navigation.getByRole('button', { name: '资源', exact: true }).click();
@@ -350,6 +511,16 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(navigation).toBeVisible();
     await page.getByRole('button', { name: '关闭', exact: true }).click();
     await expect(navigation).toBeVisible();
+    const helpTrigger = page.locator('.studio-topbar').getByRole('button', { name: '打开帮助', exact: true });
+    await expect(helpTrigger).toBeVisible();
+    const helpBounds = await helpTrigger.boundingBox();
+    expect(helpBounds).not.toBeNull();
+    expect(helpBounds!.x).toBeGreaterThanOrEqual(0);
+    expect(helpBounds!.x + helpBounds!.width).toBeLessThanOrEqual(375);
+    await helpTrigger.click();
+    await expect(page.getByRole('dialog', { name: '帮助与智能指导' })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(helpTrigger).toBeFocused();
     await context.close();
   });
 

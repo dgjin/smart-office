@@ -1,6 +1,6 @@
 import { getDbPool } from './db.ts';
 
-const THEMES = new Set(['indigo', 'emerald', 'orange', 'rose', 'purple']);
+const THEMES = new Set(['coamc', 'indigo', 'emerald', 'orange', 'rose', 'purple']);
 
 export const getPreferences = async (userId: string) => {
   const [rows] = await getDbPool().query<any[]>('SELECT theme, sidebar_collapsed FROM user_preferences WHERE user_id = ?', [userId]);

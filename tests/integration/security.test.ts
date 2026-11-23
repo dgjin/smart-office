@@ -26,7 +26,10 @@ describe('请求安全与可观测性集成验证', { skip: !integrationEnabled,
     assert.match(csp, /frame-ancestors 'none'/);
     assert.match(csp, /form-action 'self'/);
     const page = await server.request('/');
-    assert.match(page.headers.get('content-security-policy') || '', /script-src 'self'/);
+    const pageCsp = page.headers.get('content-security-policy') || '';
+    assert.match(pageCsp, /script-src 'self'/);
+    assert.doesNotMatch(pageCsp, /cdn\.tailwindcss\.com|fonts\.googleapis\.com|fonts\.gstatic\.com/);
+    assert.match(await page.text(), /\/vendor\/fonts\/fonts\.css/);
   });
 
   it('向本机监控端点暴露数据库与请求指标', async () => {

@@ -240,6 +240,11 @@ export const buildOperationsReport = (db: OfficeDb, actor: User, startValue: str
     } else if (!fact) {
       reconciliationStatus = '待确认实际使用';
       reconciliationNote = '会议已结束，等待签到或实际使用确认。';
+    } else if (actualStartTime && !actualEndTime) {
+      reconciliationStatus = booking.status === 'APPROVED' ? '待结算' : '事实异常';
+      reconciliationNote = booking.status === 'APPROVED'
+        ? '会议已到计划结束时间，等待正常结算任务写入实际结束事实。'
+        : '预约已有实际开始事实但缺少实际结束时间，请核查状态与使用事实。';
     }
     return {
       id: booking.id,

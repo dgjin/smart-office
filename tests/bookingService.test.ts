@@ -183,6 +183,29 @@ test('部门额度按会议室和中国自然日拆分，取消和驳回不占�
   ]);
 });
 
+test('提前结束按实际结束返还额度，正常完成仍占用计划时段', () => {
+  const early = makeBooking({
+    id: 'early', userId: 'u2', status: 'COMPLETED',
+    startTime: '2026-11-20T23:00:00+08:00', endTime: '2026-11-21T01:00:00+08:00',
+    actualEndTime: '2026-11-20T23:30:00+08:00', endedEarlyAt: '2026-11-20T23:30:00+08:00'
+  });
+  const normal = makeBooking({
+    id: 'normal', userId: 'u2', status: 'COMPLETED',
+    startTime: '2026-11-20T23:00:00+08:00', endTime: '2026-11-21T01:00:00+08:00',
+    actualEndTime: '2026-11-21T01:00:00+08:00'
+  });
+  const candidate = makeBooking({
+    startTime: '2026-11-20T23:00:00+08:00', endTime: '2026-11-21T01:00:00+08:00'
+  });
+  const db = makeDb();
+  db.bookings = [early];
+  assert.deepEqual(buildBookingQuotaDetails(db, candidate, settings).map(item => item.usedBeforeMinutes), [30, 0]);
+  db.bookings = [normal];
+  assert.deepEqual(buildBookingQuotaDetails(db, candidate, settings).map(item => item.usedBeforeMinutes), [60, 60]);
+  db.bookings = [{ ...early, endedEarlyAt: undefined }];
+  assert.deepEqual(buildBookingQuotaDetails(db, candidate, settings).map(item => item.usedBeforeMinutes), [60, 60]);
+});
+
 test('同一部门在A会议室达到额度后仍可预约B会议室', () => {
   const db = makeDb();
   db.bookings = [makeBooking({

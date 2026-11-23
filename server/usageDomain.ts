@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import type { Booking, BookingUsageFact, CheckInEvent, User } from '../types.ts';
 import { DbError } from './errors.ts';
+import { assertConfidentialOperation } from './confidentiality.ts';
 import type { OfficeDb } from './tools.ts';
 import { canManageServiceOperations, ensureServiceDomain, syncWorkOrdersForBookingChange } from './serviceDomain.ts';
 
@@ -52,6 +53,7 @@ export const recordCheckIn = (db: OfficeDb, current: Booking, actor: User, input
   if (current.status !== 'APPROVED') throw new DbError('BOOKING_NOT_CHECKABLE', 409);
   if (current.userId !== subjectUserId && !current.attendeeIds?.includes(subjectUserId)) throw new DbError('CHECK_IN_SUBJECT_NOT_PARTICIPANT', 403);
   if (actor.id !== subjectUserId && !operator) throw new DbError('FORBIDDEN', 403);
+  assertConfidentialOperation(db, current, actor);
   if (input.source === 'QR') {
     if (actor.id !== subjectUserId) throw new DbError('QR_CHECK_IN_REQUIRES_SELF', 403);
     if (!Number.isSafeInteger(input.scheduleVersion) || (input.scheduleVersion || 0) < 1) throw new DbError('INVALID_QR_CHECK_IN', 400);
@@ -129,6 +131,21 @@ export const releaseBooking = (
   };
   syncWorkOrdersForBookingChange(db, current, input.reason.trim(), input.actorId, at);
   upsertUsageFact(db, next, input.source || (input.actorId ? 'MANUAL' : 'SYSTEM'), at);
+  return next;
+};
+
+export const completeBookingNormally = (db: OfficeDb, current: Booking, at = new Date().toISOString()) => {
+  if (current.status !== 'APPROVED' || !current.checkedInAt) throw new DbError('BOOKING_NOT_COMPLETABLE', 409);
+  if (Date.parse(at) < Date.parse(current.endTime)) throw new DbError('BOOKING_NOT_COMPLETABLE', 409);
+  const next: Booking = {
+    ...current,
+    status: 'COMPLETED',
+    endedEarlyAt: undefined,
+    actualEndTime: current.endTime,
+    accessRevokedAt: current.endTime
+  };
+  syncWorkOrdersForBookingChange(db, current, '会议正常结束，未执行服务同步关闭', undefined, current.endTime);
+  upsertUsageFact(db, next, 'SYSTEM', current.endTime);
   return next;
 };
 

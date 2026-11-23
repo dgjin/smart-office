@@ -5,8 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <!-- 字体自托管：不依赖外网，内网/离线可用。见 ../vendor/fonts/fonts.css -->
 <link rel="stylesheet" href="./vendor/fonts/fonts.css">
-<script>if (new URLSearchParams(location.search).get('embed') === 'spatial') document.documentElement.classList.add('spatial-embed');</script>
+<script>
+  const pageParams = new URLSearchParams(location.search);
+  if (pageParams.get('embed') === 'spatial') document.documentElement.classList.add('spatial-embed');
+  if (pageParams.get('theme') === 'coamc') document.documentElement.dataset.theme = 'coamc';
+</script>
 <title>3D 楼层分布图</title>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
 <style>
   /* =========================================================
      设计令牌：与 smart-office 主项目 styles.css 的 :root 对齐
@@ -83,6 +88,7 @@
   body.side-dragging #canvas,body.side-dragging canvas{pointer-events:none}
 
   .brand{display:flex;gap:11px;align-items:center;flex:none}
+  .brand-orient{display:none;width:154px;height:auto;flex:none}
   .logo{
     width:42px;height:42px;border-radius:2px;flex:none;
     background:linear-gradient(150deg,#334139,#1c2823);color:#fff;
@@ -698,6 +704,77 @@
     .spatial-embed #compass{display:none}
   }
 
+  /* 东方蓝：保留空间语义色，仅替换应用外壳与交互状态。 */
+  :root[data-theme='coamc']{
+    --paper:#f3f6f8;--paper-deep:#e6edf2;--surface:#fff;--surface-strong:#fff;
+    --ink:#172630;--ink2:#334a5a;--ink3:#657683;
+    --line:rgba(0,51,102,.14);--line-strong:rgba(0,51,102,.26);
+    --accent:#00427f;--accent-deep:#003366;--accent-soft:#e8f1f8;--accent-light:#83b9e3;
+    --moss:#23705a;--moss-soft:#e3f0eb;--amber:#8a5b16;--amber-soft:#f5ecdc;--danger:#a53b3b;
+    --font-display:'Noto Sans SC',sans-serif;
+  }
+  :root[data-theme='coamc'] body{
+    background:radial-gradient(120% 95% at 50% 0%,#174f78 0%,#07385f 52%,#032744 100%);
+  }
+  :root[data-theme='coamc'] body::before{
+    background-image:linear-gradient(rgba(131,185,227,.045) 1px,transparent 1px);
+  }
+  :root[data-theme='coamc'] #side,
+  :root[data-theme='coamc'] #detail{
+    border-color:rgba(131,185,227,.3);box-shadow:0 20px 52px rgba(0,31,61,.34);
+  }
+  :root[data-theme='coamc'] .brand .logo{display:none!important}
+  :root[data-theme='coamc'] .brand-orient{display:block}
+  :root[data-theme='coamc'] .brand h1{color:var(--accent-deep);font-weight:700}
+  :root[data-theme='coamc'] #dName{font-weight:700;color:var(--accent-deep)}
+  :root[data-theme='coamc'] .bldg button{border-color:var(--line-strong);background:#f7f9fb}
+  :root[data-theme='coamc'] .bldg button:hover{border-color:var(--accent-light);background:#fff}
+  :root[data-theme='coamc'] .bldg button.on{border-color:var(--accent);box-shadow:none}
+  :root[data-theme='coamc'] .bldg button.on b{color:var(--accent-deep)}
+  :root[data-theme='coamc'] .seg,
+  :root[data-theme='coamc'] .seg.sub.on,
+  :root[data-theme='coamc'] .tabs3{background:#e8eef3}
+  :root[data-theme='coamc'] .seg button:hover,
+  :root[data-theme='coamc'] .tabs3 button:hover{color:var(--accent-deep)}
+  :root[data-theme='coamc'] .seg button.on,
+  :root[data-theme='coamc'] .tabs3 button.on{background:var(--accent);color:#fff;box-shadow:none}
+  :root[data-theme='coamc'] .search input:focus,
+  :root[data-theme='coamc'] .areabar input:focus,
+  :root[data-theme='coamc'] .editform input:focus,
+  :root[data-theme='coamc'] .editform select:focus,
+  :root[data-theme='coamc'] .editform textarea:focus,
+  :root[data-theme='coamc'] .mform input:focus,
+  :root[data-theme='coamc'] .mform select:focus,
+  :root[data-theme='coamc'] .mform textarea:focus{box-shadow:0 0 0 2px rgba(0,66,127,.12)}
+  :root[data-theme='coamc'] .fitem:hover,
+  :root[data-theme='coamc'] .rm:hover,
+  :root[data-theme='coamc'] .lg:hover,
+  :root[data-theme='coamc'] .tray-head:hover{background:#f0f5f9}
+  :root[data-theme='coamc'] .fitem.on .tag{background:var(--accent);color:#fff}
+  :root[data-theme='coamc'] .fitem.on .vnum{background:#fff;color:var(--accent-deep)}
+  :root[data-theme='coamc'] .editbtn{background:var(--accent)!important}
+  :root[data-theme='coamc'] .editform .acts .ok,
+  :root[data-theme='coamc'] .mform .acts .ok{background:var(--accent);box-shadow:none}
+  :root[data-theme='coamc'] .bar .fi{background:linear-gradient(90deg,var(--accent),var(--accent-light))}
+  :root[data-theme='coamc'] .lbl{background:rgba(255,255,255,.96);border-color:rgba(0,66,127,.24);color:var(--ink)}
+  :root[data-theme='coamc'] #tip{background:rgba(0,51,102,.96);border-color:rgba(131,185,227,.3)}
+  :root[data-theme='coamc'] #hint,
+  :root[data-theme='coamc'] #compass{background:rgba(255,255,255,.94);border-color:rgba(131,185,227,.34)}
+  :root[data-theme='coamc'] #floorTicks button:hover{color:#d8ecfa}
+  :root[data-theme='coamc'] #floorTicks button.on,
+  :root[data-theme='coamc'] .spatial-embed #floorTicks button.on{color:#b9daf2}
+  :root[data-theme='coamc'] #compass .needle{
+    background:linear-gradient(to bottom,var(--accent) 0%,var(--accent) 48%,rgba(0,51,102,.14) 48%,rgba(0,51,102,.14) 100%);
+  }
+  :root[data-theme='coamc'] #compass .needle::before{border-bottom-color:var(--accent)}
+  :root[data-theme='coamc'] #bldgTag b{color:#f3f8fc;font-weight:600}
+  :root[data-theme='coamc'] #bldgTag span{color:rgba(216,236,250,.68)}
+  :root[data-theme='coamc'] .mnthead .add{border-color:rgba(0,66,127,.3);background:var(--accent-soft);color:var(--accent)}
+  :root[data-theme='coamc'] .mnthead .add:hover{background:#d8e9f5}
+  :root[data-theme='coamc'] .mrec .ty{background:var(--accent-soft);color:var(--accent)}
+  :root[data-theme='coamc'] *::-webkit-scrollbar-thumb{background:rgba(0,66,127,.22)!important}
+  :root[data-theme='coamc'] *::-webkit-scrollbar-thumb:hover{background:rgba(0,66,127,.38)!important}
+
 </style>
 </head>
 <body>
@@ -710,6 +787,7 @@
   <div class="side-grip" id="sideGrip" title="拖动可调整面板宽度，双击复位"></div>
   <div class="brand">
     <div class="logo" id="logo">总部<br>楼层</div>
+    <img class="brand-orient" src="./images/china-orient-logo-horizontal.png" alt="中国东方" />
     <div>
       <h1 id="appTitle">3D 楼层分布图</h1>
       <p id="brandSub"></p>
@@ -806,6 +884,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+import { planAuditoriumLayout } from './hq3d-auditorium.js';
 
 const SPATIAL_EMBED = document.documentElement.classList.contains('spatial-embed');
 if (SPATIAL_EMBED) document.getElementById('hint').textContent = '拖拽旋转 · 滚轮缩放 · 点击楼板或右侧刻度切楼层 · ↑↓ 切楼层';
@@ -1940,14 +2019,14 @@ function buildFurniture(f){
     sph(x, yb + 0.62 * k, z, 0.36 * k, FC.leaf, 1.05);
     sph(x + 0.16 * k, yb + 0.80 * k, z - 0.12 * k, 0.24 * k, 0x5f8d4b, 1.0);
   };
-  const chair = (x, z, ry = 0, col = FC.chair) => {
+  const chair = (x, z, ry = 0, col = FC.chair, base = yb) => {
     const L = localFn(x, z, ry);
     let p = L(0, 0);
-    box(p[0], yb + 0.38, p[1], 0.48, 0.09, 0.46, col, ry);
+    box(p[0], base + 0.38, p[1], 0.48, 0.09, 0.46, col, ry);
     p = L(0, -0.21);
-    box(p[0], yb + 0.42, p[1], 0.48, 0.50, 0.08, col, ry);
+    box(p[0], base + 0.42, p[1], 0.48, 0.50, 0.08, col, ry);
     p = L(0, 0.01);
-    cyl(p[0], yb + 0.18, p[1], 0.05, 0.36, FC.metal);
+    cyl(p[0], base + 0.18, p[1], 0.05, 0.36, FC.metal);
   };
   const desk = (x, z, ry = 0, w = 1.55, d = 0.74, person = true, screen = true) => {
     const L = localFn(x, z, ry);
@@ -1989,7 +2068,29 @@ function buildFurniture(f){
     const cat = r.cat;
     const area = iw * id;
 
-    if (cat === 'office' || cat === 'exec' || cat === 'party'){
+    if (cat === 'meeting' && /礼堂|报告厅/.test(r.label)){
+      const layout = planAuditoriumLayout(iw, id);
+      const stageZ = cz + layout.stage.z;
+      box(cx, yb + layout.stage.height / 2, stageZ, layout.stage.width, layout.stage.height, layout.stage.depth, FC.wood);
+      box(cx, yb + layout.stage.height + 0.025, stageZ + layout.stage.depth / 2 - 0.08, layout.stage.width, 0.05, 0.16, FC.topDk);
+      box(cx, yb + 1.45, r.z + 0.42, layout.stage.width * 0.82, 1.65, 0.08, FC.screen);
+      const podiumX = cx - layout.stage.width * 0.34;
+      box(podiumX, yb + layout.stage.height + 0.50, stageZ + 0.12, 0.56, 1.0, 0.48, FC.wood);
+      box(podiumX, yb + layout.stage.height + 1.02, stageZ + 0.12, 0.68, 0.08, 0.58, FC.topDk);
+      const stageChairCount = Math.max(2, Math.min(7, Math.floor(layout.stage.width / 1.25)));
+      const tableWidth = Math.min(layout.stage.width * 0.58, stageChairCount * 1.05);
+      const tableX = cx + layout.stage.width * 0.08;
+      box(tableX, yb + layout.stage.height + 0.70, stageZ + 0.16, tableWidth, 0.08, 0.62, FC.top);
+      box(tableX, yb + layout.stage.height + 0.34, stageZ + 0.16, tableWidth * 0.88, 0.64, 0.38, FC.wood);
+      for (let i = 0; i < stageChairCount; i++){
+        const dx = -tableWidth / 2 + tableWidth / stageChairCount * (i + 0.5);
+        chair(tableX + dx, stageZ - 0.50, 0, FC.chair, yb + layout.stage.height);
+      }
+      if (layout.seats.length && layout.aisle.width > 0){
+        box(cx, yb + 0.012, cz + layout.aisle.z, layout.aisle.width, 0.024, layout.aisle.depth, FC.mat);
+      }
+      layout.seats.forEach(seat => chair(cx + seat.x, cz + seat.z, Math.PI));
+    } else if (cat === 'office' || cat === 'exec' || cat === 'party'){
       /* 个人办公室：只摆一套办公桌椅（按领导办公室布置）。
          之前按「N人」铺工位网格，一层几百张桌子既看不出是单间，也吃帧率；
          单间就该是一张桌子 + 一把椅子，在房间里的位置还得像有人用：
@@ -3106,10 +3207,14 @@ function visibleBox(pad){
     const sr = document.getElementById('side').getBoundingClientRect().right;
     l = Math.min(sr + 12, W * 0.42) + pad;
   }
-  let r = W - pad;
+  let r = W - pad, b = H - pad;
   const dEl = document.getElementById('detail');
   if (W > 900 && dEl.classList.contains('show')) r = W - pad - dEl.getBoundingClientRect().width - 26;
-  return { l, r, t:pad, b:H - pad, W, H };
+  if (W <= 900 && !SPATIAL_EMBED){
+    const sideTop = document.getElementById('side').getBoundingClientRect().top;
+    if (sideTop > pad * 2) b = Math.min(b, sideTop - 12);
+  }
+  return { l, r, t:pad, b, W, H };
 }
 function bboxPx(cam, corners){
   const W = window.innerWidth, H = window.innerHeight;
@@ -4377,8 +4482,14 @@ function updateCompass(){
   needleEl.style.transform = `rotate(${Math.atan2(northV.x, northV.y)}rad)`;
 }
 
+let animationFrameId = 0;
+function requestNextFrame(){
+  if (document.hidden || animationFrameId) return;
+  animationFrameId = requestAnimationFrame(animate);
+}
 function animate(){
-  requestAnimationFrame(animate);
+  animationFrameId = 0;
+  if (document.hidden) return;
 
   if (Math.abs(state.spread - state.target) > 0.001){
     state.spread += (state.target - state.spread) * 0.12;
@@ -4489,7 +4600,16 @@ function animate(){
   updateFloorTicks();
   updateCompass();
   renderer.render(scene, camera);
+  requestNextFrame();
 }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && animationFrameId){
+    cancelAnimationFrame(animationFrameId);
+    animationFrameId = 0;
+  } else {
+    requestNextFrame();
+  }
+});
 
 /* ---------- 面板宽度与托盘：浏览体验的两个开关 ----------
    宽度：拖右缘调整，双击复位；托盘：图例与统计默认收起。
@@ -4651,7 +4771,7 @@ buildFloorTicks();
 setPane('floors');
 syncMntVisual();
 buildStats();
-animate();
+requestNextFrame();
 if (SPATIAL_EMBED && window.parent !== window){
   window.parent.postMessage({ type: 'smart-office:hq3d-ready' }, location.origin);
 }

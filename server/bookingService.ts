@@ -136,6 +136,9 @@ const departmentIdFor = (booking: Booking, db: OfficeDb) => {
 };
 
 const countsForQuota = (booking: Booking) => ['PENDING', 'APPROVED', 'COMPLETED'].includes(booking.status);
+const quotaEndTime = (booking: Booking) => booking.status === 'COMPLETED' && booking.endedEarlyAt && booking.actualEndTime
+  ? booking.actualEndTime
+  : booking.endTime;
 
 export const buildBookingQuotaDetails = (
   db: OfficeDb,
@@ -149,7 +152,7 @@ export const buildBookingQuotaDetails = (
   const occupied = [...(db.bookings || []), ...accepted].filter(item => item.id !== editingId
     && item.resourceId === booking.resourceId && departmentIdFor(item, db) === departmentId && countsForQuota(item));
   return splitBookingByNaturalDay(booking.startTime, booking.endTime).map(segment => {
-    const usedBeforeMinutes = occupied.reduce((total, item) => total + splitBookingByNaturalDay(item.startTime, item.endTime)
+    const usedBeforeMinutes = occupied.reduce((total, item) => total + splitBookingByNaturalDay(item.startTime, quotaEndTime(item))
       .filter(day => day.date === segment.date)
       .reduce((sum, day) => sum + day.minutes, 0), 0);
     const remainingMinutes = settings.departmentDailyNetMinutes - usedBeforeMinutes - segment.minutes;

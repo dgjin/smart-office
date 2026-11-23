@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { readDb } from './db.ts';
-import { streamChatCompletion, LlmNotConfiguredError, type ChatMessage } from './llm.ts';
+import { streamChatCompletion, LlmCancelledError, LlmNotConfiguredError, LlmTimeoutError, type ChatMessage } from './llm.ts';
 import { buildContextSummary, createExecutor, toolsForRoles, type AgentAction, type OfficeDb, type ToolResult } from './tools.ts';
 import { readJson, send } from './http.ts';
 import { getActorDbView } from './confidentiality.ts';
@@ -21,8 +21,10 @@ const SYSTEM_PROMPT = `你是「智办」，智慧办公空间管理系统（Sma
 6. 修改本人预约使用 propose_edit_booking，只改用户明确提出的时间、用途或人数；长期续期使用 propose_renew_booking。涉密变更不通过助手生成，引导用户在正式表单和保密流程中处理。
 7. 组织同步应用、保密白名单与授权、集成补偿或重放、设备撤销或重启、备份恢复等高影响操作，只提供角色化导航和操作指南，不声称已执行。
 8. 工具返回 ok:false 时如实说明原因和下一步，不把失败说成成功。回答用中文，先结论后细节，不暴露 JSON、工具名或参数结构。
-9. 用户问待办时先调用 get_my_todos。审批和工单能力按真实角色提供，参会人也可在有效时间窗内签到。
-10. 修订上一份申请草案时，“当前申请草案”JSON 是唯一权威版本。只修改明确要求变更的字段，其他字段原样沿用；资源或时段变化时重新查询空档。`;
+9. 用户问待办时先调用 get_my_todos。审批和工单能力按真实角色提供，参会人也可在有效时间窗内签到。涉密工单只按具体责任范围提供履约所需信息，不得借此披露会议主题、申请人或参会人。
+10. 修订上一份申请草案时，“当前申请草案”JSON 是唯一权威版本。只修改明确要求变更的字段，其他字段原样沿用；资源或时段变化时重新查询空档。
+11. 用户询问东方蓝或其他界面主题时，依据 search_help 指南说明桌面侧栏底部“界面风格”和移动端“更多 → 界面主题”入口。助手不直接修改偏好，不得声称已经切换主题。
+12. 用户询问中国东方标志、东方蓝总部3D外观或总部3D礼堂时，依据 search_help 说明侧栏展开/折叠品牌显示、总部3D与空间剖切同步主题、经典主题恢复，以及主席台、比例排座和中央过道。助手不能修改品牌资产、界面偏好、3D座位或房间布局，不得声称已完成此类维护。`;
 
 export interface TraceEntry {
   tool: string;
@@ -39,6 +41,7 @@ export interface AgentHooks {
   onTrace?: (entry: TraceEntry) => void;
   onAction?: (action: AgentAction) => void;
   isCancelled?: () => boolean;
+  signal?: AbortSignal;
 }
 
 export interface AgentOutcome {
@@ -101,7 +104,7 @@ export const runAgent = async (
         hooks.onStatus?.('running', name);
         hooks.onToolCallStart?.(name);
       }
-    });
+    }, { signal: hooks.signal });
 
     if (!message.content && !message.tool_calls?.length) throw new Error('EMPTY_RESPONSE');
     messages.push(message);
@@ -171,15 +174,33 @@ export async function handleAgentChat(req: IncomingMessage, res: ServerResponse,
   const db = getActorDbView(await readDb(), user);
   const userId = user.id;
   const wantsStream = body.stream === true || String(req.headers.accept || '').includes('text/event-stream');
+  const controller = new AbortController();
+  let closed = false;
+  const cancel = () => {
+    closed = true;
+    if (!controller.signal.aborted) controller.abort();
+  };
+  const cleanup = () => {
+    req.removeListener('aborted', cancel);
+    res.removeListener('close', cancel);
+  };
+  req.once('aborted', cancel);
+  res.once('close', cancel);
 
   if (!wantsStream) {
     try {
-      const outcome = await runAgent(db, user, userId, history);
-      return send(res, 200, outcome);
+      const outcome = await runAgent(db, user, userId, history, { signal: controller.signal, isCancelled: () => closed });
+      if (!closed) return send(res, 200, outcome);
     } catch (err: any) {
+      if (closed) return;
       if (err instanceof LlmNotConfiguredError) return send(res, 503, { error: 'AI_NOT_CONFIGURED' });
+      if (err instanceof LlmTimeoutError) return send(res, 504, { error: 'AI_UPSTREAM_TIMEOUT' });
+      if (err instanceof LlmCancelledError) return send(res, 499, { error: 'AI_REQUEST_CANCELLED' });
       return send(res, 502, { error: 'AI_UPSTREAM_ERROR', detail: String(err?.message || err) });
+    } finally {
+      cleanup();
     }
+    return;
   }
 
   res.writeHead(200, {
@@ -189,9 +210,6 @@ export async function handleAgentChat(req: IncomingMessage, res: ServerResponse,
     'X-Accel-Buffering': 'no'
   });
   res.flushHeaders?.();
-
-  let closed = false;
-  req.on('close', () => { closed = true; });
 
   const emit = (payload: any) => {
     if (closed || res.writableEnded) return;
@@ -210,17 +228,21 @@ export async function handleAgentChat(req: IncomingMessage, res: ServerResponse,
       onDelta: (text) => emit({ type: 'delta', text }),
       onTrace: (entry) => emit({ type: 'trace', entry }),
       onAction: (action) => emit({ type: 'action', action }),
-      isCancelled: () => closed
+      isCancelled: () => closed || controller.signal.aborted,
+      signal: controller.signal
     });
     emit({ type: 'done', ...outcome, elapsed: Date.now() - startedAt });
   } catch (err: any) {
     if (err instanceof LlmNotConfiguredError) {
       emit({ type: 'error', error: 'AI_NOT_CONFIGURED', message: 'AI 服务尚未配置，请联系管理员设置 DEEPSEEK_API_KEY。' });
-    } else {
+    } else if (err instanceof LlmTimeoutError) {
+      emit({ type: 'error', error: 'AI_UPSTREAM_TIMEOUT', message: '上游服务响应超时，请稍后重试。' });
+    } else if (!(err instanceof LlmCancelledError)) {
       emit({ type: 'error', error: 'AI_UPSTREAM_ERROR', message: `上游服务异常：${String(err?.message || err)}` });
     }
   } finally {
     clearInterval(heartbeat);
+    cleanup();
     if (!closed && !res.writableEnded) res.end();
   }
 }

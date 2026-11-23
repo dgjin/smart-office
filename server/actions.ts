@@ -1,7 +1,7 @@
 import { mutateDb } from './db.ts';
 import { isActiveBooking } from '../utils/bookingRules.ts';
 import { getCurrentRuleSettings } from '../utils/resourceDomain.ts';
-import { bookingNoticePurpose } from './confidentiality.ts';
+import { assertConfidentialOperation, bookingNoticePurpose } from './confidentiality.ts';
 import type { AgentAction } from './tools.ts';
 import type { Notification } from '../types.ts';
 import { applyApprovalDecision } from './approvalDomain.ts';
@@ -24,6 +24,7 @@ export const executeAgentAction = async (userId: string, action: AgentAction) =>
   if (action.type === 'PROPOSE_CANCEL') {
     const booking = bookings.find(b => b.id === action.bookingId);
     if (!booking || booking.userId !== userId || !isActiveBooking(booking)) throw Object.assign(new Error('只能取消自己的有效预订'), { status: 403 });
+    assertConfidentialOperation(db, booking, me);
     const settings = getCurrentRuleSettings(db.ruleVersions);
     const resource = (db.resources || []).find(item => item.id === booking.resourceId);
     const authorization = assertCancellationAuthorized(booking, resource, settings, me);

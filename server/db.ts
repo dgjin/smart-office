@@ -8,7 +8,7 @@ import { BUILDING_FLOORS, BUILDING_NAMES, getCurrentRuleSettings, getRoomCategor
 import { getApprovalRecipients } from '../utils/approval.ts';
 import { ensureApprovalPolicy, resolveApprovalPolicy } from '../utils/approvalPolicy.ts';
 import { addApprovalWorkingMinutes } from '../utils/approvalSchedule.ts';
-import { assertConfidentialWhitelist, bookingNoticePurpose, isConfidentialBooking, rebuildConfidentialAccessGrants } from './confidentiality.ts';
+import { assertConfidentialOperation, assertConfidentialWhitelist, bookingNoticePurpose, isConfidentialBooking, rebuildConfidentialAccessGrants } from './confidentiality.ts';
 import { dbConfig, REQUIRED_MIGRATION } from './config.ts';
 import { enqueueOutbox, scheduleJob, type JobInstruction } from './jobStore.ts';
 import { externalNotificationEvents } from './externalMessages.ts';
@@ -67,16 +67,20 @@ const readWith = async (conn: PoolConnection): Promise<OfficeDb> => {
   return db;
 };
 
-const writeCollections = async (conn: PoolConnection, db: OfficeDb) => {
+const writeCollections = async (conn: PoolConnection, db: OfficeDb, previous: Map<string, string>) => {
   for (const key of STATE_KEYS) {
     if (!Array.isArray(db[key])) continue;
-    await conn.query('INSERT INTO office_state (state_key, payload) VALUES (?, ?) ON DUPLICATE KEY UPDATE payload = VALUES(payload)', [key, json(db[key])]);
+    const payload = json(db[key]);
+    if (previous.get(key) === payload) continue;
+    await conn.query('INSERT INTO office_state (state_key, payload) VALUES (?, ?) ON DUPLICATE KEY UPDATE payload = VALUES(payload)', [key, payload]);
   }
 };
 
-const writeBookings = async (conn: PoolConnection, bookings: Booking[]) => {
+const writeBookings = async (conn: PoolConnection, bookings: Booking[], previous?: Booking[]) => {
+  const previousById = previous ? new Map(previous.map(booking => [booking.id, json(booking)])) : undefined;
   for (const b of bookings) {
     if (!b?.id || !b.resourceId || !b.startTime || !b.endTime) continue;
+    if (previousById?.get(b.id) === json(b)) continue;
     await conn.query(`INSERT INTO bookings (id, user_id, resource_id, start_time, end_time, status, rule_version, workflow_version, approval_rule_set_version, approval_rule_id, approval_submitted_at, schedule_version, actual_start_time, actual_end_time, released_at, release_reason, release_type, access_revoked_at, payload, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE user_id=VALUES(user_id), resource_id=VALUES(resource_id),
       start_time=VALUES(start_time), end_time=VALUES(end_time), status=VALUES(status), rule_version=VALUES(rule_version), workflow_version=VALUES(workflow_version),
@@ -90,9 +94,10 @@ const writeBookings = async (conn: PoolConnection, bookings: Booking[]) => {
   }
 };
 
-const writeNotifications = async (conn: PoolConnection, notifications: OfficeDb['notifications'], users: User[]) => {
+const writeNotifications = async (conn: PoolConnection, notifications: OfficeDb['notifications'], users: User[], previous: Notification[]) => {
+  const previousById = new Map(previous.map(notification => [notification.id, json(notification)]));
   for (const n of notifications || []) {
-    if (!n?.id || !n.userId) continue;
+    if (!n?.id || !n.userId || previousById.get(n.id) === json(n)) continue;
     const [result] = await conn.query<any>(`INSERT INTO notifications (id, user_id, title, content, timestamp, is_read, type, link_view)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE is_read=VALUES(is_read), link_view=VALUES(link_view)`,
       [n.id, n.userId, n.title, n.content, new Date(n.timestamp), n.isRead, n.type, n.linkView || null]);
@@ -208,6 +213,10 @@ export const mutateDb = async <T>(mutator: (db: OfficeDb, context: MutationConte
     const db = await readWith(conn);
     const previousBookings = structuredClone(db.bookings || []);
     const previousUsers = structuredClone(db.users || []);
+    const previousNotifications = structuredClone(db.notifications || []);
+    const previousCollections = new Map(STATE_KEYS
+      .filter(key => Array.isArray(db[key]))
+      .map(key => [key, json(db[key])] as const));
     const result = await mutator(db, {
       revision: currentRevision,
       connection: conn,
@@ -224,10 +233,10 @@ export const mutateDb = async <T>(mutator: (db: OfficeDb, context: MutationConte
       }
     });
     await syncIntegrationChanges(db, previousBookings, previousUsers, event => enqueueOutbox(conn, event));
-    await writeCollections(conn, db);
+    await writeCollections(conn, db, previousCollections);
     if (options.replaceBookings) await conn.query('DELETE FROM bookings');
-    await writeBookings(conn, db.bookings || []);
-    await writeNotifications(conn, db.notifications, db.users || []);
+    await writeBookings(conn, db.bookings || [], options.replaceBookings ? undefined : previousBookings);
+    await writeNotifications(conn, db.notifications, db.users || [], previousNotifications);
     const advanceSnapshot = typeof options.snapshot === 'function' ? options.snapshot(result) : options.snapshot !== false;
     if (advanceSnapshot) await conn.query('UPDATE office_snapshot_meta SET revision = revision + 1 WHERE id = 1');
     await conn.commit();
@@ -300,6 +309,7 @@ export const saveBookings = async (incoming: Booking[], actor: User, editingId?:
   if (editingId && !editing) throw new DbError('BOOKING_NOT_FOUND', 404);
   if (editing && editing.userId !== actor.id && !actor.role.includes('SYSTEM_ADMIN')) throw new DbError('FORBIDDEN', 403);
   if (editing && !['PENDING', 'APPROVED'].includes(editing.status)) throw new DbError('BOOKING_NOT_EDITABLE', 409);
+  if (editing) assertConfidentialOperation(db, editing, actor);
   ensureApprovalPolicy(db);
   ensureServiceDomain(db);
   const settings = getCurrentRuleSettings(db.ruleVersions);

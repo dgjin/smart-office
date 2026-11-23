@@ -16,6 +16,7 @@ const CORE_TABLES = [
   'office_state',
   'bookings',
   'notifications',
+  'notification_read_states',
   'audit_events',
   'scheduled_jobs',
   'outbox_events',

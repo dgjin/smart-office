@@ -7,7 +7,7 @@ import { getCurrentRuleSettings } from '../utils/resourceDomain.ts';
 import { bookingNoticePurpose } from './confidentiality.ts';
 import { logEvent } from './observability.ts';
 import { createBookingWorkOrders, ensureServiceDomain, isHeavyServiceBooking } from './serviceDomain.ts';
-import { releaseBooking } from './usageDomain.ts';
+import { completeBookingNormally, releaseBooking } from './usageDomain.ts';
 import { deliverExternalNotification } from './externalMessages.ts';
 import { deliverIntegrationEvent, recordIntegrationDelivery } from './externalIntegrations.ts';
 
@@ -42,6 +42,7 @@ const reconcileJobs = async () => mutateDb(async (db, context) => {
     const scheduleVersion = booking.scheduleVersion || 1;
     const payload = { bookingId: booking.id, scheduleVersion };
     await context.scheduleJob({ key: `reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_REMINDER', runAt: new Date(start.getTime() - 15 * 60000), payload });
+    await context.scheduleJob({ key: `completion:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_COMPLETION', runAt: new Date(booking.endTime), payload });
     if (booking.type === 'ROOM') {
       const bookingSettings = booking.ruleSettingsSnapshot || settings;
       await context.scheduleJob({ key: `check-in-reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_CHECK_IN_REMINDER', runAt: new Date(start.getTime() + bookingSettings.checkInReminderAfterStartMinutes * 60000), payload });
@@ -140,7 +141,7 @@ const processJob = async (job: any) => {
     let changed = false;
     const scheduleVersion = booking.scheduleVersion || 1;
     const jobScheduleVersion = payload.scheduleVersion || 1;
-    if (['BOOKING_REMINDER', 'BOOKING_CHECK_IN_REMINDER', 'BOOKING_NO_SHOW', 'SERVICE_SLA_ESCALATION', 'SERVICE_INSPECTION'].includes(job.job_type)
+    if (['BOOKING_REMINDER', 'BOOKING_CHECK_IN_REMINDER', 'BOOKING_NO_SHOW', 'BOOKING_COMPLETION', 'SERVICE_SLA_ESCALATION', 'SERVICE_INSPECTION'].includes(job.job_type)
       && jobScheduleVersion !== scheduleVersion) return false;
     if (job.job_type === 'BOOKING_REMINDER') {
       if (booking.status !== 'APPROVED' || start <= now || start - now > 15 * 60000) return false;
@@ -162,6 +163,13 @@ const processJob = async (job: any) => {
       recipients.forEach(userId => notifications.push(notice(`noshow-${booking.id}-v${scheduleVersion}-${userId}`, userId, '未签到，会议室已释放', `${bookingNoticePurpose(booking)}${reason}，${resource?.name || '会议室'} 的剩余时段、额度、服务和门禁授权已释放。`, 'WARNING')));
       affectedOrders.forEach(order => (db.users || []).filter(user => user.role.includes(order.assigneeRole)).forEach(user =>
         notifications.push(notice(`noshow-service-${booking.id}-v${scheduleVersion}-${order.id}-${user.id}`, user.id, '未执行服务已联动撤销', `${order.title}：${reason}`, 'WARNING'))));
+      changed = true;
+    } else if (job.job_type === 'BOOKING_COMPLETION') {
+      if (booking.status !== 'APPROVED' || !booking.checkedInAt || now < Date.parse(booking.endTime)) return false;
+      const next = completeBookingNormally(db, booking);
+      db.bookings = (db.bookings || []).map(item => item.id === booking.id ? next : item);
+      await audit({ action: 'BOOKING_COMPLETE', entityType: 'BOOKING', entityId: booking.id, details: { previousStatus: booking.status, scheduleVersion, actualStartTime: next.actualStartTime, actualEndTime: next.actualEndTime } });
+      recipients.forEach(userId => notifications.push(notice(`completion-${booking.id}-v${scheduleVersion}-${userId}`, userId, '预约已正常完成', `${bookingNoticePurpose(booking)}已按计划结束时间完成结算，实际使用事实与门禁授权已同步更新。`, 'SUCCESS')));
       changed = true;
     } else if (job.job_type === 'APPROVAL_REMINDER') {
       if (booking.status !== 'PENDING' || !isCurrentApprovalJob(booking, payload)) return false;

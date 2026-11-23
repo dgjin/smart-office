@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { streamChatCompletion } from '../server/llm.ts';
+import { chatCompletion, LlmCancelledError, LlmTimeoutError, streamChatCompletion } from '../server/llm.ts';
 
 const encoder = new TextEncoder();
 
@@ -105,5 +105,45 @@ test('缺少 API Key 时抛出可识别的未配置错误', async () => {
     );
   } finally {
     if (originalKey !== undefined) process.env.DEEPSEEK_API_KEY = originalKey;
+  }
+});
+
+test('流式上游超时后取消 reader 并抛出有界超时错误', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  let readerCancelled = false;
+  process.env.DEEPSEEK_API_KEY = 'test-key';
+  globalThis.fetch = (async () => new Response(new ReadableStream({
+    cancel() { readerCancelled = true; }
+  }), { status: 200 })) as any;
+  try {
+    await assert.rejects(
+      () => streamChatCompletion({}, {}, { timeoutMs: 20 }),
+      LlmTimeoutError
+    );
+    assert.equal(readerCancelled, true);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = originalKey;
+  }
+});
+
+test('外部取消信号会中断非流式上游请求', async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = 'test-key';
+  globalThis.fetch = (async (_input: any, init?: RequestInit) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError')), { once: true });
+  })) as any;
+  const controller = new AbortController();
+  try {
+    const pending = chatCompletion({}, { signal: controller.signal, timeoutMs: 5000 });
+    controller.abort();
+    await assert.rejects(() => pending, LlmCancelledError);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = originalKey;
   }
 });

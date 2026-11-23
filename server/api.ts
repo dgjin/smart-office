@@ -9,7 +9,7 @@ import { actorFromRequest } from './auth/sessions.ts';
 import { handleAuthRequest } from './auth/routes.ts';
 import { getPreferences, updatePreferences } from './preferences.ts';
 import { getChatConversation, saveChatConversation } from './chatConversations.ts';
-import { getWorkspace } from './workspace.ts';
+import { getWorkspace, recordConfidentialBookingRead } from './workspace.ts';
 import {
   createBackup, createConfidentialityAuthorization, deleteApprovalDelegate, deleteConfidentialWhitelistEntry, deleteDepartment, deleteUser,
   getRuleConfiguration, importRecords, restoreBackup, saveApprovalDelegate, saveConfidentialWhitelistEntry, saveDepartment, saveRole,
@@ -131,7 +131,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       requireAdmin(actor);
       const format = url.searchParams.get('format') || 'csv';
       if (!['csv', 'xlsx'].includes(format)) throw new HttpError(400, 'INVALID_REPORT_FORMAT');
+      const revisionValue = url.searchParams.get('revision');
+      const expectedRevision = Number(revisionValue);
+      if (!revisionValue || !Number.isSafeInteger(expectedRevision) || expectedRevision < 1) throw new HttpError(400, 'REPORT_REVISION_REQUIRED');
       const report = await getOperationsReport(actor, url.searchParams.get('start') || '', url.searchParams.get('end') || '');
+      if (report.revision !== expectedRevision) throw new HttpError(409, 'REPORT_SNAPSHOT_CHANGED');
       const filename = `smart-office-report-${report.start.slice(0, 10)}.${format}`;
       res.statusCode = 200;
       res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -422,6 +426,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       }
       const saved = await saveBookings(bookings, actor);
       send(res, 201, { bookings: saved, workspace: await getWorkspace(actor) });
+      return true;
+    }
+    const confidentialReadMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/confidential-read$/);
+    if (confidentialReadMatch && req.method === 'POST') {
+      await readJson(req);
+      send(res, 200, await recordConfidentialBookingRead(actor, decodeURIComponent(confidentialReadMatch[1])));
       return true;
     }
     const icsMatch = url.pathname.match(/^\/api\/bookings\/([^/]+)\/ics$/);

@@ -36,12 +36,10 @@ export const setSecurityHeaders = (res: ServerResponse, profile: SecurityProfile
   res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
   res.setHeader('Content-Security-Policy', [
     "default-src 'self'",
-    embedded
-      ? "script-src 'self' 'unsafe-inline'"
-      : "script-src 'self' https://cdn.tailwindcss.com",
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    embedded ? "script-src 'self' 'unsafe-inline'" : "script-src 'self'",
+    "style-src 'self' 'unsafe-inline'",
     "img-src 'self' data: blob:",
-    "font-src 'self' data: https://fonts.gstatic.com",
+    "font-src 'self' data:",
     "connect-src 'self'",
     "media-src 'self' blob:",
     "object-src 'none'",

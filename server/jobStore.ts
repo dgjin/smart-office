@@ -3,7 +3,7 @@ import type { PoolConnection } from 'mysql2/promise';
 
 export type JobInstruction = {
   key: string;
-  type: 'BOOKING_REMINDER' | 'BOOKING_CHECK_IN_REMINDER' | 'BOOKING_NO_SHOW'
+  type: 'BOOKING_REMINDER' | 'BOOKING_CHECK_IN_REMINDER' | 'BOOKING_NO_SHOW' | 'BOOKING_COMPLETION'
     | 'APPROVAL_REMINDER' | 'APPROVAL_ESCALATION' | 'APPROVAL_CLOSE'
     | 'SERVICE_SLA_ESCALATION' | 'SERVICE_INSPECTION';
   runAt: Date;

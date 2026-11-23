@@ -12,7 +12,8 @@ type Session = Awaited<ReturnType<TestServer['login']>>;
 const ids = {
   admin: '1', approver: '2', requester: '3', security: 'u-mrp3-security',
   service: 'u-mrp3-service', frontDesk: 'u-mrp3-front-desk', auditor: 'u-mrp3-auditor',
-  outsider: 'u-mrp3-outsider', oldAttendee: 'u-mrp3-old-attendee', newAttendee: 'u-mrp3-new-attendee'
+  outsider: 'u-mrp3-outsider', oldAttendee: 'u-mrp3-old-attendee', newAttendee: 'u-mrp3-new-attendee',
+  recoveryManager: 'u-mrp3-recovery-manager'
 };
 const exclusiveResourceId = 'r-mrp3-exclusive';
 const accessResourceId = 'r-mrp3-access';
@@ -140,7 +141,8 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
       [ids.auditor, '审计员', ['AUDITOR']],
       [ids.outsider, '无关员工', ['EMPLOYEE']],
       [ids.oldAttendee, '原参会人', ['EMPLOYEE']],
-      [ids.newAttendee, '新参会人', ['EMPLOYEE']]
+      [ids.newAttendee, '新参会人', ['EMPLOYEE']],
+      [ids.recoveryManager, '涉密恢复复核人', ['SECURITY_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR']]
     ] as Array<[string, string, string[]]>) await createUser(id, name, role);
     sessions.set(ids.approver, await server.login(ids.approver));
     sessions.set(ids.requester, await server.login(ids.requester));
@@ -343,6 +345,35 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     assert.equal((await readBooking(access.id)).currentNodeIndex, 1);
   });
 
+  it('已核准涉密预约可签发一次性参会变更授权并重新进入审批', async () => {
+    await addWhitelist(ids.newAttendee);
+    const booking = await createBooking(ids.requester, '已核准涉密参会变更', {
+      meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL'
+    });
+    assert.equal((await approve(ids.approver, booking.id)).status, 200);
+    assert.equal((await approve(ids.security, booking.id)).status, 200);
+    assert.equal((await approve(ids.admin, booking.id)).status, 200);
+    const approved = await readBooking(booking.id);
+    assert.equal(approved.status, 'APPROVED');
+
+    const workspace = await readJson(await server.request('/api/workspace', { headers: { Cookie: session(ids.security).cookie } }));
+    const target = workspace.confidentialAuthorizationTargets.find((item: any) => item.id === booking.id);
+    assert.equal(target.status, 'APPROVED');
+    assert.equal(Object.hasOwn(target, 'purpose'), false);
+
+    const authorization = await authorize(ids.security, booking.id, 'ATTENDEE_CHANGE');
+    const changedResponse = await editBooking(ids.requester, approved, {
+      attendeeIds: [ids.newAttendee], securityAuthorizationIds: [authorization.id]
+    });
+    assert.equal(changedResponse.status, 200, JSON.stringify(await readJson(changedResponse.clone())));
+    const changed = (await readJson(changedResponse)).booking as Booking;
+    assert.equal(changed.status, 'PENDING');
+    assert.equal(changed.currentNodeIndex, 0);
+    assert.deepEqual(changed.attendeeIds, [ids.newAttendee]);
+    const authorizations = await readCollection<ConfidentialityAuthorization>('confidentialityAuthorizations');
+    assert.ok(authorizations.find(item => item.id === authorization.id)?.usedAt);
+  });
+
   it('涉密参会范围变化需单次授权并撤销旧访问，降级需两个不同授权人且授权一次性核销', async () => {
     await Promise.all([ids.oldAttendee, ids.newAttendee].map(id => addWhitelist(id)));
     const attendeeBooking = await createBooking(ids.requester, '涉密参会范围调整', {
@@ -448,12 +479,116 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     assert.equal(leakedNotices.length, 0);
     const workOrders = await readCollection<any>('workOrders');
     assert.equal(workOrders.find((item: any) => item.bookingId === booking.id)?.title, '涉密会议茶水服务');
-    const reads = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id = ?', ['CONFIDENTIAL_READ', booking.id]);
-    assert.ok(reads.some(row => row.actor_id === ids.requester));
-    assert.ok(reads.some(row => row.actor_id === ids.security));
-    assert.equal(reads.some(row => row.actor_id === ids.admin), false);
+    const pollingReads = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id = ?', ['CONFIDENTIAL_READ', booking.id]);
+    assert.deepEqual(pollingReads, []);
+    for (const userId of [ids.requester, ids.security]) {
+      const response = await server.request(`/api/bookings/${booking.id}/confidential-read`, {
+        method: 'POST', headers: { Cookie: session(userId).cookie }, body: '{}'
+      });
+      assert.equal(response.status, 200, `${userId}: ${await response.clone().text()}`);
+    }
+    const forbiddenRead = await server.request(`/api/bookings/${booking.id}/confidential-read`, {
+      method: 'POST', headers: { Cookie: session(ids.admin).cookie }, body: '{}'
+    });
+    assert.equal(forbiddenRead.status, 403);
+    const reads = await queryTestDb<any[]>('SELECT actor_id, details FROM audit_events WHERE action = ? AND entity_id = ?', ['CONFIDENTIAL_READ', booking.id]);
+    assert.deepEqual(reads.map(row => row.actor_id).sort(), [ids.requester, ids.security].sort());
+    assert.ok(reads.every(row => (typeof row.details === 'string' ? JSON.parse(row.details) : row.details).source === 'BOOKING_DETAIL'));
     const exports = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id = ?', ['CONFIDENTIAL_EXPORT', booking.id]);
     assert.deepEqual(exports.map(row => row.actor_id).sort(), [ids.requester, ids.security].sort());
+  });
+
+  it('涉密服务责任人仅凭工单履约且预约主题和人员仍保持脱敏', async () => {
+    await addWhitelist(ids.requester);
+    const secret = `涉密服务履约-${crypto.randomUUID()}`;
+    const booking = await createBooking(ids.requester, secret, {
+      meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL', needsTeaService: true
+    });
+    assert.equal((await approve(ids.approver, booking.id)).status, 200);
+    assert.equal((await approve(ids.security, booking.id)).status, 200);
+    assert.equal((await approve(ids.admin, booking.id)).status, 200);
+    const order = (await readCollection<any>('workOrders')).find(item => item.bookingId === booking.id);
+    assert.ok(order);
+    const inspectionId = `inspection-${booking.id}-v1-PRE_OPEN`;
+    await mutateTestCollection<any>('serviceInspections', inspections => [{
+      id: inspectionId, areaId: 'area-default', bookingId: booking.id, kind: 'PRE_OPEN', dueAt: booking.startTime, status: 'PENDING'
+    }, ...inspections.filter(item => item.id !== inspectionId)]);
+    const serviceWorkspace = await readJson(await server.request('/api/workspace', { headers: { Cookie: session(ids.service).cookie } }));
+    const serviceBooking = serviceWorkspace.bookings.find((item: Booking) => item.id === booking.id);
+    assert.equal(serviceBooking.purpose, '已预约');
+    assert.equal(serviceBooking.userId, '');
+    assert.deepEqual(serviceBooking.attendeeIds, []);
+    assert.ok(serviceWorkspace.workOrders.some((item: any) => item.id === order.id));
+    assert.ok(serviceWorkspace.serviceInspections.some((item: any) => item.id === inspectionId));
+    const unrelatedWorkspace = await readJson(await server.request('/api/workspace', { headers: { Cookie: session(ids.frontDesk).cookie } }));
+    assert.equal(unrelatedWorkspace.workOrders.some((item: any) => item.id === order.id), false);
+    const started = await server.request(`/api/work-orders/${order.id}/transitions`, {
+      method: 'POST', headers: { Cookie: session(ids.service).cookie }, ...jsonBody({ action: 'START' })
+    });
+    assert.equal(started.status, 200, JSON.stringify(await readJson(started.clone())));
+    const completed = await server.request(`/api/work-orders/${order.id}/transitions`, {
+      method: 'POST', headers: { Cookie: session(ids.service).cookie },
+      ...jsonBody({ action: 'COMPLETE', executionResult: '涉密服务已按工单完成', costAmount: 12 })
+    });
+    assert.equal(completed.status, 200, JSON.stringify(await readJson(completed.clone())));
+    assert.equal((await readJson(completed)).order.status, 'DONE');
+    const inspected = await server.request(`/api/service-inspections/${inspectionId}`, {
+      method: 'POST', headers: { Cookie: session(ids.service).cookie }, ...jsonBody({ status: 'DONE', note: '涉密会前巡查已完成' })
+    });
+    assert.equal(inspected.status, 200, JSON.stringify(await readJson(inspected.clone())));
+    assert.equal((await readJson(inspected)).inspection.status, 'DONE');
+    const forbidden = await server.request(`/api/work-orders/${order.id}/transitions`, {
+      method: 'POST', headers: { Cookie: session(ids.frontDesk).cookie }, ...jsonBody({ action: 'EXCEPTION', reason: '无关角色不得操作' })
+    });
+    assert.equal(forbidden.status, 403);
+    const leakedNotices = await queryTestDb<any[]>('SELECT id FROM notifications WHERE content LIKE ? OR title LIKE ?', [`%${secret}%`, `%${secret}%`]);
+    assert.equal(leakedNotices.length, 0);
+  });
+
+  it('涉密恢复重检白名单并重新进入冻结审批流程', async () => {
+    await addWhitelist(ids.requester);
+    const booking = await createBooking(ids.requester, '涉密恢复审批与白名单重检', {
+      meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL'
+    });
+    assert.equal((await approve(ids.approver, booking.id)).status, 200);
+    assert.equal((await approve(ids.security, booking.id)).status, 200);
+    assert.equal((await approve(ids.admin, booking.id)).status, 200);
+    const released = await server.request(`/api/bookings/${booking.id}/release`, {
+      method: 'POST', headers: { Cookie: session(ids.recoveryManager).cookie }, ...jsonBody({ reason: '涉密异常释放恢复验证' })
+    });
+    assert.equal(released.status, 200, JSON.stringify(await readJson(released.clone())));
+    const appeal = await server.request(`/api/bookings/${booking.id}/usage-appeals`, {
+      method: 'POST', headers: { Cookie: session(ids.requester).cookie }, ...jsonBody({ reason: '涉密异常已核查，申请恢复' })
+    });
+    assert.equal(appeal.status, 201, JSON.stringify(await readJson(appeal.clone())));
+    const appealId = (await readJson(appeal)).appeal.id;
+    const entry = whitelist.get(ids.requester)!;
+    const removed = await server.request(`/api/confidential-whitelist/${entry.id}`, {
+      method: 'DELETE', headers: { Cookie: session(ids.security).cookie }
+    });
+    assert.equal(removed.status, 200);
+    whitelist.delete(ids.requester);
+    const blocked = await server.request(`/api/usage-appeals/${appealId}`, {
+      method: 'POST', headers: { Cookie: session(ids.recoveryManager).cookie },
+      ...jsonBody({ decision: 'RESTORE', note: '白名单撤销后不得恢复' })
+    });
+    assert.equal(blocked.status, 403, JSON.stringify(await readJson(blocked.clone())));
+    assert.equal((await readJson(blocked)).error, 'CONFIDENTIAL_WHITELIST_REQUIRED');
+    assert.equal((await readBooking(booking.id)).status, 'CANCELLED');
+    await addWhitelist(ids.requester);
+    const restored = await server.request(`/api/usage-appeals/${appealId}`, {
+      method: 'POST', headers: { Cookie: session(ids.recoveryManager).cookie },
+      ...jsonBody({ decision: 'RESTORE', note: '准入恢复后按原流程重审' })
+    });
+    assert.equal(restored.status, 200, JSON.stringify(await readJson(restored.clone())));
+    const restoredBooking = (await readJson(restored)).booking as Booking;
+    assert.equal(restoredBooking.status, 'PENDING');
+    assert.equal(restoredBooking.currentNodeIndex, 0);
+    assert.deepEqual(restoredBooking.approvalHistory, []);
+    assert.deepEqual(restoredBooking.approvalWorkflow?.map(node => node.approverRole), ['APPROVAL_ADMIN', 'SECURITY_ADMIN', 'SYSTEM_ADMIN']);
+    assert.equal((await approve(ids.approver, booking.id)).status, 200);
+    assert.equal((await approve(ids.security, booking.id)).status, 200);
+    assert.equal((await approve(ids.admin, booking.id)).status, 200);
   });
 
   it('白名单撤销后最终核准被阻断且不伪造核准历史', async () => {

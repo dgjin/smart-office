@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { Booking, User } from '../types.ts';
 import type { OfficeDb } from '../server/tools.ts';
 import {
-  assertConfidentialWhitelist, bookingNoticePurpose, canReadBookingDetails,
+  assertConfidentialOperation, assertConfidentialWhitelist, bookingNoticePurpose, canReadBookingDetails,
   getActorDbView, rebuildConfidentialAccessGrants, redactBooking
 } from '../server/confidentiality.ts';
 
@@ -12,6 +12,7 @@ const attendee: User = { id: 'u2', name: '参会人', email: 'u2@company.com', r
 const security: User = { id: 'sec1', name: '保密员', email: 'sec@company.com', role: ['SECURITY_ADMIN'], department: '保密办' };
 const admin: User = { id: 'admin', name: '管理员', email: 'admin@company.com', role: ['SYSTEM_ADMIN'], department: '信息技术部' };
 const approver: User = { id: 'ap1', name: '审批员', email: 'ap@company.com', role: ['APPROVAL_ADMIN'], department: '行政部' };
+const coordinator: User = { id: 'svc1', name: '会务员', email: 'svc@company.com', role: ['SERVICE_COORDINATOR'], department: '行政部' };
 
 const confidential = (overrides: Partial<Booking> = {}): Booking => ({
   id: 'secret-1', userId: requester.id, resourceId: 'r1', type: 'ROOM', startTime: '2026-11-23T02:00:00.000Z',
@@ -23,7 +24,7 @@ const confidential = (overrides: Partial<Booking> = {}): Booking => ({
 });
 
 const makeDb = (): OfficeDb => ({
-  users: [requester, attendee, security, admin, approver],
+  users: [requester, attendee, security, admin, approver, coordinator],
   resources: [{ id: 'r1', name: '会议室', type: 'ROOM', capacity: 10, location: '主楼 10层', features: [], status: 'AVAILABLE' }],
   departments: [{ id: 'd1', name: '市场部' }],
   bookings: [confidential()], workOrders: [{ id: 'wo1', bookingId: 'secret-1', type: 'TEA', title: '涉密会议茶水服务', assigneeRole: 'SERVICE_COORDINATOR', status: 'TODO', createdAt: '2026-11-20T01:00:00.000Z' }]
@@ -49,14 +50,23 @@ test('脱敏读模型仅保留冲突和日程所需字段，工单按角色保�
   assert.equal(redacted.userId, '');
   assert.equal(redacted.resourceId, 'r1');
   assert.deepEqual(redacted.attendeeIds, []);
-  assert.deepEqual(redacted.overlapParticipantIds?.sort(), [requester.id, attendee.id].sort());
+  assert.deepEqual(redacted.overlapParticipantIds, []);
+  assert.equal(JSON.stringify(redacted).includes(requester.id), false);
+  assert.equal(JSON.stringify(redacted).includes(attendee.id), false);
   assert.equal(redacted.contactSnapshot, undefined);
   assert.equal(redacted.approvalRuleSetVersion, undefined);
   assert.equal(redacted.approvalSubmittedAt, undefined);
+  const normalRedacted = redactBooking(confidential({
+    meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL', overlapParticipantIds: undefined
+  }));
+  assert.deepEqual(normalRedacted.overlapParticipantIds?.sort(), [requester.id, attendee.id].sort());
 
   const view = getActorDbView(db, admin);
   assert.equal(view.bookings![0].purpose, '已预约');
-  assert.equal(view.workOrders!.length, 0);
+  assert.equal(view.workOrders!.length, 1);
+  const coordinatorView = getActorDbView(db, coordinator);
+  assert.equal(coordinatorView.bookings![0].purpose, '已预约');
+  assert.equal(coordinatorView.workOrders!.length, 1);
   const requesterView = getActorDbView(db, requester);
   assert.equal(requesterView.bookings![0].purpose, '已预约');
   assert.equal(requesterView.workOrders!.length, 0);
@@ -65,6 +75,17 @@ test('脱敏读模型仅保留冲突和日程所需字段，工单按角色保�
   assert.equal(authorizedRequesterView.bookings![0].purpose, '敏感项目正文');
   assert.equal(authorizedRequesterView.workOrders!.length, 1);
   assert.equal(getActorDbView(db, attendee).workOrders!.length, 0);
+});
+
+test('涉密写操作复用读取授权，管理员角色本身不构成专用授权', () => {
+  const db = makeDb();
+  const booking = db.bookings![0];
+  assert.throws(() => assertConfidentialOperation(db, booking, admin), (error: any) => error.code === 'CONFIDENTIAL_OPERATION_FORBIDDEN' && error.status === 403);
+  rebuildConfidentialAccessGrants(db, [booking], requester.id);
+  assert.doesNotThrow(() => assertConfidentialOperation(db, booking, requester));
+  assert.doesNotThrow(() => assertConfidentialOperation(db, booking, security));
+  assert.throws(() => assertConfidentialOperation(db, booking, admin), (error: any) => error.code === 'CONFIDENTIAL_OPERATION_FORBIDDEN');
+  assert.doesNotThrow(() => assertConfidentialOperation(db, { ...booking, meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL' }, admin));
 });
 
 test('白名单同时约束申请人与全部参会人', () => {

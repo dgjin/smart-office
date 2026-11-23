@@ -29,15 +29,17 @@
 - 管理：`USERS`、`ROLES`、`DEPARTMENTS`、`REPORTS`、`WORKFLOW_CONFIG`、`DEVICES`、`DATA_CENTER`。
 - 保密：`CONFIDENTIALITY`。
 
-前端 `App.tsx` 和服务端 `server/tools.ts` 分别根据当前用户角色、审批职责、有效代理和实际工单职责计算可见视图。助手 `NAVIGATE` 只允许上述固定值，并在前后端重复校验。
+前端 `App.tsx` 和服务端 `server/tools.ts` 分别根据当前用户角色、审批职责、有效代理和实际工单职责计算可见视图。助手 `NAVIGATE` 只允许上述固定值，并在前后端重复校验。成员新增和编辑会规范化角色数组并去重，保存完整多角色集合，不能只保留当前操作涉及的单个角色。
 
 ### 2.2 数据可见性
 
 `server/confidentiality.ts` 的 `getActorDbView` 是助手和部分读接口的权限化读模型：
 
 - 普通预约详情向申请人、参会人、授权审批人、相关会务角色和系统管理员开放。
-- 无权读取的预约保留占用事实，但清除用途、人员、联系人、审批、服务、签到和其他敏感字段。
-- 涉密预约还需 confidential access grant、申请人/参会人身份、保密角色或有效审批范围。
+- 无权读取的预约保留占用事实，但清除用途、人员、联系人、审批、服务、签到和其他敏感字段；涉密不可见读模型的 `userId`、`attendeeIds` 和 `overlapParticipantIds` 均为空，不能泄露申请人或参会人 ID。
+- 普通预约仍保留去重后的 `overlapParticipantIds` 投影，用于参会冲突提示，不因此开放完整预约详情。
+- 涉密预约还需 confidential access grant、申请人/参会人身份、保密角色或有效审批范围；系统管理员身份本身不自动获得涉密读取或直接写操作权限。
+- `GET /api/workspace` 等轮询读取不记录 `CONFIDENTIAL_READ`；用户主动展开详情时，前端调用 `POST /api/bookings/:id/confidential-read`，服务端重检涉密读取权限并以 `source=BOOKING_DETAIL` 审计。
 - 工单按申请人、系统管理员、负责角色及涉密读取权限过滤。
 
 ## 3. 表现层详细设计
@@ -51,13 +53,24 @@
 - 管理新建、修改、长期续期的正式预约表单及 prefill。
 - 分发助手固定动作，不执行模型给出的 URL、脚本或任意请求。
 - 挂载 `HelpDrawer` 和 `ChatDock`，在二者之间传递智能帮助问题。
+- 工作区每 10 秒轮询；`operationRequestRef` 防止同一身份请求重入，`operationOwnerRef` 隔离身份切换前后的响应，`document.hidden` 或浏览器离线时跳过本轮。
+- `ChatDock`、`HelpDrawer` 和 `OperationsReports` 使用 `React.lazy` 按需加载，不改变其权限检查或业务步骤。
 
 资源管理采用逐项会话锁：默认全部锁定，只有当前会话明确解锁的资源可以编辑或删除；重新加载或身份变化后重新锁定。锁只是防误操作措施，服务端仍执行真实权限和关联约束检查。
 
-### 3.2 帮助抽屉
+### 3.2 品牌主题与偏好
+
+- 主应用根节点通过 `data-theme` 选择 CSS 变量和局部覆盖；`coamc`“东方蓝”使用白色品牌侧栏、`#00427f` 选中导航、`#003366` 深蓝标题及冷灰工作区，原五套主题保留并可随时互换。东方蓝品牌区加载 `/images/china-orient-logo-horizontal.png` 的真实中国东方横式中文简称组合标志，展开态显示完整图片，折叠态通过同一透明图片仅显示左侧图形标；图片替代文本为“中国东方”，不增加远程品牌资源。
+- 桌面入口位于侧栏底部“界面风格”，移动端位于“更多 → 界面主题”；二者遍历同一 `THEMES` 配置并更新同一状态，移动端六主题使用三列布局。
+- `tailwind.config.js` 的 safelist 包含 `coamc` 动态色阶，生产构建会生成主题色按钮等状态类；品牌样式仅使用现有同源 Noto Sans SC，不增加远程图片、字体或脚本依赖。
+- `server/preferences.ts` 只接受白名单主题，`GET/PUT /api/preferences` 继续将主题和侧栏状态写入既有 MySQL 用户偏好表，无需新增迁移。品牌覆盖不改变登录页、独立门口屏、业务规则或权限边界。
+- 主应用向总部楼层 3D 和空间资源库内嵌剖切的 iframe 传递白名单 `theme` 参数：`coamc` 启用同源中国东方横式标志、白色面板、东方蓝交互态和深海蓝模型背景，其余五套主题统一使用 `classic` 保留原 3D 外观。Three.js 房间类别色、空间状态色、资源映射和交互不随品牌主题改变。主应用 3D 容器的负边距随桌面、平板和手机断点匹配实际内容内边距，375px 视口下 iframe 保持 375px，不裁切模型边缘标签。
+
+### 3.3 帮助抽屉
 
 `components/HelpDrawer.tsx` 与 `helpCatalog.ts` 共同实现：
 
+- 唯一帮助入口固定在主内容顶部栏，桌面和移动端均可打开；智办助手保留独立浮动入口。
 - 按当前角色和可见视图过滤主题。
 - 支持“全部、会议与空间、流程与会务、系统管理”分类。
 - `searchHelpTopics` 对标题、关键词、摘要和步骤评分并排序。
@@ -66,7 +79,7 @@
 - 打开后聚焦搜索框，Tab/Shift+Tab 约束焦点，Escape 关闭并返回触发按钮。
 - 桌面为右侧抽屉，移动端全宽；主要触控目标至少 44px，并支持 reduced-motion。
 
-### 3.3 运营看板
+### 3.4 运营看板
 
 `OperationsReports.tsx` 默认显示“管理看板”，可切换到“明细与对账”。两个视图使用同一次 `/api/reports` 返回的 `OperationsReport`：
 
@@ -74,6 +87,13 @@
 - 图表使用内联 SVG，直接标注数值，提供标题、说明、空状态和可展开数据表。
 - 趋势图例合计直接使用 `report.overall.scheduledHours/actualHours`，避免逐日四舍五入造成总计偏差。
 - 筛选、CSV/XLSX 导出和原明细对账保持不变。
+- 导出请求必须携带当前页面 `report.revision`；缺失或非法时返回 `400 REPORT_REVISION_REQUIRED`，与服务端当前快照不一致时返回 `409 REPORT_SNAPSHOT_CHANGED`。前端收到快照变化后重新加载报表，提示用户基于最新快照重新导出。
+
+### 3.5 助手输入与运行优化
+
+- ChatDock 发送快捷键同时检查 `!event.nativeEvent.isComposing` 和 `event.keyCode !== 229`，中文 IME 组合输入期间按 Enter 不误发送。
+- 打开 ChatDock 后聚焦输入框，Tab/Shift+Tab 约束焦点，Escape 关闭，关闭后焦点返回触发元素；关闭与发送按钮至少 44×44px，移动端输入框至少 44px 高并使用 16px 字号。
+- `public/hq3d.html` 在 `document.hidden` 时取消当前 RAF，页面恢复可见后继续请求下一帧，减少隐藏页面的无效渲染。
 
 ## 4. HTTP 接口设计
 
@@ -85,13 +105,14 @@
 - 错误使用稳定业务错误码和适当 HTTP 状态；前端不得把网络失败显示成业务成功。
 - 写操作在服务端重检 actor、资源状态、排期版本、审批范围或负责角色。
 - 涉密字段在响应生成前裁剪，不能依赖前端隐藏。
+- 生产样式由 `styles.css` 的 Tailwind/PostCSS 指令在构建期生成，`index.html` 使用同源 `/vendor/fonts/fonts.css`；`server/http.ts` 的 CSP 以 `default-src 'self'` 为基础，主应用脚本、字体和连接均同源，不配置 Tailwind CDN 或 Google Fonts 运行时依赖。
 
 ### 4.2 核心路由分组
 
 | 分组 | 主要接口 | 设计职责 |
 |---|---|---|
 | 工作区 | `GET /api/workspace`、`GET /api/dashboard`、`GET /api/exceptions` | 权限化工作区、角色驾驶舱、异常聚合 |
-| 预约 | `POST /api/bookings`、`POST /api/bookings/batch` 及预约动态路由 | 新建、批量/长期、修改、审批、取消、签到、续期、ICS 等固定领域动作 |
+| 预约 | `POST /api/bookings`、`POST /api/bookings/batch`、`POST /api/bookings/:id/confidential-read` 及预约动态路由 | 新建、批量/长期、修改、审批、取消、签到、续期、ICS、主动涉密详情读取审计等固定领域动作 |
 | 报表 | `GET /api/reports`、`GET /api/reports/export` | 同一权限化报表快照及 CSV/XLSX 导出 |
 | 助手 | `GET/PUT /api/agent/conversation`、`GET /api/agent/status`、`POST /api/agent/chat`、`POST /api/agent/action` | 会话恢复、SSE 对话、固定确认动作 |
 | 通知待办 | `GET/PATCH /api/notifications`、`GET /api/todos` | 按用户路由的通知和待办 |
@@ -116,17 +137,17 @@
 | 预约 `BookingStatus` | `PENDING/APPROVED/REJECTED/COMPLETED/CANCELLED` | 持久业务状态 |
 | 预约展示状态 | `PENDING/UPCOMING/IN_PROGRESS/NO_SHOW/RELEASED/ENDED_EARLY/COMPLETED/CANCELLED/REJECTED` | 由持久状态、当前时间和使用事实派生，不另建冲突事实 |
 | 工单 `WorkOrderStatus` | `TODO/PENDING_INFO/IN_PROGRESS/DONE/CANCELLED/EXCEPTION` | 记录状态历史、处理人、成本和快照 |
-| 使用申诉 | `PENDING/RESTORED/REJECTED` | 处理 no-show 或释放争议 |
+| 使用申诉 | `PENDING/RESTORED/REJECTED` | 仅处理 no-show、确认未使用或人工异常释放争议；主动取消不可申诉 |
 | 门禁授权 | `PENDING/AUTHORIZED/REVOKED` | 与预约和排期版本关联 |
 | 定时任务/Outbox | 待执行、执行中、完成、失败等持久状态 | 通过租约、重试和幂等键推进 |
 
 ### 5.2 快照和版本
 
-- `Booking.scheduleVersion` 在改期时递增，异步提醒、no-show、工单和集成事件按版本失效或重建。
+- `Booking.scheduleVersion` 在改期时递增，异步提醒、正常完成、no-show、工单和集成事件按版本失效或重建。
 - 预约提交冻结 `ruleSettingsSnapshot`、审批规则/流程版本、申请部门、资源园区和服务目录快照。
 - `ChatDock` 的 `chatdock_conversations` 以 `user_id` 为主键，保存 `revision` 和 `payload JSON`。
 - 会话 PUT 在事务中读取当前行并 `FOR UPDATE`，客户端 revision 不一致时返回 `409 CONVERSATION_CONFLICT`。
-- 核心办公快照也有独立版本/CAS；3D 房间资料采用单行细粒度写入，避免整库快照重写。
+- 核心办公快照也有独立版本/CAS；`GET /api/reports` 返回的 `report.revision` 标识页面数据快照，CSV/XLSX 导出必须回传同一版本；3D 房间资料采用单行细粒度写入，避免整库快照重写。
 
 ## 6. 资源与总部 3D 设计
 
@@ -142,6 +163,9 @@
 ### 6.2 3D 映射与同步
 
 - `public/hq3d.html` 使用 Three.js 0.160，自托管依赖和字体。
+- 礼堂/报告厅由 `public/hq3d-auditorium.js` 的 `planAuditoriumLayout(width, depth)` 计算局部坐标。主席台宽度取房间宽度的 78%，深度按 16% 并设边界；扣除台前通道和后侧余量后，以 0.86m 列距、1.05m 排距及两侧座位区计算行列，中央过道随宽度取 0.8–1.25m。座位区块在剩余深度内居中，最多 320 座。
+- 渲染层只在 `meeting` 类别且名称包含“礼堂”或“报告厅”时进入专用分支，保留原 UID、类别、点击、状态和资源映射。主席台、讲台、主席桌椅、投屏和观众椅仍写入楼层共享盒子/柱体数组，由既有 InstancedMesh 合批；视觉座位数不回写资源容量或预约规则。
+- 独立 3D 页在宽度不超过 900px 时，以底部功能抽屉顶边作为取景区域下界，单层模型完整呈现在抽屉上方；楼栋、楼层、房间选择和缩放交互保持不变。
 - 主楼 20 层和南配楼 4 层来自持久布局；每间房使用显式稳定 UID。
 - 布局重复初始化执行 UPSERT，移除空间差异停用，不删除历史资料和维护记录。
 - 空间资源库与 3D 通过 `resourceId—roomUid` 显式一对一映射共享状态，不按名称模糊匹配。
@@ -165,7 +189,7 @@
 9. 按自然日拆分并核算申请部门日净额度。
 10. 冻结规则版本和规则快照，再进入审批及持久化流程。
 
-批量中的前一项会参与后一项冲突和额度计算，避免同一批次内部双订或超额。
+批量中的前一项会参与后一项冲突和额度计算，避免同一批次内部双订或超额。提前结束的完成预约按 `actualEndTime` 重算部门日额度，正常完成及其他计划内预约仍使用计划 `endTime`。
 
 ### 7.2 新建、修改与续期
 
@@ -189,8 +213,10 @@
 - `meetingType=CONFIDENTIAL` 与 `confidentialityChoice=CONFIDENTIAL` 必须一致。
 - 申请人和全部参会人必须在涉密白名单内，否则拒绝提交。
 - 重建访问授权时保留申请人、参会人和保密管理员权限，并记录授权人和时间。
-- 无权限用户只看到资源占用，不看到真实用途、人员、会务、签到和审批信息。
+- 无权限用户只看到资源占用，不看到真实用途、人员、会务、签到和审批信息；人员 ID 及涉密人员冲突投影也从不可见读模型移除。
 - 通知、报表和助手回答中的涉密用途统一显示为“涉密会议”。
+- 涉密直接写操作通过 `assertConfidentialOperation` 复用 `canReadConfidentialBooking` 的专用读取授权；系统管理员角色本身不是放行条件。具体涉密工单/巡查的责任人履约是唯一最小权限例外，只开放服务执行必需信息，不因此获得完整预约读取或其他涉密写操作权限。
+- 参会变更授权可针对 `PENDING` 或 `APPROVED` 涉密预约签发；`ATTENDEE_CHANGE` 为一次授权，匹配变更成功后写入 `usedAt` 并重新进入审批。`DECLASSIFY` 仍要求两名不同授权人，申请人自授权被阻断。
 - 白名单和变更授权只能在正式保密管理页面操作，助手只提供指南和导航。
 
 ## 9. 会务服务与工单设计
@@ -198,19 +224,23 @@
 - 服务需求按类型去重，字段值、备注长度和必填条件在提交时校验。
 - `freezeServiceRequirements` 冻结目录项 ID、版本、名称、字段模板、负责角色、SLA、重服务和可取消属性。
 - 后续目录变更不悄然改写历史预约；修改草案跨刷新恢复时也保留历史目录快照。
-- 工单由核准预约、服务目录和排期版本驱动；状态变化保留处理记录。
+- 工单由核准预约、服务目录和排期版本驱动；状态变化保留处理记录。资源派单依次按显式资源、园区、楼栋匹配责任区，最终兜底 `area-default`；该区只包含未进入自定义责任区的会议室。
 - 服务角色包括系统管理员、审批管理员、服务协调、前台以及实际自定义工单负责角色。
-- 工单完成可经助手卡片确认，但 `/api/agent/action` 仍检查负责角色、当前状态和预约权限。
-- 服务成本、备料数量和状态进入正式运营报表；涉密工单先经过涉密读取过滤。
+- 工单完成可经助手卡片确认，但 `/api/agent/action` 仍检查负责角色和当前状态；涉密工单责任人只能完成该具体工单，不能借此读取完整预约。
+- 服务成本、备料数量和状态进入正式运营报表。涉密工单与巡查按具体责任范围开放，工作区继续通过脱敏预约隐藏主题、人员、联系人和非履约必需字段；申请人补录、无关会务角色及其他涉密写操作仍按原专用授权校验。
 
 ## 10. 签到、使用事实与异常设计
 
-- 申请人和参会人均可在有效窗口签到；助手预检统一为会前 15 分钟，会议结束后禁止签到。
+- 申请人和参会人的签到及使用确认窗口均为 `startTime - 15min <= now < endTime`；仅 `APPROVED` 预约可确认使用，计划结束后不能补做。
+- 使用确认选择 `UNUSED` 时必须填写说明，并调用 `assertCancellationAuthorized` 复用取消授权，不能借确认未使用绕过取消权限。
 - 签到事件支持签到和撤销，按人员保留当前有效事件。
 - 实际使用事实独立保存实际开始、结束、时长和来源，预约冗余字段用于展示但以对账事实为准。
-- 提前结束计算实际结束与计划结束的差异；no-show 按当前排期版本自动释放。
+- `completeBookingNormally` 只处理已签到、仍为 `APPROVED` 且已到计划结束的预约，将状态设为 `COMPLETED`，清除提前结束标记，并把 `actualEndTime` 和 `accessRevokedAt` 设为计划 `endTime`；SYSTEM 使用事实与提前结束、no-show 分开记录。
+- 提前结束按实际操作时间记录实际结束并计算与计划结束的差异；no-show 按当前排期版本自动释放。
+- 签到、使用确认、人工释放、使用申诉创建/处理和提前结束等涉密直接写路径均执行涉密操作守卫；工单与巡查使用具体责任范围的最小履约权限，不扩展为完整预约读取权。
 - 取消、驳回、未签到释放、确认未使用、提前结束和正常使用在报表中分别归类。
-- 使用申诉和人工异常释放只能由授权角色在正式流程处理，并保留原因、通知和审计。
+- 只有本人 `CANCELLED` 且 `releaseType` 为 `NO_SHOW`、`MANUAL_EXCEPTION` 或 `UNUSED_CONFIRMED` 的预约可以申诉，主动取消的 `CANCELLED` 释放类型不可申诉；人工异常释放和申诉处理只能由授权角色在正式流程执行，并保留原因、通知和审计。
+- 恢复前重检结束时间、资源状态、资源与申请人冲突、部门额度和涉密白名单，递增 `scheduleVersion` 并重建访问授权。原冻结审批流程为空才恢复 `APPROVED` 并重建工单、使用事实及预约任务；流程非空则恢复 `PENDING`、回到首节点、清空旧审批历史并只重建审批任务，核准前不提前创建新工单、提醒或 no-show。
 
 ## 11. 报表与导出设计
 
@@ -229,7 +259,9 @@
 - 平均审批时长只统计已完成最终审批的申请。
 - 计划/实际趋势按会议本地开始日期归集，总计使用整体汇总值。
 - `get_usage_stats` 是助手简化聚合，不替代正式报表。
-- CSV/XLSX 对 `= + - @` 等公式前缀进行电子表格注入防护。
+- 正常完成在使用维度归类为“正常使用”，对账一致时显示“一致”；提前结束、未签到释放、确认未使用、已取消和待确认使用分别归类。
+- 对账还区分“未到使用结算”“待结算”“事实异常”“使用事实缺口”“签到事实缺口”“提前结束”“无需使用事实”“待确认实际使用”“未签到释放”等状态，不用单一完成状态覆盖使用事实差异。
+- CSV/XLSX 导出必须带页面 `report.revision`，缺失或非法返回 `400 REPORT_REVISION_REQUIRED`，快照变化返回 `409 REPORT_SNAPSHOT_CHANGED`；导出文件对 `= + - @` 等公式前缀进行电子表格注入防护。
 
 ## 12. 智能助手详细设计
 
@@ -237,6 +269,7 @@
 
 - DeepSeek `deepseek-chat`，最多 6 轮工具调用、20 条历史消息、单条输入 4000 字符。
 - `/api/agent/chat` 使用 SSE，15 秒 heartbeat；`/api/agent/status` 返回模型和流式能力状态。
+- DeepSeek 默认超时为 60 秒，可由调用选项或环境配置调整；`withLlmRequest` 组合内部 `AbortController`、外部 signal 和定时器。流式请求 abort 时执行 `reader.cancel()`，`server/agent.ts` 监听 `req.aborted` 和 `res.close`，把客户端断开传播到 Agent 和上游调用。
 - 具体资源、时间、人员、预约、审批、工单和统计必须先调用工具，不依赖模型记忆作答。
 - 新预约要求明确用途和正整数人数，不自动编造参会人，不用“会议/开会”替代真实用途。
 - 未匹配或同名歧义参会人明确报错，不静默丢弃。
@@ -283,7 +316,8 @@
 
 ## 13. 异步任务、集成与审计
 
-- Node 启动 Job Worker，`reconcileJobs` 补齐提醒、审批升级/关闭、会前提醒、签到提醒、no-show、服务 SLA 和巡查任务。
+- Node 启动 Job Worker，`reconcileJobs` 补齐提醒、审批升级/关闭、会前提醒、签到提醒、`BOOKING_COMPLETION`、no-show、服务 SLA 和巡查任务。
+- 正常完成任务 key 为 `completion:<bookingId>:v<scheduleVersion>`，只处理已到计划结束、仍为 `APPROVED` 且已签到的预约；事务状态重检、确定性通知 ID 和版本检查共同保证幂等，旧排期版本任务安全失效。
 - 任务和 Outbox 使用 `FOR UPDATE SKIP LOCKED`、worker 租约、过期恢复和指数退避。
 - 执行前重查当前预约状态、审批节点和排期版本，避免旧任务修改新排期。
 - 通知和外部事件使用确定性 key 去重，失败进入可观测的重试或死信状态。
@@ -297,6 +331,9 @@
 - 冲突、额度、状态和权限在提交时重检，不能仅依赖打开表单时的查询结果。
 - 会话和核心快照使用版本控制；过期客户端收到冲突，不覆盖新版本。
 - 前端刷新失败后保留可见错误，不能把部分成功显示为全部刷新成功。
+- 普通 `mutateDb` 比较变更前后集合、预约和通知内容，仅写实际变化行或集合；`replaceBookings` 仍先删除再全量重建预约投影，不能将其误当作增量路径。
+- 通知列表直接查询 `notifications` 关系表并按当前用户或 `sys` 路由过滤；定向通知使用原 `is_read`，广播通过 `notification_read_states(notification_id,user_id)` 计算当前用户已读状态。标记已读保留 `GET_LOCK('smart_office_write', 10)` 和事务，定向通知只更新本人行，广播使用幂等 `INSERT IGNORE`，但不读取或推进核心快照 revision，也不写重复 Outbox。迁移 `017_notification_read_path.sql` 增加 `(user_id, timestamp, id)` 索引；`018_notification_read_states.sql` 建立广播按用户已读表，并被列为必需迁移。
+- native restore 在启动 `mysql` 前验证非空 SQL、`${inputPath}.sha256`、侧车内原始文件名与实际 SHA-256；恢复命令还要求 `SMART_OFFICE_RESTORE_CONFIRM === DATABASE_NAME`，显式确认覆盖目标库。
 - 数据库没有自动 down migration；应用回滚与数据库恢复分开处理，旧应用不得直接承接不兼容新库写入。
 
 ## 15. 测试设计与同步门禁
@@ -306,4 +343,5 @@
 - Chrome E2E 覆盖帮助角色过滤、智能帮助、焦点恢复、修改草案跨刷新、历史会务快照以及“只打开正式表单不落库”。
 - 浏览器和集成写测试必须显式启用 `SMART_OFFICE_TEST_MYSQL=true`，且数据库名以 `smart_office_test_` 开头。
 - 每次功能变化同步架构、详细设计、用户手册、`helpCatalog.ts`、帮助抽屉、助手工具/提示词/动作及对应测试。
-- 本地工程证据不替代正式 P9-03、企业安全、生产恢复、真实外部联调、责任方签字、UAT、培训、灰度和稳定观察。
+- 本地工程证据不替代正式 P9-03、企业安全、真实 OA/日历/门禁联调、生产恢复及责任方签认、UAT、培训、灰度和稳定观察。
+- 真机、真实中文 IME、读屏、企业浏览器和低端设备能耗需要外部现场验收，本地 Chrome、移动视口模拟和自动化测试不能替代。

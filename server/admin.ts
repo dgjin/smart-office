@@ -390,7 +390,7 @@ export const createConfidentialityAuthorization = async (bookingId: string, inpu
   assertConfidentialityManager(db.users || [], actorId);
   const booking = (db.bookings || []).find(item => item.id === bookingId);
   if (!booking) throw new DbError('BOOKING_NOT_FOUND', 404);
-  if (!isConfidentialBooking(booking) || booking.status !== 'PENDING') throw new DbError('CONFIDENTIAL_BOOKING_NOT_EDITABLE', 409);
+  if (!isConfidentialBooking(booking) || !['PENDING', 'APPROVED'].includes(booking.status)) throw new DbError('CONFIDENTIAL_BOOKING_NOT_EDITABLE', 409);
   if (booking.userId === actorId) throw new DbError('CONFIDENTIAL_SELF_AUTHORIZATION', 403);
   if (!['DECLASSIFY', 'ATTENDEE_CHANGE'].includes(input?.action)) throw new DbError('INVALID_CONFIDENTIALITY_ACTION', 400);
   const authorization: ConfidentialityAuthorization = {

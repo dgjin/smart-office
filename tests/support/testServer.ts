@@ -60,7 +60,7 @@ export const resetTestDb = async () => {
   const db = await connection();
   try {
     await db.query('SET FOREIGN_KEY_CHECKS = 0');
-    for (const table of ['oidc_auth_requests', 'user_identities', 'sessions', 'user_preferences', 'chatdock_conversations', 'scheduled_jobs', 'outbox_events', 'audit_events', 'notifications', 'bookings', 'office_state']) {
+    for (const table of ['oidc_auth_requests', 'user_identities', 'sessions', 'user_preferences', 'chatdock_conversations', 'scheduled_jobs', 'outbox_events', 'audit_events', 'notification_read_states', 'notifications', 'bookings', 'office_state']) {
       await db.query(`DELETE FROM ${table}`);
     }
     await db.query('SET FOREIGN_KEY_CHECKS = 1');

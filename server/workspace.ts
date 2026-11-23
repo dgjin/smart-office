@@ -1,4 +1,4 @@
-import { readSnapshot } from './db.ts';
+import { DbError, readDb, readSnapshot } from './db.ts';
 import type { User } from '../types.ts';
 import { getCurrentRuleSettings } from '../utils/resourceDomain.ts';
 import { recordAudit } from './audit.ts';
@@ -11,14 +11,6 @@ export const getWorkspace = async (actor: User) => {
   const isAdmin = actor.role.includes('SYSTEM_ADMIN');
   const canManageConfidentiality = isAdmin || actor.role.includes('SECURITY_ADMIN');
   const view = getActorDbView(db, actor);
-  const confidentialReads = (db.bookings || []).filter(booking => isConfidentialBooking(booking) && canReadBookingDetails(db, booking, actor));
-  await Promise.all(confidentialReads.map(booking => recordAudit({
-    actorId: actor.id,
-    action: 'CONFIDENTIAL_READ',
-    entityType: 'BOOKING',
-    entityId: booking.id,
-    details: { source: 'WORKSPACE' }
-  })));
   const users = (db.users || []).map(user => isAdmin ? user : {
     ...user,
     landline: undefined,
@@ -39,10 +31,7 @@ export const getWorkspace = async (actor: User) => {
     serviceCatalog: db.serviceCatalog || [],
     serviceAreas: canManageServiceOperations(actor) ? db.serviceAreas || [] : undefined,
     serviceShifts: canManageServiceOperations(actor) ? db.serviceShifts || [] : undefined,
-    serviceInspections: canManageServiceOperations(actor) ? (db.serviceInspections || []).filter(inspection => {
-      const booking = (db.bookings || []).find(item => item.id === inspection.bookingId);
-      return !booking || canReadBookingDetails(db, booking, actor);
-    }) : undefined,
+    serviceInspections: canManageServiceOperations(actor) ? db.serviceInspections || [] : undefined,
     checkInEvents: (db.checkInEvents || []).filter(event => {
       const booking = (db.bookings || []).find(item => item.id === event.bookingId);
       return booking && canReadBookingDetails(db, booking, actor);
@@ -59,7 +48,7 @@ export const getWorkspace = async (actor: User) => {
     }),
     confidentialWhitelist: canManageConfidentiality ? db.confidentialWhitelist || [] : undefined,
     confidentialAuthorizationTargets: canManageConfidentiality ? (db.bookings || [])
-      .filter(booking => booking.status === 'PENDING' && isConfidentialBooking(booking))
+      .filter(booking => ['PENDING', 'APPROVED'].includes(booking.status) && isConfidentialBooking(booking))
       .map(booking => ({
         id: booking.id,
         userId: booking.userId,
@@ -75,4 +64,20 @@ export const getWorkspace = async (actor: User) => {
     ruleSettings: getCurrentRuleSettings(db.ruleVersions),
     revision
   };
+};
+
+export const recordConfidentialBookingRead = async (actor: User, bookingId: string) => {
+  const db = await readDb();
+  const booking = (db.bookings || []).find(item => item.id === bookingId);
+  if (!booking) throw new DbError('BOOKING_NOT_FOUND', 404);
+  if (!isConfidentialBooking(booking)) throw new DbError('CONFIDENTIAL_READ_NOT_APPLICABLE', 400);
+  if (!canReadBookingDetails(db, booking, actor)) throw new DbError('CONFIDENTIAL_READ_FORBIDDEN', 403);
+  await recordAudit({
+    actorId: actor.id,
+    action: 'CONFIDENTIAL_READ',
+    entityType: 'BOOKING',
+    entityId: booking.id,
+    details: { source: 'BOOKING_DETAIL' }
+  });
+  return { recorded: true };
 };

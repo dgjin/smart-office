@@ -1,12 +1,14 @@
 import crypto from 'node:crypto';
 import type { Booking, Notification, UsageAppeal, User } from '../types.ts';
+import { getApprovalRecipients } from '../utils/approval.ts';
+import { addApprovalWorkingMinutes } from '../utils/approvalSchedule.ts';
 import { findBookingConflicts, findRequesterConflicts, isResourceAcceptingBookings } from '../utils/bookingRules.ts';
 import { getCurrentRuleSettings } from '../utils/resourceDomain.ts';
 import { mutateDb } from './db.ts';
 import { DbError } from './errors.ts';
 import { BookingRuleError, buildBookingQuotaDetails } from './bookingService.ts';
-import { bookingNoticePurpose } from './confidentiality.ts';
-import { canManageServiceOperations, createBookingWorkOrders, ensureServiceDomain } from './serviceDomain.ts';
+import { assertConfidentialOperation, assertConfidentialWhitelist, bookingNoticePurpose, rebuildConfidentialAccessGrants } from './confidentiality.ts';
+import { assertCancellationAuthorized, canManageServiceOperations, createBookingWorkOrders, ensureServiceDomain } from './serviceDomain.ts';
 import { completeBookingUsage, recordCheckIn, releaseBooking, upsertUsageFact, type CheckInInput } from './usageDomain.ts';
 
 const notice = (userId: string, title: string, content: string, type: Notification['type'] = 'INFO'): Notification => ({
@@ -28,6 +30,7 @@ export const releaseBookingByActor = async (actor: User, bookingId: string, inpu
   if (!canManageServiceOperations(actor)) throw new DbError('FORBIDDEN', 403);
   const current = (db.bookings || []).find(item => item.id === bookingId);
   if (!current) throw new DbError('BOOKING_NOT_FOUND', 404);
+  assertConfidentialOperation(db, current, actor);
   const reason = typeof input?.reason === 'string' ? input.reason : '';
   const booking = releaseBooking(db, current, { reason, type: 'MANUAL_EXCEPTION', actorId: actor.id, source: 'MANUAL' });
   db.bookings = (db.bookings || []).map(item => item.id === booking.id ? booking : item);
@@ -41,10 +44,18 @@ export const confirmBookingUsage = async (actor: User, bookingId: string, input:
   const current = (db.bookings || []).find(item => item.id === bookingId);
   if (!current) throw new DbError('BOOKING_NOT_FOUND', 404);
   if (current.userId !== actor.id && !canManageServiceOperations(actor)) throw new DbError('FORBIDDEN', 403);
+  assertConfidentialOperation(db, current, actor);
   if (current.status !== 'APPROVED') throw new DbError('BOOKING_NOT_CONFIRMABLE', 409);
   if (!['IN_USE', 'UNUSED'].includes(input?.decision)) throw new DbError('INVALID_USAGE_CONFIRMATION', 400);
   const note = typeof input.note === 'string' ? input.note.trim() : '';
   if (note.length > 500 || (input.decision === 'UNUSED' && !note)) throw new DbError('USAGE_CONFIRMATION_NOTE_REQUIRED', 400);
+  const now = Date.now();
+  if (now < Date.parse(current.startTime) - 15 * 60000 || now >= Date.parse(current.endTime)) {
+    throw new DbError('USAGE_CONFIRMATION_OUTSIDE_WINDOW', 409);
+  }
+  if (input.decision === 'UNUSED') {
+    assertCancellationAuthorized(current, (db.resources || []).find(resource => resource.id === current.resourceId), getCurrentRuleSettings(db.ruleVersions), actor, now);
+  }
   upsertUsageFact(db, current, 'MANUAL');
   db.usageFacts = (db.usageFacts || []).map(fact => fact.bookingId === current.id && fact.scheduleVersion === (current.scheduleVersion || 1)
     ? { ...fact, unusedConfirmation: { status: input.decision, requestedAt: fact.unusedConfirmation?.requestedAt || new Date().toISOString(), confirmedAt: new Date().toISOString(), confirmedBy: actor.id, note } }
@@ -66,7 +77,11 @@ export const createUsageAppeal = async (actor: User, bookingId: string, input: a
   ensureServiceDomain(db);
   const booking = (db.bookings || []).find(item => item.id === bookingId);
   if (!booking) throw new DbError('BOOKING_NOT_FOUND', 404);
-  if (booking.userId !== actor.id || booking.status !== 'CANCELLED' || !booking.releaseType) throw new DbError('BOOKING_NOT_APPEALABLE', 409);
+  if (booking.userId !== actor.id || booking.status !== 'CANCELLED'
+    || !booking.releaseType || !['NO_SHOW', 'MANUAL_EXCEPTION', 'UNUSED_CONFIRMED'].includes(booking.releaseType)) {
+    throw new DbError('BOOKING_NOT_APPEALABLE', 409);
+  }
+  assertConfidentialOperation(db, booking, actor);
   if ((db.usageAppeals || []).some(item => item.bookingId === booking.id && item.status === 'PENDING')) throw new DbError('USAGE_APPEAL_EXISTS', 409);
   const reason = typeof input?.reason === 'string' ? input.reason.trim() : '';
   if (reason.length < 2 || reason.length > 1000) throw new DbError('USAGE_APPEAL_REASON_REQUIRED', 400);
@@ -88,6 +103,7 @@ export const resolveUsageAppeal = async (actor: User, appealId: string, input: a
   if (!resolutionNote || resolutionNote.length > 1000) throw new DbError('USAGE_APPEAL_RESOLUTION_NOTE_REQUIRED', 400);
   const current = (db.bookings || []).find(item => item.id === appeal.bookingId);
   if (!current) throw new DbError('BOOKING_NOT_FOUND', 404);
+  assertConfidentialOperation(db, current, actor);
   let booking = current;
   const restored = input.decision === 'RESTORE';
   if (restored) {
@@ -102,14 +118,22 @@ export const resolveUsageAppeal = async (actor: User, appealId: string, input: a
       if (error instanceof BookingRuleError) throw new DbError(error.code, error.status, error.details);
       throw error;
     }
+    assertConfidentialWhitelist(db, current);
     const restoredAt = new Date().toISOString();
-    const bookingSettings = current.ruleSettingsSnapshot || getCurrentRuleSettings(db.ruleVersions);
+    const settings = getCurrentRuleSettings(db.ruleVersions);
+    const bookingSettings = current.ruleSettingsSnapshot || settings;
+    const requiresApproval = Boolean(current.approvalWorkflow?.length);
     booking = {
       ...current,
-      status: 'APPROVED',
+      status: requiresApproval ? 'PENDING' : 'APPROVED',
       scheduleVersion: (current.scheduleVersion || 1) + 1,
+      currentNodeIndex: requiresApproval ? 0 : current.currentNodeIndex,
+      approvalHistory: requiresApproval ? [] : current.approvalHistory,
+      approvalSubmittedAt: requiresApproval ? restoredAt : current.approvalSubmittedAt,
+      approvalClosedAt: undefined,
+      approvalCloseReason: undefined,
       noShow: false,
-      noShowReleaseNotBefore: new Date(Date.parse(restoredAt) + bookingSettings.noShowReleaseAfterStartMinutes * 60000).toISOString(),
+      noShowReleaseNotBefore: requiresApproval ? undefined : new Date(Date.parse(restoredAt) + bookingSettings.noShowReleaseAfterStartMinutes * 60000).toISOString(),
       releasedAt: undefined,
       releaseReason: undefined,
       releaseType: undefined,
@@ -119,17 +143,32 @@ export const resolveUsageAppeal = async (actor: User, appealId: string, input: a
       actualEndTime: undefined
     };
     db.bookings = (db.bookings || []).map(item => item.id === booking.id ? booking : item);
-    await createBookingWorkOrders(db, booking, { audit, scheduleJob });
-    const startAt = Date.parse(booking.startTime);
+    rebuildConfidentialAccessGrants(db, [booking], actor.id);
     const scheduleVersion = booking.scheduleVersion || 1;
-    const payload = { bookingId: booking.id, scheduleVersion };
-    await scheduleJob({ key: `reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_REMINDER', runAt: new Date(startAt - 15 * 60000), payload });
-    if (booking.type === 'ROOM') {
-      await scheduleJob({ key: `check-in-reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_CHECK_IN_REMINDER', runAt: new Date(startAt + bookingSettings.checkInReminderAfterStartMinutes * 60000), payload });
-      const noShowAt = Math.max(startAt + bookingSettings.noShowReleaseAfterStartMinutes * 60000, Date.parse(booking.noShowReleaseNotBefore!));
-      await scheduleJob({ key: `noshow:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_NO_SHOW', runAt: new Date(noShowAt), payload });
+    if (requiresApproval) {
+      const submittedAt = new Date(booking.approvalSubmittedAt!);
+      const submissionToken = String(submittedAt.getTime());
+      const payload = { bookingId: booking.id, nodeIndex: 0, submittedAt: submittedAt.toISOString() };
+      await scheduleJob({ key: `approval-reminder:${booking.id}:${submissionToken}:0`, type: 'APPROVAL_REMINDER', runAt: addApprovalWorkingMinutes(submittedAt, settings.approvalReminderAfterMinutes, settings), payload });
+      await scheduleJob({ key: `approval-escalation:${booking.id}:${submissionToken}:0`, type: 'APPROVAL_ESCALATION', runAt: addApprovalWorkingMinutes(submittedAt, settings.approvalEscalationAfterMinutes, settings), payload });
+      await scheduleJob({ key: `approval-close:${booking.id}:${submissionToken}`, type: 'APPROVAL_CLOSE', runAt: new Date(Date.parse(booking.startTime) - settings.unapprovedCloseBeforeStartMinutes * 60000), payload: { bookingId: booking.id, submittedAt: submittedAt.toISOString() } });
+      const recipients = getApprovalRecipients(booking, db.workflow || [], {
+        users: db.users || [], resources: db.resources || [], departments: db.departments || [], delegates: db.approvalDelegates || []
+      });
+      db.notifications = [...recipients.map(user => notice(user.id, '恢复预约待重新审批', `${bookingNoticePurpose(booking)}已恢复至首个审批节点。`, 'WARNING')), ...(db.notifications || [])].slice(0, 1000);
+    } else {
+      await createBookingWorkOrders(db, booking, { audit, scheduleJob });
+      const startAt = Date.parse(booking.startTime);
+      const payload = { bookingId: booking.id, scheduleVersion };
+      await scheduleJob({ key: `reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_REMINDER', runAt: new Date(startAt - 15 * 60000), payload });
+      await scheduleJob({ key: `completion:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_COMPLETION', runAt: new Date(booking.endTime), payload });
+      if (booking.type === 'ROOM') {
+        await scheduleJob({ key: `check-in-reminder:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_CHECK_IN_REMINDER', runAt: new Date(startAt + bookingSettings.checkInReminderAfterStartMinutes * 60000), payload });
+        const noShowAt = Math.max(startAt + bookingSettings.noShowReleaseAfterStartMinutes * 60000, Date.parse(booking.noShowReleaseNotBefore!));
+        await scheduleJob({ key: `noshow:${booking.id}:v${scheduleVersion}`, type: 'BOOKING_NO_SHOW', runAt: new Date(noShowAt), payload });
+      }
+      upsertUsageFact(db, booking, 'MANUAL');
     }
-    upsertUsageFact(db, booking, 'MANUAL');
   }
   const next: UsageAppeal = { ...appeal, status: restored ? 'RESTORED' : 'REJECTED', resolvedAt: new Date().toISOString(), resolvedBy: actor.id, resolutionNote };
   db.usageAppeals = (db.usageAppeals || []).map(item => item.id === appeal.id ? next : item);
@@ -142,6 +181,7 @@ export const completeBookingEarly = async (actor: User, bookingId: string) => mu
   const current = (db.bookings || []).find(item => item.id === bookingId);
   if (!current) throw new DbError('BOOKING_NOT_FOUND', 404);
   if (current.userId !== actor.id && !canManageServiceOperations(actor)) throw new DbError('FORBIDDEN', 403);
+  assertConfidentialOperation(db, current, actor);
   const booking = completeBookingUsage(db, current, actor.id);
   db.bookings = (db.bookings || []).map(item => item.id === booking.id ? booking : item);
   await audit({ actorId: actor.id, action: 'BOOKING_COMPLETE_EARLY', entityType: 'BOOKING', entityId: booking.id, details: { actualStartTime: booking.actualStartTime, actualEndTime: booking.actualEndTime } });

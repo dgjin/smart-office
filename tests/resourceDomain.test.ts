@@ -123,10 +123,24 @@ test('010 迁移增加可空使用释放列，不回填历史签到或释放事�
 });
 
 test('011 迁移幂等初始化设备与异常处理集合', () => {
-  assert.equal(REQUIRED_MIGRATION, '016_hq3d_confirmed_sync.sql');
   const migration = readFileSync(new URL('../server/migrations/011_operations.sql', import.meta.url), 'utf8');
   assert.match(migration, /'devices'/);
   assert.match(migration, /'exceptionActions'/);
   assert.match(migration, /ON DUPLICATE KEY UPDATE payload = payload/);
   assert.doesNotMatch(migration, /tenant_id/i);
+});
+
+test('017z/018 迁移按用户保存广播已读事实并兼容既有通知表排序规则', () => {
+  assert.equal(REQUIRED_MIGRATION, '018_notification_read_states.sql');
+  const migration = readFileSync(new URL('../server/migrations/018_notification_read_states.sql', import.meta.url), 'utf8');
+  assert.match(migration, /CREATE TABLE IF NOT EXISTS notification_read_states/);
+  assert.match(migration, /PRIMARY KEY \(notification_id, user_id\)/);
+  assert.match(migration, /ON DELETE CASCADE/);
+  assert.doesNotMatch(migration, /UPDATE notifications/i);
+  const collationRepair = readFileSync(new URL('../server/migrations/017z_notification_read_states_collation.sql', import.meta.url), 'utf8');
+  assert.match(collationRepair, /information_schema\.COLUMNS/);
+  assert.match(collationRepair, /TABLE_NAME = 'notifications'/);
+  assert.match(collationRepair, /PREPARE notification_read_states_stmt/);
+  assert.match(collationRepair, /CREATE TABLE IF NOT EXISTS notification_read_states/);
+  assert.doesNotMatch(collationRepair, /ALTER TABLE notifications/i);
 });

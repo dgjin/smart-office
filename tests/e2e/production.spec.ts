@@ -29,7 +29,20 @@ test.describe('生产模式安全验收', () => {
     expect(me.status).toBe(200);
 
     const context = await browser.newContext();
+    const externalRequests: string[] = [];
+    await context.route('**/*', route => {
+      const url = new URL(route.request().url());
+      if (!['127.0.0.1', 'localhost'].includes(url.hostname)) {
+        externalRequests.push(url.href);
+        return route.abort();
+      }
+      return route.continue();
+    });
     const page = await context.newPage();
+    const fontResponses: string[] = [];
+    page.on('response', response => {
+      if (response.url().includes('/vendor/fonts/') && response.url().endsWith('.woff2')) fontResponses.push(response.url());
+    });
     await page.goto(server.baseUrl);
     await expect(page.getByText('未配置可用的认证方式，请联系管理员检查 OIDC 或开发认证配置。', { exact: true })).toBeVisible();
     await expect(page.getByText('正在检查认证配置…', { exact: true })).toHaveCount(0);
@@ -60,11 +73,43 @@ test.describe('生产模式安全验收', () => {
     await expect(page.getByText('Alpha 战略会议室', { exact: true }).first()).toBeVisible();
     const preferenceWrite = page.waitForResponse(response => response.url().endsWith('/api/preferences')
       && response.request().method() === 'PUT' && response.ok());
+    await expect(page.getByTitle('翡翠绿', { exact: true })).toHaveCSS('background-color', 'rgb(5, 150, 105)');
     await page.getByTitle('翡翠绿', { exact: true }).click();
     await preferenceWrite;
     await page.reload();
     await expect(page.locator('.studio-app')).toHaveAttribute('data-theme', 'emerald');
+    expect(fontResponses.length).toBeGreaterThan(0);
+    expect(externalRequests).toEqual([]);
     expect(cspErrors).toEqual([]);
     await context.close();
+  });
+
+  test('总部3D在页面隐藏时停止请求动画帧，恢复可见后继续渲染', async ({ page }) => {
+    await page.addInitScript(() => {
+      const request = window.requestAnimationFrame.bind(window);
+      (window as any).__hq3dRafCount = 0;
+      window.requestAnimationFrame = callback => {
+        (window as any).__hq3dRafCount += 1;
+        return request(callback);
+      };
+    });
+    await page.goto(`${server.baseUrl}/hq3d.html?embed=spatial`);
+    await expect(page.locator('canvas')).toBeVisible();
+    await page.waitForFunction(() => (window as any).__hq3dRafCount > 2);
+    await page.evaluate(() => {
+      let hidden = false;
+      Object.defineProperty(document, 'hidden', { configurable: true, get: () => hidden });
+      (window as any).__setHq3dHidden = (value: boolean) => {
+        hidden = value;
+        document.dispatchEvent(new Event('visibilitychange'));
+      };
+      (window as any).__setHq3dHidden(true);
+    });
+    await page.waitForTimeout(100);
+    const pausedAt = await page.evaluate(() => (window as any).__hq3dRafCount);
+    await page.waitForTimeout(200);
+    expect(await page.evaluate(() => (window as any).__hq3dRafCount)).toBe(pausedAt);
+    await page.evaluate(() => (window as any).__setHq3dHidden(false));
+    await page.waitForFunction(count => (window as any).__hq3dRafCount > count, pausedAt);
   });
 });

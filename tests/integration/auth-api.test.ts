@@ -197,7 +197,7 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal((await server.request('/api/notifications', { method: 'POST', headers: { Cookie: admin.cookie }, ...jsonBody({ notification: own }) })).status, 404);
   });
 
-  it('将用户偏好保存在 MySQL，并在 Node 重启和会话复用后保持', async () => {
+  it('将东方蓝及原主题偏好保存在 MySQL，并在 Node 重启和会话复用后保持', async () => {
     const user = await server.login(userId);
     const updated = await server.request('/api/preferences', {
       method: 'PUT', headers: { Cookie: user.cookie }, ...jsonBody({ theme: 'emerald', sidebarCollapsed: true })
@@ -210,5 +210,15 @@ describe('真实 Node + 隔离 MySQL 集成验证', { skip: !integrationEnabled,
     assert.equal(me.status, 200);
     const preferences = await server.request('/api/preferences', { headers: { Cookie: user.cookie } });
     assert.deepEqual(await readJson(preferences), { theme: 'emerald', sidebarCollapsed: true });
+
+    const branded = await server.request('/api/preferences', {
+      method: 'PUT', headers: { Cookie: user.cookie }, ...jsonBody({ theme: 'coamc', sidebarCollapsed: false })
+    });
+    assert.equal(branded.status, 200);
+    assert.deepEqual(await readJson(branded), { theme: 'coamc', sidebarCollapsed: false });
+    await server.stop();
+    await server.start();
+    const brandedPreferences = await server.request('/api/preferences', { headers: { Cookie: user.cookie } });
+    assert.deepEqual(await readJson(brandedPreferences), { theme: 'coamc', sidebarCollapsed: false });
   });
 });

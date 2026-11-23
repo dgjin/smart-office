@@ -139,7 +139,14 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     assert.equal(noShowReport.status, 'CANCELLED');
     assert.equal(noShowReport.displayStatus, 'NO_SHOW');
 
-    const csvResponse = await call(`/api/reports/export?format=csv&${query}`, 'GET', admin);
+    const missingRevision = await call(`/api/reports/export?format=csv&${query}`, 'GET', admin);
+    assert.equal(missingRevision.status, 400);
+    assert.equal((await json(missingRevision)).error, 'REPORT_REVISION_REQUIRED');
+    const staleRevision = await call(`/api/reports/export?format=csv&revision=${report.revision + 1}&${query}`, 'GET', admin);
+    assert.equal(staleRevision.status, 409);
+    assert.equal((await json(staleRevision)).error, 'REPORT_SNAPSHOT_CHANGED');
+
+    const csvResponse = await call(`/api/reports/export?format=csv&revision=${report.revision}&${query}`, 'GET', admin);
     assert.equal(csvResponse.status, 200);
     assert.match(csvResponse.headers.get('content-type') || '', /^text\/csv/);
     assert.equal(csvResponse.headers.get('cache-control'), 'no-store');
@@ -149,7 +156,7 @@ describe('MRP6 驾驶舱、异常中心与门口屏真实 API', { skip: !integra
     assert.match(csv, /维度/);
     assert.equal(csv.includes('机密项目真实名称'), false);
 
-    const xlsxResponse = await call(`/api/reports/export?format=xlsx&${query}`, 'GET', admin);
+    const xlsxResponse = await call(`/api/reports/export?format=xlsx&revision=${report.revision}&${query}`, 'GET', admin);
     assert.equal(xlsxResponse.status, 200);
     assert.match(xlsxResponse.headers.get('content-type') || '', /spreadsheetml\.sheet/);
     const workbook = new ExcelJS.Workbook();

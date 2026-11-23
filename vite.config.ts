@@ -39,6 +39,15 @@ export default defineConfig(({ mode }) => {
         strictPort: true,
         host: '127.0.0.1',
       },
+      build: {
+        rollupOptions: {
+          output: {
+            manualChunks: {
+              'react-vendor': ['react', 'react-dom', 'react-dom/client', 'scheduler']
+            }
+          }
+        }
+      },
       plugins: [react(), smartOfficeApi()],
       resolve: {
         alias: {

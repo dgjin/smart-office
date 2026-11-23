@@ -5,10 +5,13 @@ import { integrationEnabled, queryTestDb, resetTestDb, TestServer } from '../sup
 
 const server = new TestServer();
 type Session = Awaited<ReturnType<TestServer['login']>>;
-const ids = { admin: '1', approver: '2', requester: '3', coordinator: 'u-mrp45-browser-coordinator' };
+const ids = {
+  admin: '1', approver: '2', requester: '3', coordinator: 'u-mrp45-browser-coordinator',
+  appealRequester: 'u-mrp45-browser-appeal-requester'
+};
 const names: Record<string, string> = {
   [ids.admin]: '超级管理员', [ids.approver]: '审批负责人', [ids.requester]: '李员工',
-  [ids.coordinator]: 'MRP45浏览器会务员'
+  [ids.coordinator]: 'MRP45浏览器会务员', [ids.appealRequester]: 'MRP45浏览器申诉人'
 };
 const sessions = new Map<string, Session>();
 
@@ -39,9 +42,11 @@ const waitFor = async (check: () => Promise<boolean>) => {
   }
   throw new Error('等待浏览器验收任务超时');
 };
-const insertApprovedBooking = async (input: { id: string; start: Date; end: Date; purpose: string; tea?: boolean }) => {
+const insertApprovedBooking = async (input: { id: string; start: Date; end: Date; purpose: string; tea?: boolean; resourceId?: string; userId?: string }) => {
+  const resourceId = input.resourceId || 'r1';
+  const userId = input.userId || ids.requester;
   const payload: Booking = {
-    id: input.id, userId: ids.requester, resourceId: 'r1', type: 'ROOM',
+    id: input.id, userId, resourceId, type: 'ROOM',
     startTime: input.start.toISOString(), endTime: input.end.toISOString(), status: 'APPROVED',
     purpose: input.purpose, participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 1,
     approvalHistory: [], attendeeIds: [], meetingType: 'NORMAL', confidentialityChoice: 'NON_CONFIDENTIAL',
@@ -49,8 +54,8 @@ const insertApprovedBooking = async (input: { id: string; start: Date; end: Date
     serviceRequirements: input.tea ? [{ type: 'TEA', fieldValues: { servings: '4' } }] : []
   };
   await queryTestDb(`INSERT INTO bookings (id, user_id, resource_id, start_time, end_time, status, payload, created_at, schedule_version)
-    VALUES (?, ?, 'r1', ?, ?, 'APPROVED', ?, ?, 1)`, [
-    input.id, ids.requester, input.start, input.end, JSON.stringify(payload), new Date(payload.createdAt)
+    VALUES (?, ?, ?, ?, ?, 'APPROVED', ?, ?, 1)`, [
+    input.id, userId, resourceId, input.start, input.end, JSON.stringify(payload), new Date(payload.createdAt)
   ]);
 };
 const monitorPage = (page: Page) => {
@@ -264,23 +269,28 @@ test.describe('MRP4-5 真实 Chrome 会务与使用闭环', () => {
     await requester.context.close();
   });
 
-  test('移动端未使用确认与申诉可见，审批负责人只能处理申诉并可恢复预约', async ({ browser }) => {
+  test('移动端未使用释放结果与申诉可见，审批负责人只能处理申诉并可恢复预约', async ({ browser }) => {
     const bookingId = `browser-appeal-${crypto.randomUUID()}`;
     const purpose = 'Chrome 未使用申诉闭环';
-    await insertApprovedBooking({
-      id: bookingId, start: new Date(Date.now() + 3 * 3600000), end: new Date(Date.now() + 4 * 3600000), purpose
+    const createdRequester = await api('/api/users', 'POST', ids.admin, {
+      user: {
+        id: ids.appealRequester, name: names[ids.appealRequester], email: `${ids.appealRequester}@company.com`,
+        role: ['EMPLOYEE'], department: '市场部', landline: '010-88889999', mobile: '13800000132'
+      }
     });
-    const requester = await openWorkspace(browser, ids.requester, { width: 390, height: 844 });
+    expect(createdRequester.status, JSON.stringify(await createdRequester.clone().json())).toBe(201);
+    await insertApprovedBooking({
+      id: bookingId, start: new Date(Date.now() - 5 * 60000), end: new Date(Date.now() + 55 * 60000), purpose,
+      resourceId: 'r2', userId: ids.appealRequester
+    });
+    const released = await api(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', ids.admin, {
+      decision: 'UNUSED', note: '议题取消，确认未到场'
+    });
+    expect(released.status, JSON.stringify(await released.clone().json())).toBe(200);
+    const requester = await openWorkspace(browser, ids.appealRequester, { width: 390, height: 844 });
     await openBookings(requester.page);
     await requester.page.getByText(purpose, { exact: true }).click();
     const usage = requester.page.getByRole('region', { name: `${purpose}使用与申诉` });
-    await usage.getByRole('button', { name: '确认未使用', exact: true }).click();
-    await usage.getByLabel(`${purpose}使用确认说明`).fill('议题取消，确认未到场');
-    requester.page.once('dialog', dialog => dialog.accept());
-    await Promise.all([
-      requester.page.waitForResponse(response => response.url().endsWith('/usage-confirmation') && response.status() === 200),
-      usage.getByRole('button', { name: '保存使用确认', exact: true }).click()
-    ]);
     await expect(usage.getByText(/确认未使用 ·/)).toBeVisible();
     await usage.getByLabel(`${purpose}申诉理由`).fill('现场核实需要恢复会议');
     await Promise.all([
@@ -300,10 +310,10 @@ test.describe('MRP4-5 真实 Chrome 会务与使用闭环', () => {
     await approver.page.getByRole('tab', { name: '释放申诉' }).click();
     const appeal = approver.page.locator('article').filter({ hasText: purpose });
     await appeal.getByLabel(/申诉处理意见/).fill('核查通过，恢复本次预约');
-    await Promise.all([
-      approver.page.waitForResponse(response => response.url().includes('/api/usage-appeals/') && response.status() === 200),
-      appeal.getByRole('button', { name: '恢复预约', exact: true }).click()
-    ]);
+    const restoreResponsePromise = approver.page.waitForResponse(response => response.url().includes('/api/usage-appeals/') && response.request().method() === 'POST');
+    await appeal.getByRole('button', { name: '恢复预约', exact: true }).click();
+    const restoreResponse = await restoreResponsePromise;
+    expect(restoreResponse.status(), JSON.stringify(await restoreResponse.json())).toBe(200);
     await expect(appeal.getByText('已恢复', { exact: true })).toBeVisible();
     const restored = await readBooking(bookingId);
     expect(restored.status).toBe('APPROVED');

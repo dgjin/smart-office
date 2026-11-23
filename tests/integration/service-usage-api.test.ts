@@ -44,6 +44,9 @@ const waitFor = async (check: () => Promise<boolean>) => {
 const approve = (session: Session, bookingId: string) => call('/api/agent/action', 'POST', session, {
   action: { type: 'PROPOSE_APPROVAL', bookingId, decision: 'APPROVE', comment: '会务集成验证通过', summary: '通过审批' }
 });
+const cancel = (session: Session, bookingId: string) => call('/api/agent/action', 'POST', session, {
+  action: { type: 'PROPOSE_CANCEL', bookingId, summary: '主动取消预约' }
+});
 const insertApprovedBooking = async (input: {
   id: string; start: Date; end: Date; purpose: string; tea?: boolean; resourceId?: string;
 }) => {
@@ -217,27 +220,44 @@ describe('MRP4-5 会务服务与使用释放真实 API 集成验证', { skip: !i
     }
   });
 
-  it('未使用确认释放资源并保留原因，重复确认和伪造非核准状态事实被阻断', async () => {
+  it('未使用确认不能绕开有效时间窗和取消权限，失败时不生成使用事实', async () => {
     const bookingId = `unused-${crypto.randomUUID()}`;
     await insertApprovedBooking({
       id: bookingId, start: new Date(Date.now() + 3 * 3600000), end: new Date(Date.now() + 4 * 3600000), purpose: '未使用确认验证'
     });
     const missingNote = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', requester, { decision: 'UNUSED' }), 400);
     assert.equal(missingNote.error, 'USAGE_CONFIRMATION_NOTE_REQUIRED');
-    const released = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', requester, {
+    const outsideWindow = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', requester, {
       decision: 'UNUSED', note: '议题取消，确认未到场使用'
+    }), 409);
+    assert.equal(outsideWindow.error, 'USAGE_CONFIRMATION_OUTSIDE_WINDOW');
+    assert.equal((await readBooking(bookingId)).status, 'APPROVED');
+    assert.equal((await readCollection<BookingUsageFact>('usageFacts')).some(item => item.bookingId === bookingId), false);
+  });
+
+  it('未使用确认仅在使用窗口内按取消授权释放，重复确认被阻断', async () => {
+    const bookingId = `unused-authorized-${crypto.randomUUID()}`;
+    await insertApprovedBooking({
+      id: bookingId, start: new Date(Date.now() - 5 * 60000), end: new Date(Date.now() + 55 * 60000), purpose: '授权未使用确认验证'
+    });
+    const requesterBlocked = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', requester, {
+      decision: 'UNUSED', note: '申请人试图绕过取消授权'
+    }), 403);
+    assert.equal(requesterBlocked.error, 'CANCELLATION_AUTHORIZATION_REQUIRED');
+    const released = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', admin, {
+      decision: 'UNUSED', note: '现场核实未使用，由授权管理员释放'
     }), 200);
     assert.equal(released.booking.status, 'CANCELLED');
     assert.equal(released.booking.releaseType, 'UNUSED_CONFIRMED');
-    assert.match(released.booking.releaseReason, /议题取消/);
+    assert.match(released.booking.releaseReason, /现场核实/);
     assert.ok(released.booking.accessRevokedAt);
-    const repeated = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', requester, {
+    const repeated = await expectJson(await call(`/api/bookings/${bookingId}/usage-confirmation`, 'POST', admin, {
       decision: 'IN_USE', note: '试图改写已释放事实'
     }), 409);
     assert.equal(repeated.error, 'BOOKING_NOT_CONFIRMABLE');
     const fact = (await readCollection<BookingUsageFact>('usageFacts')).find(item => item.bookingId === bookingId)!;
     assert.equal(fact.unusedConfirmation?.status, 'UNUSED');
-    assert.equal(fact.unusedConfirmation?.confirmedBy, '3');
+    assert.equal(fact.unusedConfirmation?.confirmedBy, '1');
     assert.equal(fact.actualMinutes, 0);
   });
 
@@ -297,6 +317,61 @@ describe('MRP4-5 会务服务与使用释放真实 API 集成验证', { skip: !i
     const noShowJob = jobs.find(job => job.job_type === 'BOOKING_NO_SHOW');
     assert.ok(Math.abs(Date.parse(noShowJob.run_at) - Date.parse(restored.booking.noShowReleaseNotBefore)) < 1000);
     assert.ok((await readCollection<UsageAppeal>('usageAppeals')).find(item => item.id === appeal.appeal.id)?.resolutionNote);
+  });
+
+  it('主动取消不属于可申诉释放', async () => {
+    const bookingId = `appeal-cancelled-${crypto.randomUUID()}`;
+    await insertApprovedBooking({
+      id: bookingId,
+      start: new Date(Date.now() + 90 * 86400000),
+      end: new Date(Date.now() + 90 * 86400000 + 3600000),
+      purpose: '主动取消不得申诉'
+    });
+    await expectJson(await cancel(requester, bookingId), 200);
+    const response = await expectJson(await call(`/api/bookings/${bookingId}/usage-appeals`, 'POST', requester, {
+      reason: '试图恢复主动取消的预约'
+    }), 409);
+    assert.equal(response.error, 'BOOKING_NOT_APPEALABLE');
+    assert.equal((await readBooking(bookingId)).releaseType, 'CANCELLED');
+    assert.equal((await readCollection<UsageAppeal>('usageAppeals')).some(item => item.bookingId === bookingId), false);
+  });
+
+  it('需审批预约申诉恢复后按冻结流程从首节点重审且不提前生成新工单', async () => {
+    const bookingId = `appeal-reapproval-${crypto.randomUUID()}`;
+    const start = new Date(Date.now() + 91 * 86400000);
+    start.setUTCHours(10, 0, 0, 0);
+    const created = await expectJson(await call('/api/bookings', 'POST', requester, {
+      booking: {
+        id: bookingId, userId: '3', resourceId: 'r2', type: 'ROOM', startTime: start.toISOString(),
+        endTime: new Date(start.getTime() + 3600000).toISOString(), status: 'PENDING', purpose: '恢复后重新审批验证',
+        participants: 4, createdAt: new Date().toISOString(), currentNodeIndex: 0, approvalHistory: [], attendeeIds: [],
+        meetingType: 'IMPORTANT', confidentialityChoice: 'NON_CONFIDENTIAL', requesterDepartmentId: 'dpt3'
+      }
+    }), 201);
+    assert.equal(created.booking.status, 'PENDING');
+    await expectJson(await call(`/api/bookings/${bookingId}/release`, 'POST', coordinator, { reason: '待审批异常释放恢复验证' }), 200);
+    const appeal = await expectJson(await call(`/api/bookings/${bookingId}/usage-appeals`, 'POST', requester, {
+      reason: '异常已核查，申请按原审批流程恢复'
+    }), 201);
+    const restored = await expectJson(await call(`/api/usage-appeals/${appeal.appeal.id}`, 'POST', approver, {
+      decision: 'RESTORE', note: '允许恢复，但必须重新履行审批'
+    }), 200);
+    assert.equal(restored.booking.status, 'PENDING');
+    assert.equal(restored.booking.currentNodeIndex, 0);
+    assert.deepEqual(restored.booking.approvalHistory, []);
+    assert.deepEqual(restored.booking.approvalWorkflow, created.booking.approvalWorkflow);
+    assert.equal(restored.booking.scheduleVersion, 2);
+    const submissionToken = String(Date.parse(restored.booking.approvalSubmittedAt));
+    const jobs = await queryTestDb<any[]>('SELECT job_key FROM scheduled_jobs WHERE job_key IN (?, ?, ?)', [
+      `approval-reminder:${bookingId}:${submissionToken}:0`,
+      `approval-escalation:${bookingId}:${submissionToken}:0`,
+      `approval-close:${bookingId}:${submissionToken}`
+    ]);
+    assert.equal(jobs.length, 3);
+    assert.equal((await readCollection<WorkOrder>('workOrders')).some(order => order.id === `wo-${bookingId}-v2-TEA`), false);
+    await expectJson(await approve(approver, bookingId), 200);
+    await expectJson(await approve(admin, bookingId), 200);
+    assert.equal((await readBooking(bookingId)).status, 'APPROVED');
   });
 
   it('八类专项会务在申请、审批、工单和报表中数量一致，取消后保留执行成本与异常', async () => {
@@ -434,8 +509,14 @@ describe('MRP4-5 会务服务与使用释放真实 API 集成验证', { skip: !i
       assert.equal(supply.exceptionCount, type === 'FURNITURE' ? 1 : 0, type);
     }
 
-    const xlsxResponse = await call(`/api/reports/export?format=xlsx&${query}`, 'GET', admin);
-    assert.equal(xlsxResponse.status, 200);
+    let xlsxResponse: Response | undefined;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const latest = await expectJson(await call(`/api/reports?${query}`, 'GET', admin), 200);
+      xlsxResponse = await call(`/api/reports/export?format=xlsx&revision=${latest.revision}&${query}`, 'GET', admin);
+      if (xlsxResponse.status !== 409) break;
+    }
+    assert.ok(xlsxResponse);
+    assert.equal(xlsxResponse.status, 200, xlsxResponse.status === 200 ? '' : await xlsxResponse.text());
     const workbook = new ExcelJS.Workbook();
     await workbook.xlsx.load(Buffer.from(await xlsxResponse.arrayBuffer()));
     const xlsxOrders = new Map<string, ExcelJS.Row>();

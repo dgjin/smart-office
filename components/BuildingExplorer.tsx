@@ -25,6 +25,7 @@ export const getFloorNumbers = (totalFloors: number) => Array.from({ length: tot
 type DisplayStatus = Extract<ResourceStatus, 'AVAILABLE' | 'OCCUPIED' | 'MAINTENANCE'>;
 
 type BuildingExplorerProps = {
+  theme: string;
   resources: Resource[];
   bookings: Booking[];
   focusLocation?: { location: string; building?: BuildingId; floor?: number; token: number | string } | null;
@@ -48,7 +49,7 @@ const STATUS_LABELS: Record<DisplayStatus, string> = {
 export const parseBuilding = parseResourceBuilding;
 export const parseFloor = parseResourceFloor;
 
-const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCalendar, onBook, canManage = false, isResourceLocked, onToggleResourceLock, onEdit, onDelete, resultContext }: BuildingExplorerProps) => {
+const BuildingExplorer = ({ theme, resources, bookings, focusLocation, onDetails, onCalendar, onBook, canManage = false, isResourceLocked, onToggleResourceLock, onEdit, onDelete, resultContext }: BuildingExplorerProps) => {
   const explorerRef = useRef<HTMLElement>(null);
   const sceneRef = useRef<HTMLIFrameElement>(null);
   const [sceneReady, setSceneReady] = useState(false);
@@ -188,7 +189,7 @@ const BuildingExplorer = ({ resources, bookings, focusLocation, onDetails, onCal
           <iframe
             ref={sceneRef}
             className="building-cutaway"
-            src="/hq3d.html?embed=spatial"
+            src={`/hq3d.html?embed=spatial&theme=${theme === 'coamc' ? 'coamc' : 'classic'}`}
             title={`${building.name}${building.totalFloors}层总部3D楼层剖切图，当前${selectedFloor}层`}
             onLoad={() => setSceneReady(true)}
           />
