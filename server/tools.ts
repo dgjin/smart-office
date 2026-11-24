@@ -3,6 +3,7 @@ import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourc
 import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
 import { SERVICE_TYPES, SERVICE_TYPE_LABELS, isServiceType } from '../constants.ts';
 import { canUseHelpTopic, HELP_TOPICS, isSystemView, searchHelpTopics, SYSTEM_VIEWS, type SystemView } from '../helpCatalog.ts';
+import type { Hq3dSnapshot } from './hq3d.ts';
 
 export interface OfficeDb {
   roles?: RoleDefinition[];
@@ -43,7 +44,7 @@ export interface AgentContext {
 }
 
 export type AgentAction =
-  | { type: 'NAVIGATE'; view: SystemView; summary?: string }
+  | { type: 'NAVIGATE'; view: SystemView; summary?: string; hq3d?: { buildingId: string; floorNo?: number; roomUid?: string } }
   | { type: 'OPEN_HELP'; topicId: string; summary: string }
   | { type: 'PROPOSE_BOOKING'; draft: Partial<Booking>; summary: string }
   | { type: 'PROPOSE_EDIT_BOOKING'; bookingId: string; draft: Partial<Booking>; summary: string }
@@ -79,6 +80,150 @@ export interface ToolResult {
   /** 工具执行后需要推送给其他用户的通知，由调用方落库。 */
   notifications?: Notification[];
 }
+
+export interface ExecutorOptions {
+  loadHq3dSnapshot?: () => Promise<Hq3dSnapshot>;
+}
+
+const HQ3D_CATEGORY_LABELS: Record<string, string> = {
+  office: '办公室', open: '开放办公', exec: '领导办公室', meeting: '会议室',
+  front: '前台/大厅', dining: '餐厅/餐厨', guest: '客房', fitness: '康体/健身',
+  welfare: '员工福利', party: '党群/纪检', archive: '档案室', support: '配套/机房',
+  stair: '楼梯/安全通道', lift: '电梯', wc: '卫生间'
+};
+
+export const queryHq3dSnapshot = (snapshot: Hq3dSnapshot, args: any): ToolResult => {
+  const buildingQuery = String(args?.building || '').trim();
+  const keyword = String(args?.keyword || '').trim();
+  if (buildingQuery.length > 100 || keyword.length > 100) return { ok: false, error: '楼栋和房间关键词请控制在 100 字以内。' };
+  const hasFloor = args?.floorNo !== undefined && args?.floorNo !== null && args?.floorNo !== '';
+  const floorNo = hasFloor ? Number(args.floorNo) : null;
+  if (floorNo !== null && (!Number.isInteger(floorNo) || floorNo < 1 || floorNo > 200)) {
+    return { ok: false, error: '楼层必须是 1 至 200 之间的整数。' };
+  }
+  const limit = args?.limit === undefined ? 12 : Number(args.limit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > 20) return { ok: false, error: '返回数量必须是 1 至 20 之间的整数。' };
+
+  const normalizedBuilding = norm(buildingQuery);
+  const buildings = buildingQuery
+    ? snapshot.buildings.filter(building => {
+      const id = norm(building.id);
+      const name = norm(building.name);
+      return id === normalizedBuilding || name === normalizedBuilding || name.includes(normalizedBuilding) || id.includes(normalizedBuilding);
+    })
+    : snapshot.buildings;
+  if (buildingQuery && !buildings.length) {
+    return { ok: false, error: `未找到匹配楼栋。可选择：${snapshot.buildings.map(building => building.name).join('、')}。` };
+  }
+
+  const scoped = buildings.map(building => ({
+    building,
+    floors: floorNo === null ? building.floors : building.floors.filter(floor => floor.floorNo === floorNo)
+  }));
+  if (floorNo !== null && !scoped.some(item => item.floors.length)) {
+    return { ok: false, error: `未找到匹配的 ${floorNo} 层，请核对楼栋和楼层。` };
+  }
+
+  const normalizedKeyword = norm(keyword);
+  const matches = scoped.flatMap(({ building, floors }) => floors.flatMap(floor => floor.rooms.flatMap(room => {
+    const profile = snapshot.profiles[room.uid];
+    const current = {
+      label: profile?.label ?? room.label,
+      dept: profile?.dept ?? room.dept,
+      person: profile?.person ?? room.person,
+      notes: profile?.notes ?? room.notes,
+      category: profile?.category ?? room.cat,
+      areaSqm: profile?.areaSqm
+    };
+    const haystack = norm([room.uid, room.no, current.label, current.dept, current.person, current.notes].join(' '));
+    if (normalizedKeyword && !haystack.includes(normalizedKeyword)) return [];
+    const exact = Boolean(normalizedKeyword) && [room.uid, room.no, current.label].some(value => norm(value) === normalizedKeyword);
+    return [{ building, floor, room, current, exact }];
+  }))).sort((a, b) => Number(b.exact) - Number(a.exact));
+
+  const hasRoomQuery = Boolean(buildingQuery || floorNo !== null || keyword);
+  const rooms = (hasRoomQuery ? matches : []).slice(0, limit).map(({ building, floor, room, current }) => {
+    const records = snapshot.maintenance[room.uid]?.records || [];
+    const mapping = snapshot.resourceMappings[room.uid];
+    const disposition = snapshot.dispositions[room.uid];
+    return {
+      uid: room.uid,
+      no: room.no,
+      label: current.label,
+      category: current.category,
+      categoryLabel: HQ3D_CATEGORY_LABELS[current.category] || current.category,
+      buildingId: building.id,
+      buildingName: building.name,
+      floorNo: floor.floorNo,
+      floorTag: floor.tag,
+      dept: current.dept,
+      person: current.person,
+      notes: current.notes,
+      areaSqm: current.areaSqm ?? null,
+      maintenance: {
+        open: records.filter(record => record.status === 'open').length,
+        doing: records.filter(record => record.status === 'doing').length,
+        done: records.filter(record => record.status === 'done').length,
+        latest: records.slice(0, 3).map(record => ({
+          id: record.id, type: record.type, title: record.title, note: record.note,
+          reporter: record.reporter, status: record.status, updatedAt: record.updatedAt
+        }))
+      },
+      resourceMapping: mapping ? {
+        resourceId: mapping.resourceId, planId: mapping.planId, decisionRef: mapping.decisionRef,
+        decisionBasis: mapping.decisionBasis, note: mapping.note
+      } : null,
+      disposition: disposition ? {
+        disposition: disposition.disposition, reviewStatus: disposition.reviewStatus,
+        planId: disposition.planId, decisionBasis: disposition.decisionBasis, note: disposition.note
+      } : null
+    };
+  });
+
+  const onlyMatch = keyword && matches.length === 1 ? matches[0] : null;
+  const onlyBuilding = buildings.length === 1 ? buildings[0] : null;
+  const target = keyword && !matches.length
+    ? null
+    : onlyMatch
+      ? { buildingId: onlyMatch.building.id, floorNo: onlyMatch.floor.floorNo, roomUid: onlyMatch.room.uid }
+      : onlyBuilding && floorNo !== null
+        ? { buildingId: onlyBuilding.id, floorNo }
+        : buildingQuery && onlyBuilding
+          ? { buildingId: onlyBuilding.id }
+          : null;
+  const targetName = onlyMatch
+    ? `${onlyMatch.building.name} ${onlyMatch.floor.tag} ${onlyMatch.current.label}`
+    : onlyBuilding
+      ? `${onlyBuilding.name}${floorNo !== null ? ` ${floorNo}F` : ''}`
+      : '总部楼层3D';
+
+  return {
+    ok: true,
+    data: {
+      generatedAt: snapshot.generatedAt,
+      total: matches.length,
+      returned: rooms.length,
+      buildings: scoped.map(({ building, floors }) => ({
+        id: building.id,
+        name: building.name,
+        roomCount: floors.reduce((sum, floor) => sum + floor.rooms.length, 0),
+        floors: floors.map(floor => ({
+          floorNo: floor.floorNo, tag: floor.tag, sheet: floor.sheet,
+          roomCount: floor.rooms.length, areaTotal: floor.areaTotal
+        }))
+      })),
+      rooms
+    },
+    action: target ? { type: 'NAVIGATE', view: 'HQ_3D', hq3d: target, summary: `定位${targetName}` } : undefined,
+    hint: !hasRoomQuery
+      ? '已返回楼栋和楼层概览；可补充楼栋、楼层或房间关键词查看空间详情。'
+      : matches.length > rooms.length
+        ? `共匹配 ${matches.length} 间，仅返回前 ${rooms.length} 间；请补充楼栋、楼层、房号或部门关键词缩小范围。`
+        : matches.length === 0
+          ? '没有匹配的房间，可换用房号、房间名、部门或使用人关键词。'
+          : undefined
+  };
+};
 
 const DAY_MS = 86400000;
 const WORK_START_HOUR = 8;
@@ -274,6 +419,22 @@ export const TOOLS = [
         type: 'object',
         properties: { view: { type: 'string', enum: [...SYSTEM_VIEWS], description: '目标系统视图' } },
         required: ['view']
+      }
+    }
+  },
+  {
+    type: 'function' as const,
+    function: {
+      name: 'query_hq3d_spaces',
+      description: '查询总部楼层3D的真实楼栋、楼层、房间、部门/使用人、面积、维护记录、资源映射和处置状态，并生成可定位到楼栋、楼层或唯一房间的导航卡片。仅只读查询，不用于布局导入或资料维护。',
+      parameters: {
+        type: 'object',
+        properties: {
+          building: { type: 'string', description: '楼栋ID或名称关键词，如主楼、配楼；不传表示全部楼栋' },
+          floorNo: { type: 'number', description: '楼层号，如 2 表示2F；不传表示全部楼层' },
+          keyword: { type: 'string', description: '房号、稳定UID、房间名、部门、使用人或备注关键词' },
+          limit: { type: 'number', description: '最多返回房间数，1至20，默认12' }
+        }
       }
     }
   },
@@ -532,7 +693,7 @@ export const toolsForRoles = (roles: string[] = [], workflow: ApprovalNode[] = [
   return true;
 });
 
-export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
+export const createExecutor = (db: OfficeDb, ctx: AgentContext, options: ExecutorOptions = {}) => {
   const now = ctx.now ?? new Date();
   const resources = db.resources || [];
   const bookings = db.bookings || [];
@@ -570,8 +731,9 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
 
   const needUser = (): ToolResult | null =>
     me ? null : { ok: false, error: '无法识别当前用户身份，请重新登录后再试。' };
+  const loadHq3dSnapshot = options.loadHq3dSnapshot || (async () => (await import('./hq3d.ts')).getHq3dSnapshot());
 
-  const handlers: Record<string, (args: any) => ToolResult> = {
+  const handlers: Record<string, (args: any) => any> = {
     search_help: (args) => {
       const deny = needUser();
       if (deny) return deny;
@@ -600,6 +762,16 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext) => {
         data: { view: args.view, title: topic?.title || args.view },
         action: { type: 'NAVIGATE', view: args.view, summary: `前往${topic?.title || '目标页面'}` }
       };
+    },
+
+    query_hq3d_spaces: async (args) => {
+      const deny = needUser();
+      if (deny) return deny;
+      try {
+        return queryHq3dSnapshot(await loadHq3dSnapshot(), args);
+      } catch {
+        return { ok: false, error: '总部3D数据暂时不可用，请稍后重试或前往总部楼层3D页面查看。' };
+      }
     },
 
     list_resources: (args) => {

@@ -65,6 +65,7 @@
 - `tailwind.config.js` 的 safelist 包含 `coamc` 动态色阶，生产构建会生成主题色按钮等状态类；品牌样式仅使用现有同源 Noto Sans SC，不增加远程图片、字体或脚本依赖。
 - `server/preferences.ts` 只接受白名单主题，`GET/PUT /api/preferences` 继续将主题和侧栏状态写入既有 MySQL 用户偏好表，无需新增迁移。品牌覆盖不改变登录页、独立门口屏、业务规则或权限边界。
 - 主应用向总部楼层 3D 和空间资源库内嵌剖切的 iframe 传递白名单 `theme` 参数：`coamc` 启用同源中国东方横式标志、白色面板、东方蓝交互态和深海蓝模型背景，其余五套主题统一使用 `classic` 保留原 3D 外观。Three.js 房间类别色、空间状态色、资源映射和交互不随品牌主题改变。主应用 3D 容器的负边距随桌面、平板和手机断点匹配实际内容内边距，375px 视口下 iframe 保持 375px，不裁切模型边缘标签。
+- 助手的 `NAVIGATE.hq3d` 由 App 通过 `URLSearchParams` 转成 `buildingId/floorNo/roomUid/navigationId`。完整 3D 页面启动时优先按稳定 UID 定位并选中房间，否则按楼栋和可选楼层定位；`navigationId` 使重复定位也刷新 iframe。无效参数回退默认视图，`embed=spatial` 剖切不读取这些定位参数，普通手动导航清除旧定位。
 
 ### 3.3 帮助抽屉
 
@@ -287,6 +288,7 @@
 - `/api/agent/chat` 使用 SSE，15 秒 heartbeat；`/api/agent/status` 返回模型和流式能力状态。
 - DeepSeek 默认超时为 60 秒，可由调用选项或环境配置调整；`withLlmRequest` 组合内部 `AbortController`、外部 signal 和定时器。流式请求 abort 时执行 `reader.cancel()`，`server/agent.ts` 监听 `req.aborted` 和 `res.close`，把客户端断开传播到 Agent 和上游调用。
 - 具体资源、时间、人员、预约、审批、工单和统计必须先调用工具，不依赖模型记忆作答。
+- 总部 3D 的楼栋、楼层、房间、部门、使用人、面积、维护、映射和处置查询必须调用 `query_hq3d_spaces`。工具仅在实际执行时动态导入 `server/hq3d.ts` 并读取 `getHq3dSnapshot()`；以 `profiles` 覆盖后的当前房间资料为准，无过滤只返回楼栋/楼层概览，房间结果默认 12 间、上限 20 间，最近维护摘要最多 3 条。
 - 新预约要求明确用途和正整数人数，不自动编造参会人，不用“会议/开会”替代真实用途。
 - 未匹配或同名歧义参会人明确报错，不静默丢弃。
 
@@ -296,6 +298,7 @@
 |---|---|
 | 帮助与导航 | `search_help`、`navigate_system` |
 | 资源查询 | `list_resources`、`find_available_resources`、`get_resource_calendar` |
+| 总部3D查询 | `query_hq3d_spaces` |
 | 个人查询 | `list_my_bookings`、`get_my_todos` |
 | 流程查询 | `get_pending_approvals` |
 | 会务查询 | `get_work_orders` |
@@ -317,7 +320,7 @@
 | `PROPOSE_CHECK_IN` | 用户确认后执行签到 | 是，服务端重检 |
 | `PROPOSE_WORK_ORDER` | 用户确认后完成工单 | 是，服务端重检 |
 | `OPEN_HELP` | 打开指定且当前角色可见的指南 | 否 |
-| `NAVIGATE` | 打开固定且当前角色可见的视图 | 否 |
+| `NAVIGATE` | 打开固定且当前角色可见的视图；可选 `hq3d` 仅携带楼栋、楼层和房间 UID，由 App 构造同源地址并定位完整总部3D | 否 |
 | `REFRESH` | 重新加载工作区和运营报表 | 否 |
 
 ### 12.4 会话持久化与清洗
@@ -328,7 +331,8 @@
 - 草案只保留允许的预约、服务和人员字段。
 - 服务目录快照只保留目录版本、名称、字段模板、负责角色、SLA、重服务和可取消属性。
 - 保留取消原因、帮助主题 ID 等明确字段，不持久化任意对象。
-- 刷新或服务重启只恢复对话和草案，不自动提交或执行动作。
+- `NAVIGATE.hq3d` 只允许在 `HQ_3D` 视图中携带非空 `buildingId`、可选 1—200 的整数 `floorNo` 和可选非空 `roomUid`；URL 和其他额外字段会被剔除，非法目标拒绝保存。
+- 刷新或服务重启只恢复对话、草案和定位卡片，不自动提交或执行动作。
 
 ## 13. 异步任务、集成与审计
 

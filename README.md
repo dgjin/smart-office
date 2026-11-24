@@ -59,6 +59,7 @@ npm run db:seed:hq3d
 独立的单页应用，`public/hq3d.html`，通过导航「总部楼层 3D」以同源 iframe 嵌入主应用。
 
 - **数据**：布局基线（楼栋/楼层/房间坐标）与业务覆盖（房间资料、维护记录、楼层面积）全部落在 MySQL，页面不再自带数据。启动时 `GET /api/hq3d/snapshot` 一次取全量（约 94KB），取不到就停在提示页而不是用旧数据硬撑。
+- **智问助手接入**：`query_hq3d_spaces` 仅在实际调用时懒加载 `getHq3dSnapshot()`，按楼栋、楼层、房号、稳定 UID、房间名、部门、使用人或备注查询当前资料、面积、维护、资源映射和处置状态。无过滤只返回概览，房间结果默认最多 12 间、上限 20 间，维护摘要最多 3 条。唯一房间关键词结果生成 `NAVIGATE.hq3d` 定位卡片；App 用 `URLSearchParams` 传递白名单 `buildingId/floorNo/roomUid/navigationId`，完整 3D 页面切换楼栋、楼层并选中房间，重复定位也会刷新。空间资源库 `embed=spatial` 剖切不应用该定位。查询只读，资源映射或候选状态不等于当前可预约；导入和资料维护仍走正式页面与权限流程。
 - **写入**：`PUT /api/hq3d/rooms/:uid`（改房间资料）、`POST/PATCH/DELETE /api/hq3d/...`（维护记录）、`PUT /api/hq3d/floors/:building/:tag/area`（楼层面积合计）。写操作要求管理员、`SERVICE_COORDINATOR` 或 `FRONT_DESK` 角色，并各自写 `audit_events`。
 - **为什么不用 `mutateDb`**：那套是整库 JSON 快照重写，一次写入会全量 upsert 20+ 集合。3D 的改动粒度是「一间房一条记录」，走快照会白写几百 KB，也会和排班/预订的乐观锁互相打架。
 - **Three.js**：`public/vendor/three/`（0.160.0，来自 `node_modules/three`）。不引 CDN，一是内网/离线可用，二是主应用的 CSP 不允许外域脚本。升级时 `npm i three@<版本>` 后重新拷贝 `build/three.module.js`、`examples/jsm/controls/OrbitControls.js`、`examples/jsm/environments/RoomEnvironment.js`。

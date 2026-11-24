@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { after, before, describe, it } from 'node:test';
 import { closeDbPool, getDbPool } from '../../server/db.ts';
 import { getHq3dSnapshot } from '../../server/hq3d.ts';
+import { createExecutor } from '../../server/tools.ts';
 import { seedHq3dLayout, type Hq3dSeedData, type Hq3dSeedRoom } from '../../server/hq3dLayout.ts';
 import { integrationEnabled, queryTestDb } from '../support/testServer.ts';
 
@@ -92,5 +93,21 @@ describe('C-07 总部3D稳定UID与差异重建', { skip: !integrationEnabled, c
     assert.equal(restored[0].retired_at, null);
     assert.equal((await queryTestDb<any[]>('SELECT room_uid FROM hq3d_room_profile WHERE room_uid = ?', [firstUid])).length, 1);
     assert.equal((await queryTestDb<any[]>('SELECT room_uid FROM hq3d_room_maintenance WHERE room_uid = ?', [firstUid])).length, 1);
+  });
+
+  it('智问助手默认工具从隔离MySQL读取当前房间资料并生成定位动作', async () => {
+    const executor = createExecutor({
+      users: [{ id: 'hq3d-reader', name: '空间查询员', email: 'hq3d@test.local', role: ['EMPLOYEE'], department: '测试部' }]
+    }, { userId: 'hq3d-reader', now: new Date('2026-11-24T12:00:00+08:00') });
+    const result = await executor.query_hq3d_spaces({ building: '测试楼', keyword: '业务覆盖名称' });
+    assert.equal(result.ok, true, result.error);
+    assert.equal(result.data.total, 1);
+    assert.equal(result.data.rooms[0].uid, firstUid);
+    assert.equal(result.data.rooms[0].label, '业务覆盖名称');
+    assert.equal(result.data.rooms[0].maintenance.open, 1);
+    assert.equal(result.action?.type, 'NAVIGATE');
+    if (result.action?.type === 'NAVIGATE') {
+      assert.deepEqual(result.action.hq3d, { buildingId: 'test', floorNo: 1, roomUid: firstUid });
+    }
   });
 });

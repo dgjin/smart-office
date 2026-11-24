@@ -198,6 +198,46 @@ test.describe('MySQL-only 浏览器验收', () => {
     await mobile.context.close();
   });
 
+  test('智问助手总部3D查询卡片定位真实楼栋楼层和房间', async ({ browser }) => {
+    const { context, page } = await openWorkspace(browser, '李员工');
+    const snapshotResponse = await page.request.get(`${server.baseUrl}/api/hq3d/snapshot`);
+    expect(snapshotResponse.status()).toBe(200);
+    const snapshot = await snapshotResponse.json();
+    const building = snapshot.buildings.find((item: any) => item.id === 'main') || snapshot.buildings[0];
+    const floor = building.floors.find((item: any) => item.floorNo === 2) || building.floors[0];
+    const room = floor.rooms.find((item: any) => item.label === '礼堂') || floor.rooms[0];
+    const summary = `定位${building.name} ${floor.tag} ${room.label}`;
+    await page.route('**/api/agent/chat', route => route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: `data: ${JSON.stringify({
+        type: 'done', reply: `已找到${room.label}，可打开总部3D查看。`,
+        actions: [{ type: 'NAVIGATE', view: 'HQ_3D', summary, hq3d: { buildingId: building.id, floorNo: floor.floorNo, roomUid: room.uid } }],
+        trace: [{ tool: 'query_hq3d_spaces', ok: true, ms: 1 }]
+      })}\n\n`
+    }));
+
+    await page.getByRole('button', { name: '打开智能助手', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '对话式办公助手' });
+    await dialog.getByRole('textbox', { name: '输入办公需求' }).fill(`${building.name}${floor.tag}${room.label}在哪里？`);
+    await dialog.getByRole('button', { name: '发送', exact: true }).click();
+    await expect(dialog.getByText(summary, { exact: true })).toBeVisible();
+    await dialog.getByRole('button', { name: '前往查看', exact: true }).click();
+    await expect(dialog).toHaveCount(0);
+
+    const frameElement = page.locator('iframe[title="总部楼层 3D 分布图"]');
+    await expect(frameElement).toHaveAttribute('src', /navigationId=\d+/);
+    const src = await frameElement.getAttribute('src');
+    const target = new URL(src!, server.baseUrl).searchParams;
+    expect(target.get('buildingId')).toBe(building.id);
+    expect(target.get('floorNo')).toBe(String(floor.floorNo));
+    expect(target.get('roomUid')).toBe(room.uid);
+    const hq = page.frameLocator('iframe[title="总部楼层 3D 分布图"]');
+    await expect(hq.locator('#dName')).toHaveText(room.label);
+    await expect(hq.locator('.fitem.on')).toContainText(floor.tag);
+    await context.close();
+  });
+
   test('真实预约表单完成两级审批，并由服务端持久化预约与工单', async ({ browser }) => {
     const { context, page } = await openWorkspace(browser, '李员工');
     const purpose = `浏览器验收预约 ${Date.now()}`;

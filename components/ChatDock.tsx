@@ -41,6 +41,7 @@ export interface AgentAction {
   reason?: string;
   topicId?: string;
   view?: SystemView;
+  hq3d?: { buildingId: string; floorNo?: number; roomUid?: string };
 }
 
 interface TodoItem {
@@ -96,6 +97,7 @@ const TOOL_LABELS: Record<string, string> = {
   get_my_todos: '整理我的待办',
   search_help: '检索功能指南',
   navigate_system: '定位系统功能',
+  query_hq3d_spaces: '查询总部3D空间',
   propose_booking: '填写申请草案',
   propose_edit_booking: '生成修改草案',
   propose_renew_booking: '生成续期草案',
@@ -853,7 +855,7 @@ export default function ChatDock({ open, onClose, userId, userName, theme, resou
       return next;
     });
     try {
-      if (action.type === 'NAVIGATE' && action.view) onNavigate(action.view);
+      if (action.type === 'NAVIGATE' && action.view && !action.hq3d) onNavigate(action.view);
       else await onAction(action);
       setHandled(prev => ({
         ...prev,

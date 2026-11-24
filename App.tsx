@@ -35,6 +35,18 @@ const HelpDrawer = React.lazy(() => import('./components/HelpDrawer'));
 const OperationsReports = React.lazy(() => import('./components/OperationsReports'));
 
 type AppView = SystemView;
+type Hq3dTarget = NonNullable<AgentAction['hq3d']>;
+type Hq3dLocation = Hq3dTarget & { navigationId: number };
+const buildHq3dSrc = (theme: string, target: Hq3dLocation | null) => {
+  const params = new URLSearchParams({ theme: theme === 'coamc' ? 'coamc' : 'classic' });
+  if (target) {
+    params.set('buildingId', target.buildingId);
+    if (target.floorNo) params.set('floorNo', String(target.floorNo));
+    if (target.roomUid) params.set('roomUid', target.roomUid);
+    params.set('navigationId', String(target.navigationId));
+  }
+  return `/hq3d.html?${params.toString()}`;
+};
 type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
 
 // --- Theme Config ---
@@ -2941,6 +2953,7 @@ const App: React.FC = () => {
   const [editingRole, setEditingRole] = useState<RoleDefinition | null>(null);
   const [viewDetail, setViewDetail] = useState<{ type: 'USER' | 'RESOURCE', data: any } | null>(null);
   const [showAgent, setShowAgent] = useState(false);
+  const [hq3dLocation, setHq3dLocation] = useState<Hq3dLocation | null>(null);
   const [showHelp, setShowHelp] = useState(false);
   const [helpTopicId, setHelpTopicId] = useState<string>();
   const [agentRequest, setAgentRequest] = useState<{ id: number; question: string }>();
@@ -3076,6 +3089,7 @@ const App: React.FC = () => {
       return;
     }
     setView(target);
+    setHq3dLocation(null);
     setShowHelp(false);
     setShowMobileMenu(false);
   };
@@ -3742,6 +3756,9 @@ const App: React.FC = () => {
     if (action.type === 'NAVIGATE' && action.view) {
       if (!allowedViews.has(action.view)) throw new Error('目标页面不存在，或当前角色没有访问权限。');
       navigateToView(action.view);
+      if (action.view === 'HQ_3D' && action.hq3d) {
+        setHq3dLocation({ ...action.hq3d, navigationId: Date.now() });
+      }
       setShowAgent(false);
       return;
     }
@@ -4198,7 +4215,7 @@ const App: React.FC = () => {
           {view === 'HQ_3D' && (
             <div className="hq3d-view animate-in fade-in">
               <iframe
-                src={`/hq3d.html?theme=${theme === 'coamc' ? 'coamc' : 'classic'}`}
+                src={buildHq3dSrc(theme, hq3dLocation)}
                 title="总部楼层 3D 分布图"
                 style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#dfeaf8' }}
               />

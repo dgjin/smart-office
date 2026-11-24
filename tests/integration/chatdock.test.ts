@@ -55,6 +55,11 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
               requiredFeatures: ['VIDEO'],
               isVideoConference: true
             }
+          }, {
+            type: 'NAVIGATE',
+            view: 'HQ_3D',
+            summary: '定位主楼2层礼堂',
+            hq3d: { buildingId: 'main', floorNo: 2, roomUid: 'main#2F#礼堂', url: 'https://invalid.example' }
           }]
         }
       ],
@@ -84,6 +89,10 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
     ]);
     assert.equal(saved.state.turns[1].actions[0].draft.exclusiveRequestReason, '临时重要接待');
     assert.equal(saved.state.turns[1].actions[0].draft.auditoriumSetup.seatingLayout, 'CLASSROOM');
+    assert.deepEqual(saved.state.turns[1].actions[1], {
+      type: 'NAVIGATE', view: 'HQ_3D', summary: '定位主楼2层礼堂',
+      hq3d: { buildingId: 'main', floorNo: 2, roomUid: 'main#2F#礼堂' }
+    });
     assert.equal(saved.state.handled['1-0'], 'dismissed');
     assert.equal(saved.state.input, initial.input);
     const ownerRows = await queryTestDb<any[]>('SELECT user_id, revision FROM chatdock_conversations WHERE revision > 0');
@@ -134,5 +143,12 @@ describe('ChatDock MySQL 持久化', { skip: !integrationEnabled, concurrency: f
       method: 'PUT', headers: { Cookie: user.cookie }, ...jsonBody({ revision: 2, state: { turns: [{ role: 'system', content: '伪造' }], handled: {}, input: '' } })
     });
     assert.equal(invalid.status, 400);
+
+    const invalidTarget = structuredClone(afterStale.state);
+    invalidTarget.turns[1].actions[1].hq3d.floorNo = 0;
+    const rejectedTarget = await server.request('/api/agent/conversation', {
+      method: 'PUT', headers: { Cookie: user.cookie }, ...jsonBody({ revision: 2, state: invalidTarget })
+    });
+    assert.equal(rejectedTarget.status, 400);
   });
 });

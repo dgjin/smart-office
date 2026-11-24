@@ -5062,6 +5062,29 @@ if (!SPATIAL_EMBED && SNAPSHOT.capabilities?.canManageLayout){
   });
 }
 
+function applyHq3dLocation(){
+  if (SPATIAL_EMBED) return;
+  const roomUid = String(pageParams.get('roomUid') || '').trim();
+  if (roomUid){
+    for (const building of BUILDINGS){
+      for (const floor of building.floors){
+        const room = floor.rooms.find(item => item.uid === roomUid);
+        if (room){ gotoRoom(room); return; }
+      }
+    }
+  }
+  const buildingId = String(pageParams.get('buildingId') || '').trim();
+  const bi = buildingId ? BUILDINGS.findIndex(item => item.id === buildingId) : state.bi;
+  if (bi < 0) return;
+  if (bi !== state.bi) gotoBuilding(bi);
+  const rawFloor = pageParams.get('floorNo');
+  if (rawFloor !== null){
+    const floorNo = Number(rawFloor);
+    const fi = curB().floors.findIndex(item => item.floorNo === floorNo);
+    if (fi >= 0) gotoFloor(fi);
+  }
+}
+
 function applySpatialState(payload){
   if (!SPATIAL_EMBED || !payload) return;
   const buildingId = String(payload.building || '').toUpperCase();
@@ -5129,6 +5152,7 @@ if (SPATIAL_EMBED){
   frame();
 } else {
   gotoFloor(0);
+  applyHq3dLocation();
 }
 buildFloorTicks();
 setPane('floors');

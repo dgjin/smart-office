@@ -114,11 +114,21 @@ const sanitizeDraft = (value: any) => {
   };
 };
 
+const sanitizeHq3dTarget = (value: any) => {
+  const target = record(value);
+  const buildingId = text(target.buildingId, 256);
+  const roomUid = text(target.roomUid, 256, true);
+  if (!buildingId.trim() || (roomUid !== undefined && !roomUid.trim())) invalid();
+  if (target.floorNo !== undefined && (!Number.isInteger(target.floorNo) || target.floorNo < 1 || target.floorNo > 200)) invalid();
+  return { buildingId, floorNo: target.floorNo, roomUid };
+};
+
 const sanitizeAction = (value: any) => {
   const action = record(value);
   if (!ACTION_TYPES.has(action.type)) invalid();
   if (action.decision !== undefined && !['APPROVE', 'REJECT'].includes(action.decision)) invalid();
   if (action.view !== undefined && !isSystemView(action.view)) invalid();
+  if (action.hq3d !== undefined && (action.type !== 'NAVIGATE' || action.view !== 'HQ_3D')) invalid();
   return {
     type: action.type,
     draft: action.draft === undefined ? undefined : sanitizeDraft(action.draft),
@@ -130,7 +140,8 @@ const sanitizeAction = (value: any) => {
     comment: text(action.comment, 4000, true),
     reason: text(action.reason, 1000, true),
     topicId: text(action.topicId, 128, true),
-    view: action.view
+    view: action.view,
+    hq3d: action.hq3d === undefined ? undefined : sanitizeHq3dTarget(action.hq3d)
   };
 };
 

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createExecutor, parseTime, toolsForRoles, buildContextSummary, buildTodos, type OfficeDb } from '../server/tools.ts';
+import type { Hq3dSnapshot } from '../server/hq3d.ts';
 import type { Booking } from '../types.ts';
 
 const at = (day: number, hour: number, minute = 0) => new Date(2026, 10, day, hour, minute);
@@ -47,6 +48,50 @@ const makeDb = (): OfficeDb => ({
 });
 
 const exec = (userId: string) => createExecutor(makeDb(), { userId, now: NOW });
+
+type Hq3dRoom = Hq3dSnapshot['buildings'][number]['floors'][number]['rooms'][number];
+const hqRoom = (uid: string, no: string, label: string, cat = 'office'): Hq3dRoom => ({
+  uid, no, cat, label, dept: '基础部门', person: '原使用人', notes: '基线备注',
+  lines: [label], nx: 0, nz: 0, nw: 0.4, nd: 0.4, frac: 0.16
+});
+const makeHq3dSnapshot = (): Hq3dSnapshot => ({
+  generatedAt: NOW.toISOString(),
+  buildings: [
+    {
+      id: 'main', name: '主楼', aspect: 1, aspAll: [1],
+      floors: [
+        { floorNo: 1, tag: '1F', sheet: '一层', areaTotal: 1000, rooms: [hqRoom('main#1F#101', '101', '基线房间'), hqRoom('main#1F#102', '102', '灵感会议室', 'meeting')] },
+        { floorNo: 2, tag: '2F', sheet: '二层', areaTotal: 900, rooms: [hqRoom('main#2F#201', '201', '礼堂', 'meeting')] }
+      ]
+    },
+    {
+      id: 'podium', name: '配楼', aspect: 1, aspAll: [1],
+      floors: [{ floorNo: 1, tag: '1F', sheet: '配楼一层', areaTotal: null, rooms: [hqRoom('podium#1F#P101', 'P101', '接待室')]}]
+    }
+  ],
+  profiles: {
+    'main#1F#101': {
+      uid: 'main#1F#101', label: '战略研究室', dept: '信息技术部', person: '张研究员',
+      notes: '当前资料备注', category: 'exec', areaSqm: 36, history: []
+    }
+  },
+  maintenance: {
+    'main#1F#101': {
+      records: [
+        { id: 'm2', roomUid: 'main#1F#101', type: '空调', title: '温度异常', note: '待处理', reporter: '张研究员', status: 'open', createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() },
+        { id: 'm1', roomUid: 'main#1F#101', type: '照明', title: '灯具更换', note: '', reporter: '管理员', status: 'done', createdAt: at(18, 8).toISOString(), updatedAt: at(18, 9).toISOString() }
+      ]
+    }
+  },
+  resourceMappings: {
+    'main#1F#101': { roomUid: 'main#1F#101', resourceId: 'r1', planId: 'plan-1', decisionRef: 'C-01', decisionBasis: '人工确认', note: '已映射' }
+  },
+  dispositions: {
+    'main#1F#101': { roomUid: 'main#1F#101', disposition: 'BOOKABLE_CANDIDATE', reviewStatus: 'UAT_PENDING', planId: 'plan-1', decisionBasis: '人工确认', note: '待验收' }
+  },
+  floorAreas: { 'main#1F': 1000, 'main#2F': 900 },
+  options: { maintenanceTypes: ['空调', '照明'], maintainableCategories: ['office', 'meeting'] }
+});
 
 test('parseTime 把无时区时间按本地时区解析，不偏移 8 小时', () => {
   const parsed = parseTime('2026-11-20T15:00');
@@ -411,6 +456,87 @@ test('待办按用户路由，并携带可执行的审批、签到与工单动�
   assert.ok(approver.some(t => t.id === 'approval-b1' && t.actions[0].type === 'PROPOSE_APPROVAL'));
   assert.ok(approver.some(t => t.id === 'workorder-w1' && t.actions[0].type === 'PROPOSE_WORK_ORDER'));
   assert.equal(createExecutor(db, { userId: '3', now: NOW }).get_my_todos({}).data.total, employee.length);
+});
+
+test('总部3D助手懒加载真实快照，合并当前资料、维护和映射并定位唯一房间', async () => {
+  assert.ok(toolsForRoles(['EMPLOYEE']).some(tool => tool.function.name === 'query_hq3d_spaces'));
+  let loads = 0;
+  const employee = createExecutor(makeDb(), { userId: '3', now: NOW }, {
+    loadHq3dSnapshot: async () => {
+      loads += 1;
+      return makeHq3dSnapshot();
+    }
+  });
+  employee.list_resources({});
+  assert.equal(loads, 0);
+
+  const result = await employee.query_hq3d_spaces({ building: '主楼', keyword: '信息技术部' });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(loads, 1);
+  assert.equal(result.data.total, 1);
+  assert.equal(result.data.returned, 1);
+  const room = result.data.rooms[0];
+  assert.equal(room.uid, 'main#1F#101');
+  assert.equal(room.label, '战略研究室');
+  assert.equal(room.dept, '信息技术部');
+  assert.equal(room.person, '张研究员');
+  assert.equal(room.notes, '当前资料备注');
+  assert.equal(room.category, 'exec');
+  assert.equal(room.categoryLabel, '领导办公室');
+  assert.equal(room.areaSqm, 36);
+  assert.equal(room.maintenance.open, 1);
+  assert.equal(room.maintenance.done, 1);
+  assert.equal(room.maintenance.latest[0].title, '温度异常');
+  assert.equal(room.resourceMapping.resourceId, 'r1');
+  assert.equal(room.disposition.reviewStatus, 'UAT_PENDING');
+  assert.equal(result.action?.type, 'NAVIGATE');
+  if (result.action?.type === 'NAVIGATE') {
+    assert.equal(result.action.view, 'HQ_3D');
+    assert.deepEqual(result.action.hq3d, { buildingId: 'main', floorNo: 1, roomUid: 'main#1F#101' });
+  }
+});
+
+test('总部3D助手支持概览、楼层过滤、结果限量和中文参数错误', async () => {
+  const employee = createExecutor(makeDb(), { userId: '3', now: NOW }, {
+    loadHq3dSnapshot: async () => makeHq3dSnapshot()
+  });
+  const overview = await employee.query_hq3d_spaces({});
+  assert.equal(overview.ok, true);
+  assert.equal(overview.data.total, 4);
+  assert.equal(overview.data.returned, 0);
+  assert.equal(overview.data.buildings.length, 2);
+  assert.equal(overview.data.buildings[0].floors[0].areaTotal, 1000);
+  assert.equal(overview.action, undefined);
+
+  const floor = await employee.query_hq3d_spaces({ building: 'main', floorNo: 1, limit: 1 });
+  assert.equal(floor.ok, true);
+  assert.equal(floor.data.total, 2);
+  assert.equal(floor.data.returned, 1);
+  assert.match(floor.hint || '', /共匹配 2 间/);
+  assert.equal(floor.action?.type, 'NAVIGATE');
+  if (floor.action?.type === 'NAVIGATE') assert.deepEqual(floor.action.hq3d, { buildingId: 'main', floorNo: 1 });
+
+  const singleRoomFloor = await employee.query_hq3d_spaces({ building: '配楼', floorNo: 1 });
+  assert.equal(singleRoomFloor.data.total, 1);
+  if (singleRoomFloor.action?.type === 'NAVIGATE') {
+    assert.deepEqual(singleRoomFloor.action.hq3d, { buildingId: 'podium', floorNo: 1 });
+  } else {
+    assert.fail('明确楼层查询应生成楼层定位动作');
+  }
+
+  const empty = await employee.query_hq3d_spaces({ keyword: '不存在房间' });
+  assert.equal(empty.ok, true);
+  assert.equal(empty.data.total, 0);
+  assert.equal(empty.action, undefined);
+  assert.match(empty.hint || '', /没有匹配/);
+  assert.equal((await employee.query_hq3d_spaces({ building: '不存在楼栋' })).ok, false);
+  assert.match((await employee.query_hq3d_spaces({ floorNo: 0 })).error || '', /楼层/);
+  assert.match((await employee.query_hq3d_spaces({ limit: 21 })).error || '', /返回数量/);
+  const denied = await createExecutor(makeDb(), { userId: 'ghost', now: NOW }, {
+    loadHq3dSnapshot: async () => { throw new Error('不应读取'); }
+  }).query_hq3d_spaces({});
+  assert.equal(denied.ok, false);
+  assert.match(denied.error || '', /重新登录/);
 });
 
 test('帮助检索和系统导航只暴露当前角色可用功能', () => {
