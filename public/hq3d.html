@@ -969,7 +969,7 @@
     </section>
     <section class="layout-step" aria-labelledby="layoutImportTitle">
       <h3 id="layoutImportTitle">2. 选择文件并预检</h3>
-      <p>JSON≤2 MiB，Excel≤4 MiB，PNG/JPEG≤8 MiB。原生楼层图按工作表、打印区域、合并单元格、行高和列宽识别；二层优先“全”，十四层优先“新”。图片仅识别单层；识别文字与坐标必须人工核对。</p>
+      <p>JSON≤2 MiB，Excel≤4 MiB，PNG/JPEG≤8 MiB。原生楼层图按工作表、打印区域、合并单元格、行高和列宽识别；二层优先“全”，十四层优先“新”。图片仅识别单层；匹配房间的多行文字变化会进入预检，原UID、类别、维护备注和几何保留，识别误字与坐标必须人工核对。</p>
       <div class="layout-field">
         <label for="layoutFile">布局文件（JSON / Excel / 图片）</label>
         <div class="layout-file">

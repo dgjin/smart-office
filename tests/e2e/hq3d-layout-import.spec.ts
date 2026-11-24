@@ -108,10 +108,14 @@ const createNativeFloorplan = async (layout: NativeLayout, withVersions = false)
   }
   return Buffer.from(await workbook.xlsx.writeBuffer());
 };
-const floorImage = async (page: Page, type: 'png' | 'jpeg') => {
+const floorImage = async (
+  page: Page,
+  type: 'png' | 'jpeg',
+  room = { no: '999', label: '图片验收室', person: '', background: 'white' }
+) => {
   const fixture = await page.context().newPage();
   await fixture.setViewportSize({ width: 900, height: 520 });
-  await fixture.setContent(`<!doctype html><html><body style="margin:0;background:#eef3f6;font-family:'PingFang SC','Microsoft YaHei',sans-serif"><main style="padding:36px"><h1 style="font-size:30px;margin:0 0 24px;color:#17324d">主楼一层平面图</h1><div style="width:720px;height:330px;background:white;border:3px solid #64839b;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#132f45"><strong style="font-size:56px">999</strong><span style="font-size:38px;margin-top:24px">图片验收室</span></div></main></body></html>`);
+  await fixture.setContent(`<!doctype html><html><body style="margin:0;background:#eef3f6;font-family:'PingFang SC','Microsoft YaHei',sans-serif"><main style="padding:36px"><h1 style="font-size:30px;margin:0 0 24px;color:#17324d">${room.no === '413' ? '主楼四层' : '主楼一层'}平面图</h1><div style="width:720px;height:330px;background:${room.background};border:3px solid #64839b;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#132f45"><strong style="font-size:56px">${room.no}</strong><span style="font-size:38px;margin-top:24px">${room.label}</span>${room.person ? `<span style="font-size:32px;margin-top:20px">${room.person}</span>` : ''}</div></main></body></html>`);
   const buffer = await fixture.screenshot({ type, fullPage: true });
   await fixture.close();
   return buffer;
@@ -251,6 +255,29 @@ test.describe('总部3D布局文件导入浏览器验收', () => {
       .toEqual(buildingLayout.building.floors.flatMap((floor: { rooms: Array<{ uid: string }> }) => floor.rooms.map(room => room.uid)).sort());
     await expect(frame.locator('#layoutReport')).toContainText('2F选用“主楼二层（全）”');
     await expect(frame.locator('#layoutReport')).toContainText('14F选用“主楼十四层（新）”');
+    await context.close();
+  });
+
+  test('黄色背景图片中的既有房间多行文字变化进入预检并保留UID', async ({ browser }) => {
+    test.setTimeout(180_000);
+    const { context, page } = await openWorkspace(browser, '超级管理员');
+    const frame = await openHq3d(page);
+    await frame.getByRole('button', { name: '导入文件更新楼层图', exact: true }).click();
+    await frame.getByLabel('更新范围', { exact: true }).selectOption('FLOOR');
+    await frame.getByLabel('楼层', { exact: true }).selectOption('4');
+    const buffer = await floorImage(page, 'png', { no: '413', label: '机构管理部', person: '侯强', background: '#fff200' });
+    const result = await uploadBufferAndPreflight(page, frame, { name: 'main-4f-text-changed.png', mimeType: 'image/png', buffer });
+    const room = result.parsed.layout.building.floors[0].rooms.find((item: { no?: string }) => item.no === '413');
+    expect(room.uid).toBe('main#4F#413#业务二部');
+    expect(room.label).toBe('机构管理部');
+    expect(room.dept).toBe('机构管理部');
+    expect(room.person).toBe('侯强');
+    expect(room.lines).toEqual(['413', '机构管理部', '侯强']);
+    expect(result.parsed.createdRooms).toBe(0);
+    expect(result.report.counts.created).toBe(0);
+    expect(result.report.counts.updated).toBe(1);
+    await expect(frame.locator('#layoutReport')).toContainText('修改 4F 机构管理部');
+    await expect(frame.locator('#layoutReport')).toContainText('识别文字会进入预检');
     await context.close();
   });
 

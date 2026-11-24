@@ -183,6 +183,54 @@ describe('总部3D Excel与图片识别转换', () => {
     assert.ok(created.nz <= 0.152 && created.nz + created.nd >= 0.261);
   });
 
+  it('图片OCR把匹配房间的部门与人员多行变化写入候选并保护UID、备注和几何', () => {
+    const original = document();
+    const room = original.building.floors[0].rooms[0];
+    Object.assign(room, {
+      uid: 'main#4F#413#业务二部', no: '413', cat: 'office', label: '业务二部', dept: '业务二部', person: '',
+      notes: '原维护备注', lines: ['413', '业务二部'], nx: 0.3274, nz: 0, nw: 0.1292, nd: 0.2809, frac: 0.0491
+    });
+    const result = buildHq3dLayoutFromOcr(original, [
+      { text: '413', confidence: 92, bbox: { x0: 355, y0: 178, x1: 442, y1: 220 } },
+      { text: '机构管理部', confidence: 96, bbox: { x0: 305, y0: 270, x1: 492, y1: 306 } },
+      { text: '侯强', confidence: 92, bbox: { x0: 368, y0: 343, x1: 429, y1: 372 } }
+    ], { width: 900, height: 520 });
+    const updated = result.layout.building.floors[0].rooms[0];
+    assert.equal(result.createdRooms, 0);
+    assert.equal(result.preservedRooms, 0);
+    assert.equal(updated.uid, room.uid);
+    assert.equal(updated.cat, 'office');
+    assert.equal(updated.label, '机构管理部');
+    assert.equal(updated.dept, '机构管理部');
+    assert.equal(updated.person, '侯强');
+    assert.equal(updated.notes, '原维护备注');
+    assert.deepEqual(updated.lines, ['413', '机构管理部', '侯强']);
+    assert.deepEqual([updated.nx, updated.nz, updated.nw, updated.nd, updated.frac], [room.nx, room.nz, room.nw, room.nd, room.frac]);
+    assert.match(result.notices.join(''), /识别文字会进入预检/);
+  });
+
+  it('图片OCR忽略既有文字的空格、换行与括号格式差异', () => {
+    const original = document();
+    Object.assign(original.building.floors[0].rooms[0], {
+      uid: 'main#4F#412#内控法律', no: '412', cat: 'office', label: '内控法律', dept: '内控法律', person: '李 鑫',
+      lines: ['412', '内控法律', '李 鑫']
+    });
+    const result = buildHq3dLayoutFromOcr(original, [
+      { text: '412', confidence: 92, bbox: { x0: 319, y0: 81, x1: 352, y1: 97 } },
+      { text: '内控法律', confidence: 96, bbox: { x0: 290, y0: 115, x1: 383, y1: 138 } },
+      { text: '李鑫', confidence: 90, bbox: { x0: 310, y0: 154, x1: 362, y1: 177 } }
+    ], { width: 1260, height: 915 });
+    assert.deepEqual(result.layout, original);
+  });
+
+  it('图片OCR仅识别到既有房号时不清空原文字', () => {
+    const original = document();
+    const result = buildHq3dLayoutFromOcr(original, [
+      { text: '101', confidence: 95, bbox: { x0: 10, y0: 10, x1: 100, y1: 30 } }
+    ], { width: 1000, height: 700 });
+    assert.deepEqual(result.layout, original);
+  });
+
   it('图片仅接受真实PNG或JPEG头并限制尺寸', () => {
     assert.throws(() => readHq3dImageDimensions(Buffer.from('not an image')), /HQ3D_LAYOUT_IMAGE_FORMAT/);
     const png = Buffer.alloc(24);

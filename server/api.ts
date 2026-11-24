@@ -12,7 +12,7 @@ import { getChatConversation, saveChatConversation } from './chatConversations.t
 import { getWorkspace, recordConfidentialBookingRead } from './workspace.ts';
 import {
   createBackup, createConfidentialityAuthorization, deleteApprovalDelegate, deleteConfidentialWhitelistEntry, deleteDepartment, deleteUser,
-  getRuleConfiguration, importRecords, restoreBackup, saveApprovalDelegate, saveConfidentialWhitelistEntry, saveDepartment, saveRole,
+  getRuleConfiguration, importRecords, restoreBackup, saveApprovalDelegate, saveApprovalRuleSet, saveConfidentialWhitelistEntry, saveDepartment, saveRole,
   saveRuleSettings, saveUser, saveWorkflow
 } from './admin.ts';
 import { importResourceLedger, preflightResourceImport } from './resourceLedger.ts';
@@ -243,6 +243,12 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       requireAdmin(actor);
       const { workflow } = await readJson(req);
       send(res, 200, { workflow: await saveWorkflow(workflow, actor.id), workspace: await getWorkspace(actor) });
+      return true;
+    }
+    if (url.pathname === '/api/approval-rule-set' && req.method === 'PUT') {
+      requireAdmin(actor);
+      const ruleSet = await saveApprovalRuleSet(await readJson(req), actor.id);
+      send(res, 200, { ruleSet, workspace: await getWorkspace(actor) });
       return true;
     }
     if (url.pathname === '/api/approval-delegates' && req.method === 'POST') {

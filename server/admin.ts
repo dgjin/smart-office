@@ -6,7 +6,7 @@ import { ensureApprovalPolicy } from '../utils/approvalPolicy.ts';
 import { isConfidentialBooking } from './confidentiality.ts';
 import { DEFAULT_RULE_SETTINGS, isServiceType } from '../constants.ts';
 import { ensureServiceDomain } from './serviceDomain.ts';
-import type { ApprovalDelegate, ApprovalNode, ApprovalRuleSetVersion, Booking, BookingRuleSettings, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, Department, ExceptionActionRecord, Resource, ResourceImportBatch, RoleDefinition, RuleVersion, User, WorkOrder, WorkflowVersion } from '../types.ts';
+import type { ApprovalDelegate, ApprovalNode, ApprovalRule, ApprovalRuleSetVersion, Booking, BookingRuleSettings, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, Department, ExceptionActionRecord, Resource, ResourceImportBatch, RoleDefinition, RuleVersion, User, WorkOrder, WorkflowVersion } from '../types.ts';
 import { validateDeviceBackup } from './devices.ts';
 
 const stringValue = (value: unknown, field: string, max = 200) => {
@@ -278,6 +278,37 @@ export const saveWorkflow = async (input: any, actorId: string) => mutateDb(asyn
   return workflow;
 });
 
+export const saveApprovalRuleSet = async (input: any, actorId: string) => mutateDb(async (db, { audit }) => {
+  ensureApprovalPolicy(db);
+  const current = [...(db.approvalRuleSetVersions || [])].sort((a, b) => b.version - a.version)[0]!;
+  if (!Number.isSafeInteger(input?.baseVersion) || input.baseVersion !== current.version) {
+    throw new DbError('APPROVAL_RULE_SET_CHANGED', 409);
+  }
+  const ruleSet = normalizeApprovalRuleSets([{
+    version: current.version + 1,
+    defaultWorkflowVersion: input.defaultWorkflowVersion,
+    rules: input.rules,
+    createdAt: new Date().toISOString(),
+    createdBy: actorId
+  }], db.workflowVersions || [])[0];
+  if (ruleSet.defaultWorkflowVersion === current.defaultWorkflowVersion
+    && JSON.stringify(ruleSet.rules) === JSON.stringify(current.rules)) {
+    throw new DbError('APPROVAL_RULE_SET_UNCHANGED', 400);
+  }
+  db.approvalRuleSetVersions = [...(db.approvalRuleSetVersions || []), ruleSet];
+  await audit({
+    actorId,
+    action: 'APPROVAL_RULE_SET_PUBLISH',
+    entityType: 'APPROVAL_RULE_SET',
+    entityId: String(ruleSet.version),
+    details: changeDetails(
+      { version: current.version, defaultWorkflowVersion: current.defaultWorkflowVersion, rules: current.rules },
+      { version: ruleSet.version, defaultWorkflowVersion: ruleSet.defaultWorkflowVersion, rules: ruleSet.rules }
+    )
+  });
+  return ruleSet;
+});
+
 const normalizeDelegate = (input: any, users: User[], actorId: string, id?: string): ApprovalDelegate => {
   const delegatorId = idValue(input?.delegatorId);
   const delegateId = idValue(input?.delegateId);
@@ -413,14 +444,20 @@ const normalizeApprovalRuleSets = (input: any, workflowVersions: WorkflowVersion
       || !workflowVersions.some(item => item.version === version.defaultWorkflowVersion) || !Array.isArray(version.rules)) {
       throw new DbError('INVALID_APPROVAL_RULE_SET', 400);
     }
-    const rules = version.rules.map((rule: any) => {
+    if (!Array.isArray(version.rules) || version.rules.length > 100) throw new DbError('INVALID_APPROVAL_RULE_SET', 400);
+    const rules: ApprovalRule[] = version.rules.map((rule: any) => {
       const conditions = rule?.conditions;
-      if (!conditions || typeof conditions !== 'object' || Array.isArray(conditions)
-        || (conditions.meetingTypes !== undefined && (!Array.isArray(conditions.meetingTypes) || conditions.meetingTypes.some((type: any) => !['NORMAL', 'IMPORTANT', 'CONFIDENTIAL'].includes(type))))
+      const conditionKeys = conditions && typeof conditions === 'object' && !Array.isArray(conditions) ? Object.keys(conditions) : [];
+      const supportedConditionKeys = ['meetingTypes', 'exclusive', 'heavyService', 'continuousOverDays'];
+      if (!conditionKeys.length || conditionKeys.some(key => !supportedConditionKeys.includes(key))
+        || (conditions.meetingTypes !== undefined && (!Array.isArray(conditions.meetingTypes) || !conditions.meetingTypes.length
+          || new Set(conditions.meetingTypes).size !== conditions.meetingTypes.length
+          || conditions.meetingTypes.some((type: any) => !['NORMAL', 'IMPORTANT', 'CONFIDENTIAL'].includes(type))))
         || (conditions.exclusive !== undefined && typeof conditions.exclusive !== 'boolean')
         || (conditions.heavyService !== undefined && typeof conditions.heavyService !== 'boolean')
-        || (conditions.continuousOverDays !== undefined && (typeof conditions.continuousOverDays !== 'number' || !Number.isFinite(conditions.continuousOverDays) || conditions.continuousOverDays <= 0))
-        || !Number.isSafeInteger(rule?.priority) || !workflowVersions.some(item => item.version === rule?.workflowVersion)) {
+        || (conditions.continuousOverDays !== undefined && (!Number.isSafeInteger(conditions.continuousOverDays) || conditions.continuousOverDays <= 0 || conditions.continuousOverDays > 366))
+        || !Number.isSafeInteger(rule?.priority) || rule.priority < 0 || rule.priority > 1000000
+        || !workflowVersions.some(item => item.version === rule?.workflowVersion)) {
         throw new DbError('INVALID_APPROVAL_RULE', 400);
       }
       return {
@@ -429,6 +466,7 @@ const normalizeApprovalRuleSets = (input: any, workflowVersions: WorkflowVersion
       };
     });
     unique(rules, 'APPROVAL_RULE');
+    if (new Set(rules.map(rule => rule.priority)).size !== rules.length) throw new DbError('DUPLICATE_APPROVAL_RULE_PRIORITY', 409);
     return {
       version: version.version,
       defaultWorkflowVersion: version.defaultWorkflowVersion,

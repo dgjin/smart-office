@@ -429,9 +429,13 @@ test.describe('MySQL-only 浏览器验收', () => {
     await adminDrawer.getByRole('button', { name: /动态审批规则与流程版本/ }).click();
     await expect(adminDrawer.getByRole('heading', { name: '动态审批规则与流程版本', exact: true })).toBeVisible();
     await expect(adminDrawer).toContainText('新申请冻结提交时的资源公司，在途申请不因后续资源或流程修改而改变历史范围');
+    await expect(adminDrawer).toContainText('保存到草稿');
+    await expect(adminDrawer).toContainText('发布新版本');
+    await expect(adminDrawer).toContainText('在途申请继续使用提交时冻结的规则与流程');
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('楼层图导入');
     await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
     await expect(adminDrawer).toContainText('未被图片识别的现有房间会自动保留');
+    await expect(adminDrawer).toContainText('识别文字变化会进入预检');
     await expect(adminDrawer).toContainText('已绑定资源的房间不能通过精确文件省略停用');
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('原生楼层图Excel');
     await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
@@ -612,6 +616,71 @@ test.describe('MySQL-only 浏览器验收', () => {
     const audits = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id = ?', ['RESOURCE_DELETE', resourceId]);
     expect(audits).toHaveLength(1);
     await context.close();
+  });
+
+  test('管理员在桌面和移动端维护动态规则草稿并发布不可变新版本', async ({ browser }) => {
+    const beforeRows = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'approvalRuleSetVersions'");
+    const beforeVersions = typeof beforeRows[0].payload === 'string' ? JSON.parse(beforeRows[0].payload) : beforeRows[0].payload;
+    const current = beforeVersions.sort((a: any, b: any) => b.version - a.version)[0];
+    const { context, page } = await openWorkspace(browser, '超级管理员');
+    await page.getByRole('button', { name: '系统管理', exact: true }).click();
+    await page.getByRole('button', { name: '流程配置', exact: true }).click();
+    await expect(page.getByRole('heading', { name: `动态规则集 V${current.version}`, exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '新增规则', exact: true }).click();
+    let dialog = page.getByRole('dialog', { name: '新增动态规则', exact: true });
+    await dialog.getByLabel('规则名称', { exact: true }).fill('浏览器普通重服务规则');
+    await dialog.getByLabel('规则会议类型重要会议', { exact: true }).uncheck();
+    await dialog.getByLabel('规则会议类型普通会议', { exact: true }).check();
+    await dialog.getByLabel('规则重服务条件', { exact: true }).selectOption('YES');
+    await dialog.getByRole('button', { name: '保存到草稿', exact: true }).click();
+    await expect(page.getByText('有未发布修改', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: '编辑规则浏览器普通重服务规则', exact: true }).click();
+    dialog = page.getByRole('dialog', { name: '编辑动态规则', exact: true });
+    await dialog.getByLabel('规则名称', { exact: true }).fill('浏览器普通重服务规则已编辑');
+    await dialog.getByRole('button', { name: '保存到草稿', exact: true }).click();
+    await expect(page.getByText('浏览器普通重服务规则已编辑', { exact: true })).toBeVisible();
+
+    page.once('dialog', prompt => prompt.accept());
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/approval-rule-set') && response.request().method() === 'PUT' && response.ok()),
+      page.getByRole('button', { name: '发布新版本', exact: true }).click()
+    ]);
+    await expect(page.getByRole('heading', { name: `动态规则集 V${current.version + 1}`, exact: true })).toBeVisible();
+    await expect(page.getByText('浏览器普通重服务规则已编辑', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: '删除规则浏览器普通重服务规则已编辑', exact: true }).click();
+    page.once('dialog', prompt => prompt.accept());
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith('/api/approval-rule-set') && response.request().method() === 'PUT' && response.ok()),
+      page.getByRole('button', { name: '发布新版本', exact: true }).click()
+    ]);
+    await expect(page.getByRole('heading', { name: `动态规则集 V${current.version + 2}`, exact: true })).toBeVisible();
+    await expect(page.getByText('浏览器普通重服务规则已编辑', { exact: true })).toHaveCount(0);
+    const afterRows = await queryTestDb<any[]>("SELECT payload FROM office_state WHERE state_key = 'approvalRuleSetVersions'");
+    const afterVersions = typeof afterRows[0].payload === 'string' ? JSON.parse(afterRows[0].payload) : afterRows[0].payload;
+    expect(afterVersions).toHaveLength(beforeVersions.length + 2);
+    expect(afterVersions.find((version: any) => version.version === current.version)).toEqual(current);
+    expect(afterVersions.find((version: any) => version.version === current.version + 1).rules.some((rule: any) => rule.name === '浏览器普通重服务规则已编辑')).toBe(true);
+    const audits = await queryTestDb<any[]>('SELECT actor_id FROM audit_events WHERE action = ? AND entity_id IN (?, ?)', ['APPROVAL_RULE_SET_PUBLISH', String(current.version + 1), String(current.version + 2)]);
+    expect(audits).toHaveLength(2);
+    expect(audits.every((audit: any) => audit.actor_id === '1')).toBe(true);
+    await context.close();
+
+    const mobile = await openWorkspace(browser, '超级管理员', { width: 375, height: 812 });
+    await mobile.page.getByRole('button', { name: '更多', exact: true }).click();
+    await mobile.page.getByRole('dialog', { name: '更多功能', exact: true }).getByRole('button', { name: '流程配置', exact: true }).click();
+    await mobile.page.getByRole('button', { name: '编辑规则重要会议强化审批', exact: true }).click();
+    const mobileDialog = mobile.page.getByRole('dialog', { name: '编辑动态规则', exact: true });
+    await expect(mobileDialog).toBeVisible();
+    await mobileDialog.getByLabel('规则名称', { exact: true }).fill('移动端草稿名称');
+    await mobileDialog.getByRole('button', { name: '保存到草稿', exact: true }).click();
+    await expect(mobile.page.getByText('有未发布修改', { exact: true })).toBeVisible();
+    await mobile.page.getByRole('button', { name: '重置草稿', exact: true }).click();
+    await expect(mobile.page.getByText('有未发布修改', { exact: true })).toHaveCount(0);
+    await expect(mobile.page.getByRole('button', { name: '发布新版本', exact: true })).toBeDisabled();
+    expect(await mobile.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await mobile.context.close();
   });
 
   test('业务错误码在界面统一显示中文且接口契约保持不变', async ({ browser }) => {

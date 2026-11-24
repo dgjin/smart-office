@@ -12,7 +12,7 @@ import {
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
   PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp
 } from 'lucide-react';
-import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException } from './types';
+import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalRule, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException, WorkflowVersion } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
 import { BOOKING_DISPLAY_STATUS_LABELS, findAttendeeOverlaps, findAvailableRooms, findBookingConflicts, findNextAvailableSlot, getBookingDisplayStatus, getDailyOccurrenceCount, getLongTermMaxEndDate, hasBookingConflict, isActiveBooking, isResourceAcceptingBookings, isValidBookingPurpose, resourceSupportsFeature, splitBookingByNaturalDay, validateBookingResource } from './utils/bookingRules';
 import { validateBookingDraft } from './utils/bookingDraft';
@@ -46,6 +46,10 @@ const THEMES = [
   { id: 'rose', name: '胭脂红', color: 'bg-rose-600', text: 'text-rose-600', border: 'border-rose-100', bg: 'bg-rose-50' },
   { id: 'purple', name: '极光紫', color: 'bg-purple-600', text: 'text-purple-600', border: 'border-purple-100', bg: 'bg-purple-50' },
 ];
+
+const MEETING_TYPE_LABELS: Record<MeetingType, string> = {
+  NORMAL: '普通', IMPORTANT: '重要', CONFIDENTIAL: '涉密'
+};
 
 const ROOM_FEATURES: Array<{ id: RoomFeature; label: string }> = [
   { id: 'VIDEO', label: '视频会议系统' },
@@ -126,6 +130,12 @@ const BOOKING_ERROR_MESSAGES: Record<string, string> = {
   INVALID_USAGE_CONFIRMATION: '请选择正常使用或确认未使用。',
   USAGE_CONFIRMATION_NOTE_REQUIRED: '确认未使用时必须填写原因，说明不能超过 500 字。',
   BOOKING_NOT_APPEALABLE: '仅本人因未签到、确认未使用或人工异常释放的预约可以申诉，主动取消不可申诉。',
+  INVALID_APPROVAL_RULE_SET: '规则集配置不完整，请检查默认流程和规则列表。',
+  INVALID_APPROVAL_RULE: '规则配置无效，请检查条件、优先级和目标流程。',
+  APPROVAL_RULE_SET_CHANGED: '规则集已由其他管理员更新，请刷新后重新修改。',
+  APPROVAL_RULE_SET_UNCHANGED: '规则集没有变化，无需重复发布。',
+  DUPLICATE_APPROVAL_RULE_ID: '规则标识重复，请修改后再发布。',
+  DUPLICATE_APPROVAL_RULE_PRIORITY: '规则优先级不能重复，请调整后再发布。',
   USAGE_APPEAL_EXISTS: '该预约已有待处理申诉，请勿重复提交。',
   USAGE_APPEAL_REASON_REQUIRED: '请填写 2 至 1000 字的申诉理由。',
   USAGE_APPEAL_NOT_FOUND: '申诉不存在或已处理，请刷新后查看结果。',
@@ -1629,6 +1639,77 @@ const WorkflowModal = ({ node, roles, departments, onClose, onSave, theme }: any
   );
 };
 
+const ApprovalRuleModal = ({ rule, rules, workflowVersions, defaultWorkflowVersion, onClose, onSave, theme }: {
+  rule: ApprovalRule | null;
+  rules: ApprovalRule[];
+  workflowVersions: WorkflowVersion[];
+  defaultWorkflowVersion: number;
+  onClose: () => void;
+  onSave: (rule: ApprovalRule) => void;
+  theme: string;
+}) => {
+  const dialogRef = useModalA11y(onClose);
+  const [form, setForm] = useState({
+    id: rule?.id || `rule-${Date.now()}`,
+    name: rule?.name || '',
+    priority: String(rule?.priority ?? Math.max(0, ...rules.map(item => item.priority)) + 10),
+    meetingTypes: rule?.conditions.meetingTypes || ['IMPORTANT'] as MeetingType[],
+    exclusive: rule?.conditions.exclusive === undefined ? 'ANY' : rule.conditions.exclusive ? 'YES' : 'NO',
+    heavyService: rule?.conditions.heavyService === undefined ? 'ANY' : rule.conditions.heavyService ? 'YES' : 'NO',
+    continuousOverDays: rule?.conditions.continuousOverDays?.toString() || '',
+    workflowVersion: rule?.workflowVersion || defaultWorkflowVersion
+  });
+  const [error, setError] = useState('');
+  const meetingTypes: Array<{ id: MeetingType; label: string }> = [
+    { id: 'NORMAL', label: '普通会议' }, { id: 'IMPORTANT', label: '重要会议' }, { id: 'CONFIDENTIAL', label: '涉密会议' }
+  ];
+  const save = () => {
+    const priority = Number(form.priority);
+    const continuousOverDays = form.continuousOverDays ? Number(form.continuousOverDays) : undefined;
+    if (!form.id.trim() || !form.name.trim()) return setError('请填写规则标识和规则名称。');
+    if (!Number.isSafeInteger(priority) || priority < 0 || priority > 1000000) return setError('优先级应为 0 至 1000000 的整数。');
+    if (rules.some(item => item.id !== rule?.id && item.id === form.id.trim())) return setError('规则标识已存在，请重新填写。');
+    if (rules.some(item => item.id !== rule?.id && item.priority === priority)) return setError('规则优先级不能重复。');
+    if (continuousOverDays !== undefined && (!Number.isSafeInteger(continuousOverDays) || continuousOverDays < 1 || continuousOverDays > 366)) {
+      return setError('连续天数应为 1 至 366 的整数。');
+    }
+    const conditions: ApprovalRule['conditions'] = {};
+    if (form.meetingTypes.length) conditions.meetingTypes = form.meetingTypes;
+    if (form.exclusive !== 'ANY') conditions.exclusive = form.exclusive === 'YES';
+    if (form.heavyService !== 'ANY') conditions.heavyService = form.heavyService === 'YES';
+    if (continuousOverDays !== undefined) conditions.continuousOverDays = continuousOverDays;
+    if (!Object.keys(conditions).length) return setError('至少设置一项匹配条件，避免规则无条件覆盖全部申请。');
+    onSave({ id: form.id.trim(), name: form.name.trim(), priority, conditions, workflowVersion: Number(form.workflowVersion) });
+  };
+
+  return <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
+    <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="approval-rule-modal-title" className="bg-white rounded-[2rem] p-6 sm:p-8 max-w-2xl w-full max-h-[90dvh] overflow-y-auto shadow-2xl">
+      <h3 id="approval-rule-modal-title" className="font-black text-xl">{rule ? '编辑动态规则' : '新增动态规则'}</h3>
+      <p className="mt-2 text-xs text-gray-500">同一规则内的条件需同时满足；保存后先进入草稿，点击“发布新版本”才会生效。</p>
+      <div className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <label className="text-xs font-bold text-gray-500">规则标识<input aria-label="规则标识" value={form.id} disabled={!!rule} onChange={event => setForm({ ...form, id: event.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100 disabled:text-gray-500" /></label>
+        <label className="text-xs font-bold text-gray-500">规则名称<input aria-label="规则名称" value={form.name} onChange={event => setForm({ ...form, name: event.target.value })} placeholder="例如：重要会议强化审批" className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+        <label className="text-xs font-bold text-gray-500">优先级<input aria-label="规则优先级" type="number" min="0" max="1000000" step="1" value={form.priority} onChange={event => setForm({ ...form, priority: event.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+        <label className="text-xs font-bold text-gray-500">目标审批流程<select aria-label="规则目标审批流程" value={form.workflowVersion} onChange={event => setForm({ ...form, workflowVersion: Number(event.target.value) })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100">{[...workflowVersions].sort((a, b) => b.version - a.version).map(version => <option key={version.version} value={version.version}>V{version.version} · {version.nodes.map(node => node.name).join(' → ') || '空流程'}</option>)}</select></label>
+      </div>
+      <fieldset className="mt-5 rounded-2xl bg-gray-50 p-4">
+        <legend className="px-1 text-xs font-black text-gray-600">会议类型（不勾选表示不限）</legend>
+        <div className="mt-2 flex flex-wrap gap-4">{meetingTypes.map(type => <label key={type.id} className="flex min-h-11 items-center gap-2 text-sm font-bold text-gray-700"><input type="checkbox" aria-label={`规则会议类型${type.label}`} checked={form.meetingTypes.includes(type.id)} onChange={() => setForm({ ...form, meetingTypes: form.meetingTypes.includes(type.id) ? form.meetingTypes.filter(item => item !== type.id) : [...form.meetingTypes, type.id] })} />{type.label}</label>)}</div>
+      </fieldset>
+      <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-4">
+        <label className="text-xs font-bold text-gray-500">专属资源<select aria-label="规则专属资源条件" value={form.exclusive} onChange={event => setForm({ ...form, exclusive: event.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100"><option value="ANY">不限</option><option value="YES">是</option><option value="NO">否</option></select></label>
+        <label className="text-xs font-bold text-gray-500">重服务<select aria-label="规则重服务条件" value={form.heavyService} onChange={event => setForm({ ...form, heavyService: event.target.value })} className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100"><option value="ANY">不限</option><option value="YES">是</option><option value="NO">否</option></select></label>
+        <label className="text-xs font-bold text-gray-500">连续超过天数<input aria-label="规则连续超过天数" type="number" min="1" max="366" step="1" value={form.continuousOverDays} onChange={event => setForm({ ...form, continuousOverDays: event.target.value })} placeholder="不限" className="mt-1 w-full p-3 bg-gray-50 rounded-xl border border-gray-100" /></label>
+      </div>
+      {error && <p role="alert" className="mt-4 text-xs font-bold text-rose-600">{error}</p>}
+      <div className="flex gap-3 mt-6">
+        <button type="button" onClick={onClose} className="flex-1 min-h-11 py-3 bg-gray-100 text-gray-600 rounded-xl font-bold">取消</button>
+        <button type="button" onClick={save} className={`flex-1 min-h-11 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存到草稿</button>
+      </div>
+    </div>
+  </div>;
+};
+
 const ApprovalDelegateModal = ({ users, onClose, onSave, theme }: any) => {
   const inputDateTime = (date: Date) => `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
   const [formData, setFormData] = useState({
@@ -2608,6 +2689,7 @@ const App: React.FC = () => {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [departments, setDepartments] = useState<Department[]>([]);
   const [workflow, setWorkflow] = useState<ApprovalNode[]>([]);
+  const [workflowVersions, setWorkflowVersions] = useState<WorkflowVersion[]>([]);
   const [approvalDelegates, setApprovalDelegates] = useState<ApprovalDelegate[]>([]);
   const [approvalRuleSetVersions, setApprovalRuleSetVersions] = useState<ApprovalRuleSetVersion[]>([]);
   const [confidentialWhitelist, setConfidentialWhitelist] = useState<ConfidentialWhitelistEntry[]>([]);
@@ -2654,6 +2736,7 @@ const App: React.FC = () => {
     setBookings(migrateBookings(data.bookings || []));
     setDepartments(data.departments || []);
     setWorkflow(data.workflow || []);
+    setWorkflowVersions(data.workflowVersions || []);
     setApprovalDelegates(data.approvalDelegates || []);
     setApprovalRuleSetVersions(data.approvalRuleSetVersions || []);
     setConfidentialWhitelist(data.confidentialWhitelist || []);
@@ -2832,6 +2915,22 @@ const App: React.FC = () => {
   const [editingBooking, setEditingBooking] = useState<Booking | null>(null);
   const [showWorkflowModal, setShowWorkflowModal] = useState(false);
   const [editingWorkflowNode, setEditingWorkflowNode] = useState<ApprovalNode | null>(null);
+  const latestApprovalRuleSet = useMemo(
+    () => [...approvalRuleSetVersions].sort((a, b) => b.version - a.version)[0],
+    [approvalRuleSetVersions]
+  );
+  const [approvalRuleDraft, setApprovalRuleDraft] = useState<ApprovalRule[]>([]);
+  const [approvalDefaultWorkflowVersion, setApprovalDefaultWorkflowVersion] = useState(0);
+  const [approvalRuleBaseVersion, setApprovalRuleBaseVersion] = useState(0);
+  const [showApprovalRuleModal, setShowApprovalRuleModal] = useState(false);
+  const [editingApprovalRule, setEditingApprovalRule] = useState<ApprovalRule | null>(null);
+  const [publishingApprovalRules, setPublishingApprovalRules] = useState(false);
+  useEffect(() => {
+    if (!latestApprovalRuleSet || latestApprovalRuleSet.version === approvalRuleBaseVersion) return;
+    setApprovalRuleDraft(structuredClone(latestApprovalRuleSet.rules));
+    setApprovalDefaultWorkflowVersion(latestApprovalRuleSet.defaultWorkflowVersion);
+    setApprovalRuleBaseVersion(latestApprovalRuleSet.version);
+  }, [latestApprovalRuleSet, approvalRuleBaseVersion]);
   const [showDelegateModal, setShowDelegateModal] = useState(false);
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([]);
   const [auditQuery, setAuditQuery] = useState('');
@@ -3767,6 +3866,36 @@ const App: React.FC = () => {
     } catch (error) { adminError(error); }
   };
 
+  const handleSaveApprovalRule = (rule: ApprovalRule) => {
+    setApprovalRuleDraft(current => editingApprovalRule
+      ? current.map(item => item.id === editingApprovalRule.id ? rule : item)
+      : [...current, rule]);
+    setShowApprovalRuleModal(false);
+    setEditingApprovalRule(null);
+  };
+
+  const handlePublishApprovalRules = async () => {
+    if (!latestApprovalRuleSet || !approvalRuleSetDirty) return;
+    if (!confirm(`确定发布动态规则集 V${latestApprovalRuleSet.version + 1} 吗？新申请将立即使用新版本，在途申请保持原审批规则。`)) return;
+    setPublishingApprovalRules(true);
+    try {
+      const result = await apiRequest('/api/approval-rule-set', 'PUT', {
+        baseVersion: latestApprovalRuleSet.version,
+        defaultWorkflowVersion: approvalDefaultWorkflowVersion,
+        rules: approvalRuleDraft
+      });
+      addNotification('规则集已发布', `动态规则集 V${result.ruleSet.version} 已生效；在途申请仍按原冻结版本审批。`, 'SUCCESS');
+    } catch (error) { adminError(error); } finally {
+      setPublishingApprovalRules(false);
+    }
+  };
+
+  const handleResetApprovalRules = () => {
+    if (!latestApprovalRuleSet) return;
+    setApprovalRuleDraft(structuredClone(latestApprovalRuleSet.rules));
+    setApprovalDefaultWorkflowVersion(latestApprovalRuleSet.defaultWorkflowVersion);
+  };
+
   const handleSaveDelegate = async (delegate: Partial<ApprovalDelegate>) => {
     await apiRequest('/api/approval-delegates', 'POST', { delegate });
     setShowDelegateModal(false);
@@ -3845,7 +3974,10 @@ const App: React.FC = () => {
   if (authLoading) return <div className="min-h-screen grid place-items-center bg-gray-50 text-sm font-bold text-gray-500">正在验证企业会话…</div>;
   if (!currentUser) return <LoginView onLogin={setCurrentUser} />;
 
-  const latestApprovalRuleSet = [...approvalRuleSetVersions].sort((a, b) => b.version - a.version)[0];
+  const approvalRuleSetDirty = !!latestApprovalRuleSet && (
+    approvalDefaultWorkflowVersion !== latestApprovalRuleSet.defaultWorkflowVersion
+    || JSON.stringify(approvalRuleDraft) !== JSON.stringify(latestApprovalRuleSet.rules)
+  );
   const normalizedAuditQuery = auditQuery.trim().toLowerCase();
   const filteredAuditEvents = auditEvents.filter(event => !normalizedAuditQuery || [
     event.action, event.entityType, event.entityId, event.actorId,
@@ -4520,9 +4652,28 @@ const App: React.FC = () => {
                  ))}
                  {workflow.length === 0 && <div className="p-20 text-center bg-white rounded-3xl border border-dashed text-gray-500 font-bold">请新增至少一个审批节点后再发布；普通预约自动核准不受影响。</div>}
                </div>
-               {latestApprovalRuleSet && <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="approval-rules-title">
-                 <div><h4 id="approval-rules-title" className="font-black text-gray-800">动态规则集 V{latestApprovalRuleSet.version}</h4><p className="mt-1 text-xs text-gray-500">按优先级从高到低命中第一条规则；普通预约未命中特殊规则时自动核准。提交后冻结规则集与流程版本。</p></div>
-                 <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-3">{[...latestApprovalRuleSet.rules].sort((a, b) => b.priority - a.priority).map(rule => <div key={rule.id} className="p-4 rounded-2xl bg-gray-50 border border-gray-100"><div className="flex items-center justify-between gap-3"><p className="text-sm font-black text-gray-800">{rule.name}</p><span className="text-[11px] font-black text-indigo-600">优先级 {rule.priority}</span></div><p className="mt-2 text-xs text-gray-500">{[rule.conditions.meetingTypes?.length ? `会议类型：${rule.conditions.meetingTypes.join(' / ')}` : '', rule.conditions.exclusive !== undefined ? `专属资源：${rule.conditions.exclusive ? '是' : '否'}` : '', rule.conditions.heavyService !== undefined ? `重服务：${rule.conditions.heavyService ? '是' : '否'}` : '', rule.conditions.continuousOverDays !== undefined ? `单次连续超过：${rule.conditions.continuousOverDays} 天` : ''].filter(Boolean).join(' · ')}</p><p className="mt-1 text-[11px] font-bold text-gray-500">目标流程 V{rule.workflowVersion}</p></div>)}</div>
+               {latestApprovalRuleSet && <section className="bg-white rounded-3xl border border-gray-100 p-4 sm:p-6 shadow-sm" aria-labelledby="approval-rules-title">
+                 <div className="flex flex-col lg:flex-row lg:items-start justify-between gap-4">
+                   <div>
+                     <div className="flex flex-wrap items-center gap-2"><h4 id="approval-rules-title" className="font-black text-gray-800">动态规则集 V{latestApprovalRuleSet.version}</h4>{approvalRuleSetDirty && <span className="rounded-full bg-amber-50 px-2 py-1 text-[11px] font-bold text-amber-700">有未发布修改</span>}</div>
+                     <p className="mt-1 text-xs text-gray-500">按优先级从高到低命中第一条规则，同一规则的条件需同时满足；发布后新申请使用 V{latestApprovalRuleSet.version + 1}，在途申请保持冻结版本。</p>
+                   </div>
+                   <div className="flex flex-wrap gap-2 shrink-0">
+                     <button type="button" onClick={() => { setEditingApprovalRule(null); setShowApprovalRuleModal(true); }} className="studio-secondary min-h-11"><Plus size={15}/>新增规则</button>
+                     {approvalRuleSetDirty && <button type="button" onClick={handleResetApprovalRules} className="studio-secondary min-h-11"><RotateCcw size={15}/>重置草稿</button>}
+                     <button type="button" onClick={() => void handlePublishApprovalRules()} disabled={!approvalRuleSetDirty || publishingApprovalRules} className={`min-h-11 rounded-xl bg-${theme}-600 px-4 py-2 text-sm font-bold text-white disabled:opacity-40`}><Save size={15} className="mr-1 inline"/>{publishingApprovalRules ? '发布中…' : '发布新版本'}</button>
+                   </div>
+                 </div>
+                 <div className="mt-5 rounded-2xl border border-gray-100 bg-gray-50 p-4">
+                   <label className="text-xs font-black text-gray-600">默认流程版本<select aria-label="规则集默认流程版本" value={approvalDefaultWorkflowVersion} onChange={event => setApprovalDefaultWorkflowVersion(Number(event.target.value))} className="mt-2 w-full rounded-xl border border-gray-200 bg-white p-3 text-sm font-medium">{[...workflowVersions].sort((a, b) => b.version - a.version).map(version => <option key={version.version} value={version.version}>V{version.version} · {version.nodes.map(node => node.name).join(' → ') || '空流程'}</option>)}</select></label>
+                   <p className="mt-2 text-[11px] text-gray-500">普通预约未命中特殊规则时仍自动核准；默认流程版本用于规则集版本追踪。</p>
+                 </div>
+                 <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-3">{[...approvalRuleDraft].sort((a, b) => b.priority - a.priority).map(rule => <article key={rule.id} className="p-4 rounded-2xl bg-gray-50 border border-gray-100">
+                   <div className="flex items-start justify-between gap-3"><div><p className="text-sm font-black text-gray-800">{rule.name}</p><p className="mt-1 text-[10px] font-medium text-gray-500">{rule.id}</p></div><span className="shrink-0 text-[11px] font-black text-indigo-600">优先级 {rule.priority}</span></div>
+                   <p className="mt-2 text-xs text-gray-600">{[rule.conditions.meetingTypes?.length ? `会议类型：${rule.conditions.meetingTypes.map(type => MEETING_TYPE_LABELS[type]).join(' / ')}` : '', rule.conditions.exclusive !== undefined ? `专属资源：${rule.conditions.exclusive ? '是' : '否'}` : '', rule.conditions.heavyService !== undefined ? `重服务：${rule.conditions.heavyService ? '是' : '否'}` : '', rule.conditions.continuousOverDays !== undefined ? `单次连续超过：${rule.conditions.continuousOverDays} 天` : ''].filter(Boolean).join(' · ')}</p>
+                   <div className="mt-3 flex items-center justify-between gap-2 border-t border-gray-200 pt-3"><p className="text-[11px] font-bold text-gray-500">目标流程 V{rule.workflowVersion}</p><div className="flex gap-1"><button type="button" aria-label={`编辑规则${rule.name}`} onClick={() => { setEditingApprovalRule(rule); setShowApprovalRuleModal(true); }} className="min-h-11 min-w-11 p-3 text-gray-500 hover:text-indigo-600"><Edit2 size={16}/></button><button type="button" aria-label={`删除规则${rule.name}`} onClick={() => setApprovalRuleDraft(current => current.filter(item => item.id !== rule.id))} className="min-h-11 min-w-11 p-3 text-gray-500 hover:text-rose-600"><Trash2 size={16}/></button></div></div>
+                 </article>)}</div>
+                 {approvalRuleDraft.length === 0 && <p className="mt-4 rounded-2xl border border-dashed border-gray-200 py-8 text-center text-xs font-bold text-gray-500">草稿中没有特殊规则；发布后所有未配置特殊规则的申请将按现有自动核准口径处理。</p>}
                </section>}
                <section className="bg-white rounded-3xl border border-gray-100 p-6 shadow-sm" aria-labelledby="delegation-title">
                  <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
@@ -4802,6 +4953,15 @@ const App: React.FC = () => {
           : [...workflow, { id: `wf-${Date.now()}`, ...data }];
         void handleSaveWorkflow(next);
       }} theme={theme} />}
+      {showApprovalRuleModal && latestApprovalRuleSet && <ApprovalRuleModal
+        rule={editingApprovalRule}
+        rules={approvalRuleDraft}
+        workflowVersions={workflowVersions}
+        defaultWorkflowVersion={approvalDefaultWorkflowVersion}
+        onClose={() => { setShowApprovalRuleModal(false); setEditingApprovalRule(null); }}
+        onSave={handleSaveApprovalRule}
+        theme={theme}
+      />}
       {showDelegateModal && <ApprovalDelegateModal users={users} onClose={() => setShowDelegateModal(false)} onSave={handleSaveDelegate} theme={theme} />}
       
       {showBookingModal && selectedResource && (<BookingFormModal resource={selectedResource} theme={theme} initialDate={calendarDateForBooking} initialValues={bookingPrefill} onClose={() => { setShowBookingModal(false); setCalendarDateForBooking(null); setBookingPrefill(null); setEditingBooking(null); setBookingFormError(null); }} onConfirm={handleBooking} availableUsers={users} currentUser={currentUser} bookings={bookings} ruleSettings={ruleSettings} confidentialityAuthorizations={confidentialityAuthorizations} serviceCatalog={serviceCatalog} externalError={bookingFormError} />)}

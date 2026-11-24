@@ -18,6 +18,7 @@ export type Hq3dOcrLine = {
   text: string;
   confidence: number;
   bbox: { x0: number; y0: number; x1: number; y1: number };
+  textLines?: string[];
 };
 
 export type Hq3dImageRecognition = {
@@ -31,7 +32,7 @@ export type Hq3dImageRecognition = {
 const imageError = (code: string, message: string) => new DbError(code, 400, { detail: message });
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 const rounded = (value: number) => Number(value.toFixed(6));
-const compact = (value: string) => value.toLocaleLowerCase().replace(/[\s#_\-—–·,，。/\\（）()[\]【】]/g, '');
+const compact = (value: string) => value.toLocaleLowerCase().replace(/[\s#_\-—–·,，。/\\（）()[\]【】|‖]/g, '');
 
 const pngDimensions = (buffer: Buffer) => {
   if (buffer.length < 24 || !buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return null;
@@ -114,39 +115,58 @@ const mergeAdjacentRoomLabels = (lines: Hq3dOcrLine[], dimensions: { width: numb
   const merged = lines.map((line, index) => {
     const no = roomNumber(line.text);
     if (!no || compact(line.text) !== compact(no) || consumed.has(index)) return line;
-    let labelIndex = -1;
-    let nearest = Number.POSITIVE_INFINITY;
     const lineHeight = line.bbox.y1 - line.bbox.y0;
     const centerX = (line.bbox.x0 + line.bbox.x1) / 2;
-    lines.forEach((candidate, candidateIndex) => {
-      if (candidateIndex === index || consumed.has(candidateIndex) || roomNumber(candidate.text)) return;
+    const maxVerticalGap = Math.max(dimensions.height * 0.2, lineHeight * 3);
+    const labels = lines.filter((candidate, candidateIndex) => {
+      if (candidateIndex === index || consumed.has(candidateIndex) || roomNumber(candidate.text)) return false;
       const verticalGap = candidate.bbox.y0 - line.bbox.y1;
-      if (verticalGap < -lineHeight * 0.25 || verticalGap > Math.max(lineHeight * 3, dimensions.height * 0.08)) return;
+      if (verticalGap < -lineHeight * 0.25 || verticalGap > maxVerticalGap) return false;
       const candidateCenterX = (candidate.bbox.x0 + candidate.bbox.x1) / 2;
       const horizontalGap = Math.abs(candidateCenterX - centerX);
       const overlap = Math.min(line.bbox.x1, candidate.bbox.x1) - Math.max(line.bbox.x0, candidate.bbox.x0);
-      if (overlap <= 0 && horizontalGap > dimensions.width * 0.05) return;
-      const distance = verticalGap + horizontalGap * 0.25;
-      if (distance < nearest) {
-        nearest = distance;
-        labelIndex = candidateIndex;
-      }
-    });
-    if (labelIndex < 0) return line;
-    const label = lines[labelIndex];
-    consumed.add(labelIndex);
+      return overlap > 0 || horizontalGap <= dimensions.width * 0.05;
+    }).sort((left, right) => left.bbox.y0 - right.bbox.y0 || left.bbox.x0 - right.bbox.x0);
+    if (!labels.length) return line;
+    labels.forEach(label => consumed.add(lines.indexOf(label)));
+    const textLines = [line.text.trim(), ...labels.map(label => label.text.trim())];
     return {
-      text: `${line.text.trim()} ${label.text.trim()}`,
-      confidence: Math.min(line.confidence, label.confidence),
+      text: textLines.join(' '),
+      textLines,
+      confidence: Math.min(line.confidence, ...labels.map(label => label.confidence)),
       bbox: {
-        x0: Math.min(line.bbox.x0, label.bbox.x0),
-        y0: Math.min(line.bbox.y0, label.bbox.y0),
-        x1: Math.max(line.bbox.x1, label.bbox.x1),
-        y1: Math.max(line.bbox.y1, label.bbox.y1)
+        x0: Math.min(line.bbox.x0, ...labels.map(label => label.bbox.x0)),
+        y0: line.bbox.y0,
+        x1: Math.max(line.bbox.x1, ...labels.map(label => label.bbox.x1)),
+        y1: Math.max(line.bbox.y1, ...labels.map(label => label.bbox.y1))
       }
     };
   });
   return merged.filter((_, index) => !consumed.has(index));
+};
+
+const recognizedTextLines = (line: Hq3dOcrLine) => {
+  if (line.textLines?.length) return line.textLines.map(text => text.trim()).filter(Boolean);
+  const no = roomNumber(line.text);
+  if (!no) return [line.text.trim()];
+  const match = line.text.match(/(?<![A-Za-z0-9])([A-Za-z]?\d{2,4}[A-Za-z]?)(?![A-Za-z0-9])/);
+  const remainder = match ? `${line.text.slice(0, match.index)} ${line.text.slice(match.index! + match[0].length)}`.trim() : '';
+  return [no, remainder].filter(Boolean);
+};
+
+const updateMatchedRoomText = (room: Hq3dSeedRoom, line: Hq3dOcrLine) => {
+  const recognized = recognizedTextLines(line);
+  const no = roomNumber(recognized[0] || '');
+  const content = [no && compact(recognized[0]) === compact(no) ? '' : recognized[0], ...recognized.slice(1)]
+    .map(text => text?.trim() || '').filter(Boolean);
+  if (!content.length) return;
+  const currentLines = room.lines?.length ? room.lines : [room.label];
+  const currentContent = currentLines.filter((text, index) => index > 0 || compact(text) !== compact(room.no || ''));
+  if (compact(recognized.join('')) === compact(currentLines.join('')) || compact(content.join('')) === compact(currentContent.join(''))) return;
+  room.label = content[0];
+  if (['office', 'meeting', 'open'].includes(room.cat)) room.dept = content[0];
+  room.person = content.length > 1 && !/^[（(]/.test(content[1]) ? content.slice(1).join(' ') : '';
+  room.lines = recognized;
 };
 
 export const buildHq3dLayoutFromOcr = (
@@ -177,6 +197,7 @@ export const buildHq3dLayoutFromOcr = (
     });
     if (matched) {
       matchedUids.add(matched.uid);
+      if (matched.no && lineTokens.includes(compact(matched.no))) updateMatchedRoomText(matched, line);
       continue;
     }
 
@@ -210,6 +231,7 @@ export const buildHq3dLayoutFromOcr = (
   const notices = [
     `本地OCR识别到${recognizedRooms}条房间标注：匹配现有${matchedUids.size}间，新增候选${created.length}间。`,
     `已保留${preservedRooms}间未被图片识别的现有房间，不会因漏识别而停用。`,
+    '匹配房间的识别文字会进入预检，原UID、类别、维护备注和几何保持不变。',
     '新增房间坐标依据文字位置估算，不代表墙体边界；请在预检中逐项核对后再确认导入。'
   ];
   return {
@@ -237,7 +259,7 @@ export const recognizeHq3dLayoutImage = async (buffer: Buffer, scopeValue: unkno
     let worker;
     try {
       worker = await createWorker('chi_sim', OEM.LSTM_ONLY, { langPath, gzip: true, cacheMethod: 'none' });
-      await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, preserve_interword_spaces: '1' });
+      await worker.setParameters({ tessedit_pageseg_mode: PSM.SPARSE_TEXT, preserve_interword_spaces: '1', thresholding_method: '2' });
       const { data } = await worker.recognize(buffer, {}, { text: true, blocks: true });
       const lines = (data.blocks || []).flatMap(block => block.paragraphs.flatMap(paragraph => extractLines(paragraph.lines)));
       return buildHq3dLayoutFromOcr(base, lines, dimensions);

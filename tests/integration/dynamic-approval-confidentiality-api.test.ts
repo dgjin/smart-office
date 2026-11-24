@@ -227,6 +227,86 @@ describe('MRP3 动态审批与保密控制 API 集成验证', { skip: !integrati
     assert.deepEqual((await readBooking(combined.id)).approvalWorkflow, combined.approvalWorkflow);
   });
 
+  it('管理员可发布动态规则集且非法配置、越权和过期草稿均被拒绝', async () => {
+    const ruleSets = await readCollection<ApprovalRuleSetVersion>('approvalRuleSetVersions');
+    const current = ruleSets.sort((a, b) => b.version - a.version)[0];
+    const validRule = {
+      id: 'admin-normal-heavy', name: '管理员维护普通重服务审批', priority: 450,
+      conditions: { meetingTypes: ['NORMAL'], heavyService: true }, workflowVersion: current.defaultWorkflowVersion
+    };
+    const publish = (userId: string, body: Record<string, unknown>) => server.request('/api/approval-rule-set', {
+      method: 'PUT', headers: { Cookie: session(userId).cookie }, ...jsonBody(body)
+    });
+    const base = { baseVersion: current.version, defaultWorkflowVersion: current.defaultWorkflowVersion };
+    const forbidden = await publish(ids.outsider, { ...base, rules: [...current.rules, validRule] });
+    assert.equal(forbidden.status, 403);
+    for (const [rules, expectedStatus, expectedCode] of [
+      [[{ ...validRule, conditions: {} }], 400, 'INVALID_APPROVAL_RULE'],
+      [[{ ...validRule, priority: current.rules[0].priority }], 409, 'DUPLICATE_APPROVAL_RULE_PRIORITY'],
+      [[{ ...validRule, workflowVersion: 999999 }], 400, 'INVALID_APPROVAL_RULE']
+    ] as Array<[unknown[], number, string]>) {
+      const response = await publish(ids.admin, { ...base, rules: [...current.rules, ...rules] });
+      assert.equal(response.status, expectedStatus);
+      assert.equal((await readJson(response)).error, expectedCode);
+    }
+    const stale = await publish(ids.admin, { ...base, baseVersion: current.version - 1, rules: [...current.rules, validRule] });
+    assert.equal(stale.status, 409);
+    assert.equal((await readJson(stale)).error, 'APPROVAL_RULE_SET_CHANGED');
+    const unchanged = await publish(ids.admin, { ...base, rules: current.rules });
+    assert.equal(unchanged.status, 400);
+    assert.equal((await readJson(unchanged)).error, 'APPROVAL_RULE_SET_UNCHANGED');
+    assert.equal((await readCollection<ApprovalRuleSetVersion>('approvalRuleSetVersions')).length, ruleSets.length);
+  });
+
+  it('规则集发布后新申请命中新规则而在途申请和历史版本保持不变', async () => {
+    const ruleSets = await readCollection<ApprovalRuleSetVersion>('approvalRuleSetVersions');
+    const current = ruleSets.sort((a, b) => b.version - a.version)[0];
+    const inFlight = await createBooking(ids.requester, '规则维护前在途重要申请', { meetingType: 'IMPORTANT' });
+    const customRule = {
+      id: 'admin-normal-heavy', name: '管理员维护普通重服务审批', priority: 450,
+      conditions: { meetingTypes: ['NORMAL'], heavyService: true }, workflowVersion: current.defaultWorkflowVersion
+    };
+    const response = await server.request('/api/approval-rule-set', {
+      method: 'PUT', headers: { Cookie: session(ids.admin).cookie }, ...jsonBody({
+        baseVersion: current.version,
+        defaultWorkflowVersion: current.defaultWorkflowVersion,
+        rules: [...current.rules, customRule]
+      })
+    });
+    assert.equal(response.status, 200, JSON.stringify(await readJson(response.clone())));
+    const published = (await readJson(response)).ruleSet as ApprovalRuleSetVersion;
+    assert.equal(published.version, current.version + 1);
+    assert.equal(published.createdBy, ids.admin);
+    assert.ok(published.rules.some(rule => rule.id === customRule.id));
+
+    const booking = await createBooking(ids.requester, '新发布普通重服务规则命中', {
+      serviceRequirements: [{ type: 'VIDEO', details: '管理员规则集成验证' }]
+    });
+    assert.equal(booking.approvalRuleSetVersion, published.version);
+    assert.equal(booking.approvalRuleId, customRule.id);
+    assert.equal(booking.status, 'PENDING');
+    const frozen = await readBooking(inFlight.id);
+    assert.equal(frozen.approvalRuleSetVersion, current.version);
+    assert.equal(frozen.approvalRuleId, 'important');
+    const allVersions = await readCollection<ApprovalRuleSetVersion>('approvalRuleSetVersions');
+    assert.deepEqual(allVersions.find(version => version.version === current.version), current);
+    const audits = await queryTestDb<any[]>('SELECT actor_id, details FROM audit_events WHERE action = ? AND entity_id = ?', ['APPROVAL_RULE_SET_PUBLISH', String(published.version)]);
+    assert.equal(audits.length, 1);
+    assert.equal(audits[0].actor_id, ids.admin);
+    const details = typeof audits[0].details === 'string' ? JSON.parse(audits[0].details) : audits[0].details;
+    assert.equal(details.before.version, current.version);
+    assert.equal(details.after.version, published.version);
+
+    const restored = await server.request('/api/approval-rule-set', {
+      method: 'PUT', headers: { Cookie: session(ids.admin).cookie }, ...jsonBody({
+        baseVersion: published.version,
+        defaultWorkflowVersion: current.defaultWorkflowVersion,
+        rules: current.rules
+      })
+    });
+    assert.equal(restored.status, 200, JSON.stringify(await readJson(restored.clone())));
+  });
+
   it('GAP-04 专属预约编辑和最终核准均重检领导参会标识', async () => {
     const start = new Date(Date.now() + 6 * 3600000);
     const booking = await createBooking(ids.requester, 'GAP04专属领导参会重检', {
