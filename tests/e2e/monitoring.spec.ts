@@ -27,6 +27,24 @@ const expectLiveSnapshot = async (page: Page) => {
   await expect(page.locator('.monitoring-office-table-shell tbody tr').first()).toBeVisible();
 };
 
+const expectDistinctStatusColors = async (page: Page) => {
+  const palette = await page.locator('.monitoring-screen').evaluate(screen => {
+    const styles = getComputedStyle(screen);
+    return ['--monitor-in-use', '--monitor-reserved', '--monitor-idle', '--monitor-maintenance', '--monitor-pending']
+      .map(name => styles.getPropertyValue(name).trim());
+  });
+  expect(new Set(palette).size).toBe(5);
+  const roomStatuses = await page.locator('.monitoring-room-card').evaluateAll(cards => cards.map(card => ({
+    status: card.getAttribute('data-status'),
+    color: getComputedStyle(card).borderTopColor
+  })));
+  expect(new Set(roomStatuses.map(item => item.color)).size).toBe(new Set(roomStatuses.map(item => item.status)).size);
+  const officeColors = await page.locator('.monitoring-office-summary button').evaluateAll(buttons =>
+    buttons.map(button => getComputedStyle(button).borderTopColor)
+  );
+  expect(new Set(officeColors).size).toBe(4);
+};
+
 test.describe('监控大屏浏览器验收', () => {
   test.skip(!integrationEnabled, '仅允许显式隔离 MySQL 测试环境');
 
@@ -51,6 +69,7 @@ test.describe('监控大屏浏览器验收', () => {
     await themeWrite;
     await page.getByRole('button', { name: '监控大屏', exact: true }).click();
     await expectLiveSnapshot(page);
+    await expectDistinctStatusColors(page);
     await expect(page.locator('.monitoring-metric')).toHaveCount(4);
     await expect(page.locator('.monitoring-office-table-shell tbody tr')).toHaveCount(40);
     await page.screenshot({ path: testInfo.outputPath('monitoring-desktop-coamc.png') });
@@ -96,6 +115,7 @@ test.describe('监控大屏浏览器验收', () => {
     await page.getByTitle('翡翠绿', { exact: true }).click();
     await classicWrite;
     await expect(page.locator('.studio-app')).toHaveAttribute('data-theme', 'emerald');
+    await expectDistinctStatusColors(page);
     expect(errors).toEqual([]);
     await context.close();
   });
@@ -107,6 +127,7 @@ test.describe('监控大屏浏览器验收', () => {
     await page.getByRole('navigation', { name: '移动端主导航', exact: true }).getByRole('button', { name: '更多', exact: true }).click();
     await page.getByRole('dialog', { name: '更多功能', exact: true }).getByRole('button', { name: '监控大屏', exact: true }).click();
     await expectLiveSnapshot(page);
+    await expectDistinctStatusColors(page);
     await expect(page.locator('.monitoring-metric')).toHaveCount(4);
     await expect(page.locator('.studio-agent-launcher')).toBeHidden();
     await expect(page.locator('.monitoring-assistant')).toBeVisible();

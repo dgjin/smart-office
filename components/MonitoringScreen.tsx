@@ -119,7 +119,7 @@ export default function MonitoringScreen({ onOpenAssistant }: { onOpenAssistant:
       <div className="monitoring-section-heading"><div><span>01 / MEETING ROOMS</span><h3 id="meeting-monitor-title">会议室实时使用</h3></div><p>共 {snapshot?.meetingRooms.length ?? '—'} 间 · 预约占用 {roomCounts.RESERVED + roomCounts.IN_USE} 间</p></div>
       <div className="monitoring-metrics">
         <Metric label="已签到使用中" value={roomCounts.IN_USE} detail="已登记签到事实" icon={Activity} tone="active" />
-        <Metric label="预约占用" value={roomCounts.RESERVED} detail="有效预约进行中" icon={Clock3} />
+        <Metric label="预约占用" value={roomCounts.RESERVED} detail="有效预约进行中" icon={Clock3} tone="reserved" />
         <Metric label="当前空闲" value={roomCounts.IDLE} detail="无当前有效预约" icon={CheckCircle2} tone="available" />
         <Metric label="维护 / 待开放" value={roomCounts.MAINTENANCE + roomCounts.PENDING} detail={`${roomCounts.MAINTENANCE} 间维护 · ${roomCounts.PENDING} 间待开放`} icon={Wrench} tone="warning" />
       </div>

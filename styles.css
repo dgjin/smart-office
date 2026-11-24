@@ -1437,7 +1437,20 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .studio-app[data-theme='coamc'] .chat-draft-head h4,
 .studio-app[data-theme='coamc'] .help-drawer-header h2 { font-weight: 700; }
 
-.monitoring-screen { display: grid; gap: 32px; }
+.monitoring-screen {
+  --monitor-in-use: #175e85;
+  --monitor-in-use-soft: #e3eef4;
+  --monitor-reserved: #6b4b8a;
+  --monitor-reserved-soft: #eee8f3;
+  --monitor-idle: #2f6b4f;
+  --monitor-idle-soft: #e4eee7;
+  --monitor-maintenance: #925d16;
+  --monitor-maintenance-soft: #f4ead9;
+  --monitor-pending: #59646e;
+  --monitor-pending-soft: #e9edf0;
+  display: grid;
+  gap: 32px;
+}
 .monitoring-assistant { display: none; }
 .monitoring-hero { display: flex; align-items: center; justify-content: space-between; gap: 28px; padding: 26px 28px; background: var(--ink); color: #f8f5ec; border-left: 4px solid var(--accent); }
 .monitoring-hero h3 { margin: 5px 0 8px; color: inherit; font: 31px var(--font-display); letter-spacing: .02em; }
@@ -1462,37 +1475,39 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .monitoring-metric-label svg { color: var(--accent); }
 .monitoring-metric > strong { display: block; margin: 7px 0 2px; font: 39px var(--font-display); font-variant-numeric: tabular-nums; }
 .monitoring-metric > p { color: var(--muted); font-size: 10px; }
-.monitoring-metric.active > strong, .monitoring-metric.active .monitoring-metric-label svg { color: var(--accent-deep); }
-.monitoring-metric.available > strong, .monitoring-metric.available .monitoring-metric-label svg { color: var(--moss); }
-.monitoring-metric.warning > strong, .monitoring-metric.warning .monitoring-metric-label svg { color: var(--amber); }
+.monitoring-metric.active > strong, .monitoring-metric.active .monitoring-metric-label svg { color: var(--monitor-in-use); }
+.monitoring-metric.reserved > strong, .monitoring-metric.reserved .monitoring-metric-label svg { color: var(--monitor-reserved); }
+.monitoring-metric.available > strong, .monitoring-metric.available .monitoring-metric-label svg { color: var(--monitor-idle); }
+.monitoring-metric.warning > strong, .monitoring-metric.warning .monitoring-metric-label svg { color: var(--monitor-maintenance); }
 .monitoring-filter { display: flex; flex-wrap: wrap; gap: 0; width: fit-content; margin-bottom: 16px; border: 1px solid var(--line); }
 .monitoring-filter button { min-height: 42px; padding: 9px 17px; border-right: 1px solid var(--line); background: var(--surface); color: var(--muted); font-size: 12px; cursor: pointer; }
 .monitoring-filter button:last-child { border-right: 0; }
 .monitoring-filter button[aria-pressed='true'] { background: var(--ink); color: #fffaf1; }
 .monitoring-room-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.monitoring-room-card { display: flex; min-width: 0; min-height: 218px; flex-direction: column; border: 1px solid var(--line); border-top: 3px solid var(--moss); background: var(--surface); }
-.monitoring-room-card[data-status='IN_USE'], .monitoring-room-card[data-status='RESERVED'] { border-top-color: var(--accent); }
-.monitoring-room-card[data-status='MAINTENANCE'], .monitoring-room-card[data-status='PENDING'] { border-top-color: var(--amber); }
+.monitoring-room-card { --room-status: var(--monitor-idle); --room-status-soft: var(--monitor-idle-soft); display: flex; min-width: 0; min-height: 218px; flex-direction: column; border: 1px solid var(--line); border-top: 3px solid var(--room-status); background: var(--surface); }
+.monitoring-room-card[data-status='IN_USE'] { --room-status: var(--monitor-in-use); --room-status-soft: var(--monitor-in-use-soft); }
+.monitoring-room-card[data-status='RESERVED'] { --room-status: var(--monitor-reserved); --room-status-soft: var(--monitor-reserved-soft); }
+.monitoring-room-card[data-status='MAINTENANCE'] { --room-status: var(--monitor-maintenance); --room-status-soft: var(--monitor-maintenance-soft); }
+.monitoring-room-card[data-status='PENDING'] { --room-status: var(--monitor-pending); --room-status-soft: var(--monitor-pending-soft); }
 .monitoring-card-head { display: flex; align-items: start; justify-content: space-between; gap: 12px; padding: 17px 18px 13px; }
 .monitoring-card-head p { color: var(--muted); font-size: 10px; }
 .monitoring-card-head h4 { margin: 4px 0 0; font-size: 16px; font-weight: 700; overflow-wrap: anywhere; }
-.monitoring-status-badge { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 4px 6px; background: var(--moss-soft); color: var(--moss); font-size: 10px; font-weight: 700; }
+.monitoring-status-badge { display: inline-flex; align-items: center; gap: 5px; flex: 0 0 auto; padding: 4px 6px; background: var(--room-status-soft); color: var(--room-status); font-size: 10px; font-weight: 700; }
 .monitoring-status-badge i { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
-.monitoring-room-card[data-status='IN_USE'] .monitoring-status-badge, .monitoring-room-card[data-status='RESERVED'] .monitoring-status-badge { background: var(--accent-soft); color: var(--accent-deep); }
-.monitoring-room-card[data-status='MAINTENANCE'] .monitoring-status-badge, .monitoring-room-card[data-status='PENDING'] .monitoring-status-badge { background: var(--amber-soft); color: var(--amber); }
 .monitoring-room-body { flex: 1; min-width: 0; padding: 0 18px 16px; }
 .monitoring-room-body > strong { display: block; font-size: 13px; line-height: 1.65; overflow-wrap: anywhere; }
 .monitoring-room-body > p { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--ink-soft); font: 11px var(--font-mono); }
 .monitoring-room-body > span { display: block; margin-top: 9px; color: var(--muted); font-size: 10px; line-height: 1.6; }
 .monitoring-room-card > footer { padding: 11px 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 10px; }
 .monitoring-office-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
-.monitoring-office-summary button { display: flex; align-items: center; justify-content: space-between; min-height: 69px; padding: 14px 18px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
-.monitoring-office-summary button[aria-pressed='true'] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.monitoring-office-summary button { display: flex; align-items: center; justify-content: space-between; min-height: 69px; padding: 12px 18px 14px; border: 1px solid var(--line); border-top: 3px solid var(--office-status); background: var(--surface); color: var(--ink); text-align: left; cursor: pointer; }
+.monitoring-office-summary button[aria-pressed='true'] { border-color: var(--office-status); box-shadow: inset 0 0 0 1px var(--office-status); }
 .monitoring-office-summary span { font-size: 12px; }
-.monitoring-office-summary strong { font: 29px var(--font-display); }
-.monitoring-office-summary [data-status='ASSIGNED'] strong { color: var(--accent-deep); }
-.monitoring-office-summary [data-status='VACANT'] strong { color: var(--moss); }
-.monitoring-office-summary [data-status='UNREGISTERED'] strong, .monitoring-office-summary [data-status='MAINTENANCE'] strong { color: var(--amber); }
+.monitoring-office-summary strong { color: var(--office-status); font: 29px var(--font-display); }
+.monitoring-office-summary [data-status='ASSIGNED'] { --office-status: var(--monitor-in-use); }
+.monitoring-office-summary [data-status='VACANT'] { --office-status: var(--monitor-idle); }
+.monitoring-office-summary [data-status='UNREGISTERED'] { --office-status: var(--monitor-pending); }
+.monitoring-office-summary [data-status='MAINTENANCE'] { --office-status: var(--monitor-maintenance); }
 .monitoring-source-note { margin: 13px 0 17px; color: var(--muted); font-size: 11px; line-height: 1.8; }
 .monitoring-office-tools { display: flex; align-items: end; gap: 10px; padding: 13px; border: 1px solid var(--line); border-bottom: 0; background: var(--surface); }
 .monitoring-office-tools label { display: grid; gap: 5px; color: var(--muted); font-size: 10px; }
@@ -1508,9 +1523,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .monitoring-office-table-shell td:first-child strong, .monitoring-office-table-shell td:first-child span { display: block; }
 .monitoring-office-table-shell td:first-child strong { color: var(--ink); font-size: 12px; }
 .monitoring-office-table-shell td:first-child span { margin-top: 4px; color: var(--muted); font-size: 10px; }
-.monitoring-office-status { display: inline-block; min-width: 56px; padding: 4px 7px; background: var(--accent-soft); color: var(--accent-deep); font-size: 10px; font-weight: 700; text-align: center; }
-.monitoring-office-status[data-status='VACANT'] { background: var(--moss-soft); color: var(--moss); }
-.monitoring-office-status[data-status='UNREGISTERED'], .monitoring-office-status[data-status='MAINTENANCE'] { background: var(--amber-soft); color: var(--amber); }
+.monitoring-office-status { display: inline-block; min-width: 56px; padding: 4px 7px; background: var(--monitor-in-use-soft); color: var(--monitor-in-use); font-size: 10px; font-weight: 700; text-align: center; }
+.monitoring-office-status[data-status='VACANT'] { background: var(--monitor-idle-soft); color: var(--monitor-idle); }
+.monitoring-office-status[data-status='UNREGISTERED'] { background: var(--monitor-pending-soft); color: var(--monitor-pending); }
+.monitoring-office-status[data-status='MAINTENANCE'] { background: var(--monitor-maintenance-soft); color: var(--monitor-maintenance); }
 .monitoring-empty, .monitoring-loading { display: flex; min-height: 130px; align-items: center; justify-content: center; gap: 10px; padding: 25px; border: 1px dashed var(--line-strong); color: var(--muted); font-size: 12px; }
 .monitoring-more, .monitoring-clear-filter { display: flex; align-items: center; justify-content: center; gap: 7px; min-height: 44px; margin-top: 10px; padding: 10px 15px; border: 1px solid var(--line); background: var(--surface); color: var(--ink-soft); font-size: 11px; cursor: pointer; }
 .monitoring-more { width: 100%; }
@@ -1542,7 +1558,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   .monitoring-room-grid { grid-template-columns: minmax(0, 1fr); }
   .monitoring-room-card { min-height: 205px; }
   .monitoring-office-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-  .monitoring-office-summary button { padding: 12px 14px; }
+  .monitoring-office-summary button { padding: 10px 14px 12px; }
   .monitoring-office-tools { align-items: stretch; flex-wrap: wrap; }
   .monitoring-office-tools > label:not(.monitoring-office-search) { flex: 1; }
   .monitoring-office-tools select { width: 100%; min-width: 0; }

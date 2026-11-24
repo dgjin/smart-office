@@ -116,7 +116,7 @@ flowchart TB
 - `App.tsx` 是主应用协调者：加载权限化工作区、维护当前视图、打开正式预约/修改/续期表单、处理助手固定动作、挂载帮助和 ChatDock。
 - 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。东方蓝品牌区使用同源蓝色横式标志 `public/images/china-orient-logo-horizontal.png`，其他五套主题使用 `public/images/china-orient-logo-horizontal-reverse.png` 透明反白稿并继承当前侧栏主题色；展开时显示完整组合，折叠时仅裁显图形标。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
 - `components/OperationsReports.tsx` 与 `components/OperationsDashboard.tsx` 共用一次 `/api/reports` 返回的 `OperationsReport`，分别呈现“管理看板”和“明细与对账”；SVG 图表不引入大型图表库。
-- `components/MonitoringScreen.tsx` 通过原生 `EventSource` 接收权限化监控快照，展示会议室实时状态与总部 3D 办公室分配台账；断连保留最近成功快照并由浏览器自动重连，办公室“已分配”不解释成现场实测有人。
+- `components/MonitoringScreen.tsx` 通过原生 `EventSource` 接收权限化监控快照，展示会议室实时状态与总部 3D 办公室分配台账；五种会议室状态和四种办公室状态使用独立固定语义色，并保留文字标签，不随主题强调色合并。断连保留最近成功快照并由浏览器自动重连，办公室“已分配”不解释成现场实测有人。
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
 - 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
 - `helpCatalog.ts` 是帮助与助手共享的功能目录，定义固定系统视图、主题、关键词、步骤和访问边界。
