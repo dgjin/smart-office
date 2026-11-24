@@ -121,7 +121,7 @@
 | 组织权限 | 用户、角色、部门、审批代理、组织同步 preview/apply | 组织维护、职责和差异应用 |
 | 会务 | 服务目录、区域、班次及工单动态路由 | 目录版本、工单处理、巡查和成本 |
 | 保密 | 保密白名单及授权动态路由 | 白名单和变更授权管理 |
-| 总部 3D | `GET /api/hq3d/snapshot`、房间资料/维护/面积等动态路由 | 独立细粒度 3D 数据读写 |
+| 总部 3D | `GET /api/hq3d/snapshot`、`GET /api/hq3d/layout/export`、`POST /api/hq3d/layout/parse`、`POST /api/hq3d/layout/preflight`、`POST /api/hq3d/layout/import`、房间资料/维护/面积等动态路由 | 独立细粒度 3D 数据读写及管理员 JSON/Excel/图片整栋或单层布局导入 |
 | 设备 | `GET/POST /api/devices`、设备动态路由；`GET /api/device/snapshot`、`POST /api/device/heartbeat` | 管理面与设备令牌面分离 |
 | 数据中心 | 集成查询、对账、补偿、重放、审计和受控备份恢复 | 高影响运维操作 |
 | 个性化 | `GET/PUT /api/preferences` | 主题和侧栏偏好 |
@@ -170,6 +170,16 @@
 - 独立 3D 页在宽度不超过 900px 时，以底部功能抽屉顶边作为取景区域下界，单层模型完整呈现在抽屉上方；楼栋、楼层、房间选择和缩放交互保持不变。
 - 主楼 20 层和南配楼 4 层来自持久布局；每间房使用显式稳定 UID。
 - 布局重复初始化执行 UPSERT，移除空间差异停用，不删除历史资料和维护记录。
+- `server/hq3dLayoutImport.ts` 使用 `smart-office.hq3d-layout` / `schemaVersion: 1` 文件封装，`scope.kind` 为 `BUILDING` 或 `FLOOR`。整栋文件必须完整声明当前楼层集合；单层文件只含目标楼层且不能修改楼栋元数据。文件和数据库继续使用稳定 UID 与 `nx/nz/nw/nd/frac` 归一化几何，导入不新增、删除或重排楼层。
+- `server/hq3dLayoutFiles.ts` 统一接收严格 base64 JSON envelope，按真实扩展名分派 JSON、XLSX、PNG/JPG/JPEG；JSON、Excel、图片分别限制 2、4、8 MiB，`POST /api/hq3d/layout/parse` 请求体上限 12 MiB。解析只返回规范化 `Hq3dLayoutDocument`、来源类型和识别提示，不直接执行写库。
+- `server/hq3dLayoutExcel.ts` 通过既有 ExcelJS 导出/读取版本化 XLSX。系统工作簿固定包含“布局信息”“楼层”“房间”“填写说明”，独立楼层表可表达空楼层，房间表覆盖 UID、业务文本、多行标签和全部几何；表名、表头、公式和不受支持对象均受校验，最终仍调用 `parseHq3dLayoutDocument`。`parseHq3dLayoutExcelUpload` 自动区分系统模板与原生楼层图，原生文件按当前 `BUILDING/FLOOR` scope 先导出只读基线，再生成同一标准布局文档。
+- 原生楼层图按“楼栋 + 中文楼层 + 可选版本”匹配工作表，整栋必须覆盖当前全部楼层，单层只处理目标楼层；版本优先级为“新”高于“全”高于无后缀高于“部分”高于“旧”，同级重复拒绝。封皮、前三行标题、未选版本和打印区域外内容不进入布局，无打印区域时按有效房间单元格及合并范围推导边界。
+- 原生识别只处理合并区域 master cell，横向按实际列宽并扣除 5px 间隙、纵向按行高换算归一化几何，`frac` 按识别面积归一化。既有房间先按房号、再按名称和中心距离匹配，名称变化时允许同类别且矩形重叠不少于 50% 的最近房间沿用 UID；未匹配项使用确定性 UID 并追加序号。识别结果仍须人工核对，且仅支持附件所示单元格绘制结构，不宣称兼容任意 Excel。
+- `server/hq3dLayoutOcr.ts` 只接受真实 PNG/JPEG 文件头，图片不超过 8 MiB、2400 万像素且单边不超过 10000 像素，只允许 `FLOOR` 范围。Tesseract.js 使用本地 `chi_sim` 语言包和稀疏文本模式，模块级队列一次执行一个 OCR 任务，worker 在 finally 中终止，不依赖运行时 CDN。
+- OCR 行先按置信度和有效 bbox 过滤，再合并上下相邻的独立房号与房名。房号优先、明确名称辅助匹配现有房间；匹配项保留原 UID、资料和几何，未识别现有房间全部保留。只有带房号的新标注才生成 `meeting` 候选，UID 冲突追加序号，几何按文字位置估算并在返回提示中要求人工核对；没有有效房间标注时拒绝。图片路径不会因漏识别产生批量 retire。
+- 三种来源统一复用只读预检：计算新增、修改、恢复、停用、不变和元数据变化，同时返回当前范围 SHA-256 baseline。正式导入在事务内以 `FOR UPDATE` 重读目标范围、重算 baseline 和差异；客户端 baseline 过期时返回 409，任何错误均整批回滚。目标范围外的 UID 不允许移入；整栋只允许同栋既有楼层间移动。
+- JSON/Excel 是完整精确快照，省略的未映射房间按报告逐条软停用，恢复沿用原 UID；已绑定资源的房间省略时预检和正式导入均拒绝。profile、维护、楼层面积、资源映射、disposition 与历史不随布局更新删除，新房间不自动创建预约资源。每次成功导入仅写一条 `HQ3D_LAYOUT_IMPORT` 审计。
+- 导出、统一解析、预检和导入接口均要求系统管理员；预检和导入 JSON 请求体上限 2 MiB。快照通过 `capabilities.canManageLayout` 控制完整 3D 页入口，内嵌空间剖切不显示该能力，服务端权限校验不依赖前端隐藏。
 - 空间资源库与 3D 通过 `resourceId—roomUid` 显式一对一映射共享状态，不按名称模糊匹配。
 - 空间导航以 `/hq3d.html?embed=spatial` 嵌入整栋剖切；同源 `postMessage` 只传递约定消息并检查 origin/source。
 - 当前 14 条已确认映射之外的空间仍需管理员维护或 UAT 核定，不能自动变成可预约资源。

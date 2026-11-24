@@ -418,6 +418,9 @@ test('帮助检索和系统导航只暴露当前角色可用功能', () => {
   const employeeReport = employee.search_help({ query: '运营报表' });
   assert.equal(employeeReport.ok, true);
   assert.equal(employeeReport.data.total, 0);
+  const employeeLayoutImport = employee.search_help({ query: '楼层图导入' });
+  assert.equal(employeeLayoutImport.ok, true);
+  assert.equal(employeeLayoutImport.data.total, 0);
   assert.equal(employee.navigate_system({ view: 'REPORTS' }).ok, false);
   assert.equal(employee.navigate_system({ view: '__PROTO__' }).ok, false);
 
@@ -432,6 +435,14 @@ test('帮助检索和系统导航只暴露当前角色可用功能', () => {
   const adminReport = admin.search_help({ query: '运营报表' });
   assert.equal(adminReport.action?.type, 'OPEN_HELP');
   if (adminReport.action?.type === 'OPEN_HELP') assert.equal(adminReport.action.topicId, 'reports');
+  const adminLayoutImport = admin.search_help({ query: '楼层图导入' });
+  assert.equal(adminLayoutImport.action?.type, 'OPEN_HELP');
+  if (adminLayoutImport.action?.type === 'OPEN_HELP') assert.equal(adminLayoutImport.action.topicId, 'hq-layout-import');
+  for (const query of ['Excel楼层图', '原生楼层图Excel', '打印区域', '图片OCR']) {
+    const result = admin.search_help({ query });
+    assert.equal(result.action?.type, 'OPEN_HELP');
+    if (result.action?.type === 'OPEN_HELP') assert.equal(result.action.topicId, 'hq-layout-import');
+  }
   assert.equal(admin.navigate_system({ view: 'REPORTS' }).ok, true);
   assert.equal(admin.navigate_system({ view: 'DATA_CENTER' }).ok, true);
 });

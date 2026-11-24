@@ -108,7 +108,7 @@ flowchart TB
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
 - 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
 - `helpCatalog.ts` 是帮助与助手共享的功能目录，定义固定系统视图、主题、关键词、步骤和访问边界。
-- `public/hq3d.html` 是独立同源 Three.js 页面，通过 `/api/hq3d/snapshot` 获取布局和业务覆盖；主应用以 iframe 嵌入完整页面或空间剖切，并传递白名单 `theme=coamc|classic`。东方蓝在两个入口同步使用同源横式标志、白色面板、蓝色交互态和深海蓝模型背景，原五套主题恢复经典 3D 皮肤；主题仅改变界面外观，不改变房间类别色、空间状态语义或业务数据。`public/hq3d-auditorium.js` 为礼堂/报告厅提供纯几何排座：按房间宽深确定主席台、台前通道、侧向边距、中央过道及行列数，观众席最多 320 座；主席台、讲台、主席桌椅和观众席继续合批到楼层共享 InstancedMesh，不新增逐座 Mesh 或业务容量事实。
+- `public/hq3d.html` 是独立同源 Three.js 页面，通过 `/api/hq3d/snapshot` 获取布局和业务覆盖；主应用以 iframe 嵌入完整页面或空间剖切，并传递白名单 `theme=coamc|classic`。东方蓝在两个入口同步使用同源横式标志、白色面板、蓝色交互态和深海蓝模型背景，原五套主题恢复经典 3D 皮肤；主题仅改变界面外观，不改变房间类别色、空间状态语义或业务数据。`public/hq3d-auditorium.js` 为礼堂/报告厅提供纯几何排座：按房间宽深确定主席台、台前通道、侧向边距、中央过道及行列数，观众席最多 320 座；主席台、讲台、主席桌椅和观众席继续合批到楼层共享 InstancedMesh，不新增逐座 Mesh 或业务容量事实。完整页面按 `capabilities.canManageLayout` 向系统管理员显示原生对话框，支持整栋/单层 JSON、系统 Excel 模板与原生楼层图 Excel 精确更新、单层 PNG/JPEG 本地 OCR 候选、统一预检、差异确认和导入后刷新；原生 Excel 按附件工作表、打印区域、合并单元格、行高和列宽识别，图片漏识别不会停用现有房间，内嵌剖切与员工角色不显示入口。
 - 工作区每 10 秒轮询，使用请求防重入和身份隔离，页面隐藏或离线时跳过；自动刷新只读取权限化视图，不触发涉密详情读取审计。
 - `ChatDock`、`HelpDrawer` 和 `OperationsReports` 通过 `React.lazy` 按需加载；总部 3D 在 `document.hidden` 时取消 RAF，恢复可见后继续。这些优化不改变业务操作流程。
 
@@ -122,7 +122,7 @@ flowchart TB
 - `server/usageDomain.ts`、`server/usageOperations.ts` 处理签到事件、使用确认、实际使用事实、正常完成、提前结束、no-show、使用申诉和释放。
 - `server/reports.ts`、`utils/reports.ts` 统一计划/实际使用、部门投入、备料和对账口径；`server/calendarExport.ts` 负责 ICS。
 - `server/agent.ts`、`server/tools.ts`、`server/actions.ts` 和 `server/chatConversations.ts` 组成助手闭环。
-- `server/hq3d*.ts` 处理 3D 布局、稳定 UID、房间资料、维护、资源映射和受控同步。
+- `server/hq3d*.ts` 处理 3D 布局、稳定 UID、房间资料、维护、资源映射和受控同步；`server/hq3dLayoutImport.ts` 提供整栋/单层导出、只读预检、baseline 校验、事务导入和审计，`hq3dLayoutExcel.ts` 提供版本化 XLSX 往返及原生附件整栋/单层识别，`hq3dLayoutOcr.ts` 以本地中文 Tesseract 生成单层候选并保留漏识别房间，`hq3dLayoutFiles.ts` 统一分派上传格式。所有正式接口仅向系统管理员开放，OCR 不直接写库。
 
 ### 3.3 基础设施层
 
@@ -228,7 +228,7 @@ MySQL 是唯一事实来源。当前数据面由两类结构组成：
 
 - 默认 CSP、禁止嵌入、`nosniff`、同源 opener/resource policy；生产增加 HSTS。
 - 仅总部 3D 及其 Three.js 静态依赖使用允许同源 iframe 和行内脚本的专门安全档。
-- JSON 请求体默认最大 1 MB，Node 限制请求头、请求耗时和连接复用。
+- JSON 请求体默认最大 1 MB；总部 3D 统一文件解析使用独立 12 MiB 上限，并在解码后分别限制 JSON、Excel、图片为 2、4、8 MiB。Node 同时限制请求头、请求耗时和连接复用。
 - CSV/XLSX 对公式前缀做电子表格注入防护。
 - 门口屏使用独立设备接口和令牌边界；设备令牌不得进入对话、文档、日志、备份说明或测试报告。
 
@@ -318,6 +318,11 @@ sequenceDiagram
 ### 8.2 总部 3D 与资源库
 
 - 3D 布局以稳定 UID 标识房间；布局初始化可重复执行，移除项差异停用而不删除历史资料。
+- 管理员可导出当前布局 JSON 或系统 Excel 模板，按整栋/单层精确更新；也可直接上传附件结构的原生楼层图 Excel，或上传单层 PNG/JPEG 由本地 Tesseract 中文 OCR 生成同一标准布局候选。统一 `POST /api/hq3d/layout/parse` 只解析不写库，所有格式再进入相同预检和明确确认流程。
+- 系统 Excel 使用“布局信息、楼层、房间、填写说明”版本化工作簿并保留空楼层。原生 Excel 按楼栋与中文楼层工作表识别，二层优先“全”、十四层优先“新”，按打印区域、合并单元格、行高和列宽还原几何，并按房号、名称和位置沿用稳定 UID；封皮、未选版本和打印区域外杂值不进入布局，仅支持附件所示结构，不宣称兼容任意 Excel。
+- 图片校验真实文件头、大小和像素，OCR 串行执行且语言包自托管。匹配房间保留原 UID 和几何，未识别现有房间全部保留，新房间只按文字位置估算坐标并提示人工核对。
+- `server/hq3dLayoutImport.ts` 复用同一稳定 UID 和归一化几何，首版只更新既有楼层；局部导入不影响范围外楼栋或楼层，整栋文件必须包含当前全部楼层。预检返回新增、修改、恢复、停用、不变及 baseline hash；正式导入在事务锁内重算并拒绝过期预检。
+- JSON、系统 Excel 模板和原生楼层图 Excel 省略的未映射房间只软停用，已映射房间省略会被拒绝；这与图片漏识别自动保留的语义明确分离。资料、维护、映射和历史保留，新房间不自动成为可预约资源。成功导入写一条 `HQ3D_LAYOUT_IMPORT` 审计；助手仅提供角色化帮助和导航，不直接上传、识别或执行布局维护。
 - 资源库与 3D 通过显式 `resourceId—roomUid` 映射共享业务状态，未映射空间不按名称自动关联。
 - 主应用提供筛选、房间名录、预约和管理；同源 `postMessage` 只同步约定消息和楼栋楼层状态，并检查 origin/source。
 - 当前基线有 14 条已确认映射；未核定 UID、PENDING 资源、候选空间和双人复核仍按 UAT/责任方门禁处理。

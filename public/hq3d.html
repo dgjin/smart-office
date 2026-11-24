@@ -775,6 +775,72 @@
   :root[data-theme='coamc'] *::-webkit-scrollbar-thumb{background:rgba(0,66,127,.22)!important}
   :root[data-theme='coamc'] *::-webkit-scrollbar-thumb:hover{background:rgba(0,66,127,.38)!important}
 
+  .layout-open{
+    flex:none;min-height:32px;border:1px solid var(--line-strong);background:var(--surface-strong);
+    color:var(--ink2);font:600 11px var(--font-body);cursor:pointer;border-radius:2px;
+  }
+  .layout-open:hover,.layout-open:focus-visible{border-color:var(--accent);color:var(--accent);outline:none}
+  #layoutDialog{
+    width:min(680px,calc(100vw - 32px));max-height:min(780px,calc(100vh - 32px));padding:0;
+    border:1px solid var(--line-strong);border-radius:2px;background:var(--surface);color:var(--ink);
+    box-shadow:0 24px 80px rgba(0,0,0,.32);overflow:auto;
+  }
+  #layoutDialog::backdrop{background:rgba(10,20,16,.64);backdrop-filter:blur(2px)}
+  .layout-head{display:flex;align-items:flex-start;gap:16px;padding:22px 24px 16px;border-bottom:1px solid var(--line)}
+  .layout-head h2{margin:0;font:400 24px var(--font-display)}
+  .layout-head p{margin:6px 0 0;color:var(--ink3);font-size:12px;line-height:1.6}
+  .layout-close{margin-left:auto;border:0;background:transparent;color:var(--ink3);font-size:24px;line-height:1;cursor:pointer;padding:2px 6px}
+  .layout-close:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .layout-body{display:grid;gap:16px;padding:20px 24px}
+  .layout-step{border:1px solid var(--line);padding:16px;background:var(--surface-strong)}
+  .layout-step h3{margin:0 0 6px;font-size:13px}
+  .layout-step>p{margin:0 0 14px;color:var(--ink3);font-size:11px;line-height:1.6}
+  .layout-grid{display:grid;grid-template-columns:1fr 1.4fr 1fr;gap:10px}
+  .layout-field{display:grid;gap:6px;min-width:0}
+  .layout-field[hidden]{display:none}
+  .layout-field label{font-size:11px;font-weight:600;color:var(--ink2)}
+  .layout-field select,.layout-field input{
+    width:100%;min-height:38px;padding:8px 10px;border:1px solid var(--line-strong);border-radius:2px;
+    background:var(--surface);color:var(--ink);font:12px var(--font-body);
+  }
+  .layout-field select:focus,.layout-field input:focus{outline:2px solid var(--accent);outline-offset:1px}
+  .layout-file{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .layout-file input{max-width:100%;font-size:11px;color:var(--ink3)}
+  .layout-file span{font-size:11px;color:var(--ink3);overflow-wrap:anywhere}
+  .layout-btn{
+    min-height:38px;padding:8px 14px;border:1px solid var(--line-strong);border-radius:2px;background:var(--surface-strong);
+    color:var(--ink);font:600 12px var(--font-body);cursor:pointer;
+  }
+  .layout-btn:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  .layout-btn:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  .layout-btn.primary{background:var(--ink);color:var(--surface);border-color:var(--ink)}
+  .layout-btn.primary:hover:not(:disabled){background:var(--accent);color:#fff}
+  .layout-btn:disabled{opacity:.45;cursor:not-allowed}
+  .layout-step .layout-btn{margin-top:12px}
+  .layout-export-actions{display:flex;gap:8px;flex-wrap:wrap}
+  .layout-report{display:none;border:1px solid var(--line);padding:14px;font-size:12px;line-height:1.6}
+  .layout-report.show{display:block}
+  .layout-report.error{border-color:var(--danger);background:color-mix(in srgb,var(--danger) 7%,var(--surface))}
+  .layout-report.success{border-color:var(--moss);background:var(--moss-soft)}
+  .layout-report:focus{outline:2px solid var(--accent);outline-offset:2px}
+  .layout-report strong{display:block;margin-bottom:6px}
+  .layout-report ul{margin:8px 0 0;padding-left:20px;max-height:150px;overflow:auto}
+  .layout-counts{display:grid;grid-template-columns:repeat(5,1fr);gap:6px;margin-top:10px}
+  .layout-count{padding:8px 4px;text-align:center;background:var(--paper);border:1px solid var(--line)}
+  .layout-count b{display:block;font-size:18px;font-variant-numeric:tabular-nums}
+  .layout-count span{font-size:10px;color:var(--ink3)}
+  .layout-foot{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:16px 24px;border-top:1px solid var(--line)}
+  .layout-foot p{margin:0;color:var(--ink3);font-size:10.5px;line-height:1.5}
+  .layout-foot .actions{display:flex;gap:8px;flex:none}
+  @media (max-width:640px){
+    #layoutDialog{width:calc(100vw - 20px);max-height:calc(100dvh - 20px)}
+    .layout-head,.layout-body{padding-left:16px;padding-right:16px}
+    .layout-grid{grid-template-columns:1fr}
+    .layout-counts{grid-template-columns:repeat(3,1fr)}
+    .layout-foot{align-items:stretch;flex-direction:column;padding:14px 16px}
+    .layout-foot .actions{display:grid;grid-template-columns:1fr 1fr}
+  }
+  @media (prefers-reduced-motion:reduce){#layoutDialog::backdrop{backdrop-filter:none}}
 </style>
 </head>
 <body>
@@ -795,6 +861,7 @@
   </div>
 
   <div class="bldg" id="bldgTabs"></div>
+  <button class="layout-open" id="layoutOpen" type="button" hidden>导入文件更新楼层图</button>
 
   <div class="seg" id="segMode">
     <button data-mode="one" class="on">单层</button>
@@ -865,6 +932,63 @@
   <div id="dHist"></div>
   <div class="mntblock" id="dMnt"></div>
 </section>
+
+<dialog id="layoutDialog" aria-labelledby="layoutTitle" aria-describedby="layoutIntro">
+  <div class="layout-head">
+    <div>
+      <h2 id="layoutTitle">导入文件更新楼层图</h2>
+      <p id="layoutIntro">JSON、系统Excel模板及原生楼层图Excel支持整栋/单层精确更新；PNG/JPEG通过本地OCR生成单层候选。所有文件均须预检并人工确认。</p>
+    </div>
+    <button class="layout-close" id="layoutClose" type="button" aria-label="关闭楼层图导入">×</button>
+  </div>
+  <div class="layout-body">
+    <section class="layout-step" aria-labelledby="layoutExportTitle">
+      <h3 id="layoutExportTitle">1. 导出当前布局</h3>
+      <p>JSON与系统Excel模板包含稳定房间UID和归一化坐标。Excel含布局信息、楼层、房间三张表；原生楼层图Excel按当前选择的整栋或单层范围识别。</p>
+      <div class="layout-grid">
+        <div class="layout-field">
+          <label for="layoutScope">更新范围</label>
+          <select id="layoutScope">
+            <option value="FLOOR">单层</option>
+            <option value="BUILDING">整栋</option>
+          </select>
+        </div>
+        <div class="layout-field">
+          <label for="layoutBuilding">楼栋</label>
+          <select id="layoutBuilding"></select>
+        </div>
+        <div class="layout-field" id="layoutFloorField">
+          <label for="layoutFloor">楼层</label>
+          <select id="layoutFloor"></select>
+        </div>
+      </div>
+      <div class="layout-export-actions">
+        <button class="layout-btn" id="layoutExport" type="button">导出 JSON 模板</button>
+        <button class="layout-btn" id="layoutExportExcel" type="button">导出 Excel 模板</button>
+      </div>
+    </section>
+    <section class="layout-step" aria-labelledby="layoutImportTitle">
+      <h3 id="layoutImportTitle">2. 选择文件并预检</h3>
+      <p>JSON≤2 MiB，Excel≤4 MiB，PNG/JPEG≤8 MiB。原生楼层图按工作表、打印区域、合并单元格、行高和列宽识别；二层优先“全”，十四层优先“新”。图片仅识别单层；识别文字与坐标必须人工核对。</p>
+      <div class="layout-field">
+        <label for="layoutFile">布局文件（JSON / Excel / 图片）</label>
+        <div class="layout-file">
+          <input id="layoutFile" type="file" accept=".json,.xlsx,.png,.jpg,.jpeg,application/json,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,image/png,image/jpeg" />
+          <span id="layoutFileName">尚未选择文件</span>
+        </div>
+      </div>
+      <button class="layout-btn" id="layoutPreflight" type="button" disabled>预检布局变更</button>
+    </section>
+    <div class="layout-report" id="layoutReport" tabindex="-1" aria-live="polite"></div>
+  </div>
+  <div class="layout-foot">
+    <p>预检后若目标布局发生变化，系统会要求重新预检。确认导入不会修改房间资料、维护记录或资源映射。</p>
+    <div class="actions">
+      <button class="layout-btn" id="layoutCancel" type="button">取消</button>
+      <button class="layout-btn primary" id="layoutImport" type="button" disabled>确认导入</button>
+    </div>
+  </div>
+</dialog>
 
 <div id="bldgTag"><b id="tagName">楼层</b><span id="tagSub"></span></div>
 <div id="floorTicks"></div>
@@ -940,6 +1064,8 @@ const DATA = {
     aspect: b.aspect,
     aspAll: b.aspAll,
     floors: b.floors.map(f => ({
+      floorNo: f.floorNo,
+      tag: f.tag,
       sheet: f.sheet,
       rooms: f.rooms.map(r => ({
         no: r.no || '',
@@ -959,7 +1085,34 @@ const DATA = {
    同源 fetch 会自动带会话 cookie；服务端对写请求校验 Origin + JSON，
    所以这里必须显式带 Content-Type，不能用表单编码。 */
 let apiSeq = 0;
-async function apiSend(method, path, body){
+function apiErrorMessage(payload, status){
+  const candidates = [payload?.conflicts?.detail, payload?.detail, payload?.message];
+  for (const value of candidates){
+    const text = typeof value === 'string' ? value.trim() : '';
+    if (/[一-鿿]/.test(text) && !/\b[A-Z][A-Z0-9]*_[A-Za-z0-9_]+\b/.test(text)) return text;
+  }
+  const code = String(payload?.error || '');
+  const messages = {
+    FORBIDDEN:'当前账号无权更新楼层图，请联系系统管理员。',
+    UNAUTHENTICATED:'登录状态已失效，请重新登录。',
+    BODY_TOO_LARGE:'文件或请求超过大小限制，请按页面标注压缩文件后重试。',
+    INVALID_JSON:'请求数据格式无效，请重新选择文件后重试。',
+    INVALID_HQ3D_UPLOAD:'上传文件无效，请重新选择文件。',
+    INVALID_HQ3D_LAYOUT:'布局文件结构或坐标无效，请重新导出模板并检查修改内容。',
+    INVALID_HQ3D_EXCEL:'Excel结构、工作表或单元格内容无效，请核对系统模板或原生楼层图格式。',
+    HQ3D_LAYOUT_UPLOAD_FORMAT:'仅支持JSON、XLSX、PNG、JPG或JPEG文件。',
+    HQ3D_LAYOUT_IMAGE_SCOPE:'图片识别仅支持单层更新，整栋请使用JSON或Excel。',
+    HQ3D_LAYOUT_IMAGE_NO_ROOMS:'未识别到可用房间标注，请换用清晰图片或Excel模板。',
+    HQ3D_LAYOUT_IMAGE_OCR_FAILED:'本地图片识别失败，请换用清晰图片或Excel模板。',
+    HQ3D_LAYOUT_BUILDING_NOT_FOUND:'目标楼栋不存在，请重新导出有效模板。',
+    HQ3D_LAYOUT_FLOOR_NOT_FOUND:'目标楼层不存在，请重新导出有效模板。',
+    HQ3D_LAYOUT_BASELINE_CHANGED:'目标布局在预检后已变化，请重新预检。',
+    HQ3D_LAYOUT_PREFLIGHT_REQUIRED:'请先完成布局预检。',
+    HQ3D_LAYOUT_IMPORT_NO_CHANGES:'文件内容与当前布局一致，无需导入。'
+  };
+  return messages[code] || (status >= 500 ? '服务暂时不可用，请稍后重试。' : '操作失败，请检查文件后重试。');
+}
+async function apiSend(method, path, body, notify = true){
   const res = await fetch(path, {
     method,
     credentials: 'same-origin',
@@ -969,8 +1122,8 @@ async function apiSend(method, path, body){
   let payload = {};
   try { payload = await res.json(); } catch (e) {}
   if (!res.ok){
-    const msg = payload && (payload.error || payload.detail) || `HTTP ${res.status}`;
-    toastSaveError(msg);
+    const msg = apiErrorMessage(payload, res.status);
+    if (notify) toastSaveError(msg);
     throw new Error(msg);
   }
   return payload;
@@ -1499,7 +1652,8 @@ BUILDINGS.forEach((b, bi) => {
     f.h = floorH(fi, b);
     f.FW = b.FW * f.s;
     f.FD = b.FD * f.s;
-    f.tag = (fi + 1) + 'F';
+    f.floorNo = f.floorNo || fi + 1;
+    f.tag = f.tag || f.floorNo + 'F';
     f.short = f.sheet.replace(/^(主楼|南配楼)/, '').replace(/（全）/g, '').trim();
     f.rooms.forEach((r, ri) => {
       r.bi = bi; r.fi = fi; r.ri = ri;
@@ -4424,7 +4578,7 @@ canvas.addEventListener('pointerup', e => {
   if (obj.userData.slabFi !== undefined && state.mode === 'all'){ gotoFloor(obj.userData.slabFi); }
 });
 window.addEventListener('keydown', e => {
-  if (document.activeElement === qEl) return;
+  if (document.activeElement === qEl || document.getElementById('layoutDialog')?.open) return;
   const b = curB();
   if (e.key === 'Escape') clearSelection();
   if (e.key === 'ArrowUp') gotoFloor(Math.min(b.floors.length - 1, state.fi + 1));
@@ -4698,6 +4852,215 @@ function applySideWidth(px){
     try { localStorage.setItem(TRAY_KEY, next ? '1' : '0'); } catch (e) {}
   });
 })();
+
+const layoutDialog = document.getElementById('layoutDialog');
+const layoutOpen = document.getElementById('layoutOpen');
+const layoutScope = document.getElementById('layoutScope');
+const layoutBuilding = document.getElementById('layoutBuilding');
+const layoutFloor = document.getElementById('layoutFloor');
+const layoutFile = document.getElementById('layoutFile');
+const layoutPreflight = document.getElementById('layoutPreflight');
+const layoutImport = document.getElementById('layoutImport');
+const layoutReport = document.getElementById('layoutReport');
+let layoutDocument = null;
+let layoutPreflightReport = null;
+let layoutSourceNotices = [];
+let layoutBusy = false;
+let layoutSucceeded = false;
+
+function layoutScopeText(scope){
+  const building = SNAPSHOT.buildings.find(item => item.id === scope.buildingId);
+  return `${building?.name || scope.buildingId}${scope.kind === 'FLOOR' ? ` · ${scope.floorNo}F` : ' · 整栋'}`;
+}
+function showLayoutMessage(title, messages = [], kind = 'error'){
+  layoutReport.className = `layout-report show ${kind}`;
+  layoutReport.innerHTML = `<strong>${escHtml(title)}</strong>${messages.length
+    ? `<ul>${messages.map(message => `<li>${escHtml(message)}</li>`).join('')}</ul>` : ''}`;
+  layoutReport.focus();
+}
+function clearLayoutPreflight(){
+  layoutDocument = null;
+  layoutPreflightReport = null;
+  layoutSourceNotices = [];
+  layoutImport.disabled = true;
+  layoutReport.className = 'layout-report';
+  layoutReport.innerHTML = '';
+}
+function fillLayoutFloors(){
+  const building = SNAPSHOT.buildings.find(item => item.id === layoutBuilding.value) || SNAPSHOT.buildings[0];
+  layoutFloor.innerHTML = building.floors.map(floor =>
+    `<option value="${floor.floorNo}">${escHtml(floor.tag)} · ${escHtml(floor.sheet)}</option>`).join('');
+  const current = BUILDINGS[state.bi];
+  if (building.id === current.id) layoutFloor.value = String(current.floors[state.fi].floorNo);
+}
+function syncLayoutScope(){
+  document.getElementById('layoutFloorField').hidden = layoutScope.value === 'BUILDING';
+}
+function setLayoutBusy(busy){
+  layoutBusy = busy;
+  const locked = busy || layoutSucceeded;
+  document.getElementById('layoutExport').disabled = locked;
+  document.getElementById('layoutExportExcel').disabled = locked;
+  document.getElementById('layoutClose').disabled = locked;
+  document.getElementById('layoutCancel').disabled = locked;
+  layoutScope.disabled = locked;
+  layoutBuilding.disabled = locked;
+  layoutFloor.disabled = locked;
+  layoutFile.disabled = locked;
+  layoutPreflight.disabled = locked || !layoutFile.files.length;
+  layoutImport.disabled = locked || !layoutPreflightReport?.ok || !layoutPreflightReport?.hasChanges;
+}
+function renderLayoutPreflight(report){
+  layoutPreflightReport = report;
+  const counts = report.counts;
+  const title = !report.ok ? '预检未通过，请修正以下问题'
+    : report.hasChanges ? `预检通过：${layoutScopeText(report.scope)}` : '文件与当前布局一致，无需导入';
+  const errors = report.errors.map(item => item.message);
+  const actionLabels = { CREATE:'新增', UPDATE:'修改', RESTORE:'恢复', RETIRE:'停用' };
+  const preview = report.changes.slice(0, 8).map(item => `${actionLabels[item.action]} ${item.floorNo}F ${item.label}`);
+  if (report.changes.length > preview.length) preview.push(`另有 ${report.changes.length - preview.length} 项变更`);
+  if (report.metadataChanged) preview.unshift('楼栋或楼层基础信息有修改');
+  const messages = errors.length ? [...layoutSourceNotices, ...errors] : [...layoutSourceNotices, ...preview];
+  layoutReport.className = `layout-report show ${report.ok && report.hasChanges ? 'success' : report.ok ? '' : 'error'}`;
+  layoutReport.innerHTML = `<strong>${escHtml(title)}</strong>
+    <div class="layout-counts">
+      ${[['新增',counts.created],['修改',counts.updated],['恢复',counts.restored],['停用',counts.retired],['不变',counts.unchanged]]
+        .map(([label,value]) => `<div class="layout-count"><b>${value}</b><span>${label}</span></div>`).join('')}
+    </div>
+    ${messages.length ? `<ul>${messages.map(message => `<li>${escHtml(message)}</li>`).join('')}</ul>` : ''}`;
+  layoutImport.disabled = !report.ok || !report.hasChanges;
+  layoutReport.focus();
+}
+function selectedLayoutScope(){
+  return {
+    kind:layoutScope.value,
+    buildingId:layoutBuilding.value,
+    floorNo:layoutScope.value === 'FLOOR' ? Number(layoutFloor.value) : undefined
+  };
+}
+async function fileBase64(file){
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 32768){
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 32768));
+  }
+  return btoa(binary);
+}
+async function parseLayoutFile(){
+  const file = layoutFile.files[0];
+  if (!file) throw new Error('请先选择JSON、Excel或图片文件。');
+  if (file.size > 8 * 1024 * 1024) throw new Error('文件超过8 MiB，请压缩后重试。');
+  const image = /\.(?:png|jpe?g)$/i.test(file.name);
+  if (image && layoutScope.value !== 'FLOOR') throw new Error('图片识别仅支持单层更新，请先选择目标单层；整栋请使用JSON或Excel。');
+  return apiSend('POST', '/api/hq3d/layout/parse', {
+    fileName:file.name,
+    contentBase64:await fileBase64(file),
+    scope:selectedLayoutScope()
+  }, false);
+}
+function downloadLayoutBlob(blob, scope, extension){
+  const building = SNAPSHOT.buildings.find(item => item.id === scope.buildingId);
+  const link = document.createElement('a');
+  link.href = URL.createObjectURL(blob);
+  link.download = `总部楼层图_${building?.name || scope.buildingId}_${scope.kind === 'FLOOR' ? scope.floorNo + 'F' : '整栋'}.${extension}`;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(link.href), 3000);
+}
+function downloadLayout(data){
+  downloadLayoutBlob(new Blob([JSON.stringify(data, null, 2)], { type:'application/json;charset=utf-8' }), data.scope, 'json');
+}
+
+if (!SPATIAL_EMBED && SNAPSHOT.capabilities?.canManageLayout){
+  layoutOpen.hidden = false;
+  layoutBuilding.innerHTML = SNAPSHOT.buildings.map(building =>
+    `<option value="${escHtml(building.id)}">${escHtml(building.name)} · ${building.floors.length} 层</option>`).join('');
+  layoutOpen.addEventListener('click', () => {
+    layoutBuilding.value = BUILDINGS[state.bi].id;
+    fillLayoutFloors();
+    syncLayoutScope();
+    layoutDialog.showModal();
+  });
+  layoutScope.addEventListener('change', syncLayoutScope);
+  layoutBuilding.addEventListener('change', fillLayoutFloors);
+  document.getElementById('layoutClose').addEventListener('click', () => layoutDialog.close());
+  document.getElementById('layoutCancel').addEventListener('click', () => layoutDialog.close());
+  layoutDialog.addEventListener('cancel', event => { if (layoutBusy) event.preventDefault(); });
+  layoutFile.addEventListener('change', () => {
+    clearLayoutPreflight();
+    const file = layoutFile.files[0];
+    document.getElementById('layoutFileName').textContent = file ? `${file.name} · ${(file.size / 1024).toFixed(1)} KiB` : '尚未选择文件';
+    layoutPreflight.disabled = !file;
+  });
+  document.getElementById('layoutExport').addEventListener('click', async () => {
+    setLayoutBusy(true);
+    try {
+      const params = new URLSearchParams({ scope:layoutScope.value, buildingId:layoutBuilding.value });
+      if (layoutScope.value === 'FLOOR') params.set('floorNo', layoutFloor.value);
+      const data = await apiSend('GET', `/api/hq3d/layout/export?${params}`, undefined, false);
+      downloadLayout(data);
+      clearLayoutPreflight();
+      showLayoutMessage(`已导出${layoutScopeText(data.scope)}，请修改该文件后再预检。`, [], 'success');
+    } catch (error) {
+      showLayoutMessage(error.message || '导出失败，请稍后重试。');
+    } finally {
+      setLayoutBusy(false);
+    }
+  });
+  document.getElementById('layoutExportExcel').addEventListener('click', async () => {
+    setLayoutBusy(true);
+    try {
+      const scope = selectedLayoutScope();
+      const params = new URLSearchParams({ scope:scope.kind, buildingId:scope.buildingId, format:'xlsx' });
+      if (scope.kind === 'FLOOR') params.set('floorNo', String(scope.floorNo));
+      const response = await fetch(`/api/hq3d/layout/export?${params}`, { credentials:'same-origin' });
+      if (!response.ok){
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(apiErrorMessage(payload, response.status));
+      }
+      downloadLayoutBlob(await response.blob(), scope, 'xlsx');
+      clearLayoutPreflight();
+      showLayoutMessage(`已导出${layoutScopeText(scope)} Excel模板，请保留三张数据表结构，修改后再预检。`, [], 'success');
+    } catch (error) {
+      showLayoutMessage(error.message || 'Excel导出失败，请稍后重试。');
+    } finally {
+      setLayoutBusy(false);
+    }
+  });
+  layoutPreflight.addEventListener('click', async () => {
+    setLayoutBusy(true);
+    try {
+      const parsed = await parseLayoutFile();
+      layoutDocument = parsed.layout;
+      layoutSourceNotices = parsed.notices || [];
+      const payload = await apiSend('POST', '/api/hq3d/layout/preflight', { layout:layoutDocument }, false);
+      renderLayoutPreflight(payload.report);
+    } catch (error) {
+      layoutPreflightReport = null;
+      showLayoutMessage(error.message || '预检失败，请检查文件后重试。');
+    } finally {
+      setLayoutBusy(false);
+    }
+  });
+  layoutImport.addEventListener('click', async () => {
+    if (!layoutDocument || !layoutPreflightReport?.ok || !layoutPreflightReport.hasChanges) return;
+    setLayoutBusy(true);
+    try {
+      const payload = await apiSend('POST', '/api/hq3d/layout/import', {
+        layout:layoutDocument,
+        baselineHash:layoutPreflightReport.baselineHash
+      }, false);
+      showLayoutMessage(`楼层图已更新：新增 ${payload.report.counts.created} 间、修改 ${payload.report.counts.updated} 间、恢复 ${payload.report.counts.restored} 间、停用 ${payload.report.counts.retired} 间。正在刷新…`, [], 'success');
+      layoutSucceeded = true;
+      layoutPreflightReport = null;
+      setTimeout(() => window.location.reload(), 900);
+    } catch (error) {
+      layoutPreflightReport = null;
+      showLayoutMessage(error.message || '导入失败，请重新预检后重试。', ['文件和已填内容已保留，请重新预检。']);
+    } finally {
+      setLayoutBusy(false);
+    }
+  });
+}
 
 function applySpatialState(payload){
   if (!SPATIAL_EMBED || !payload) return;

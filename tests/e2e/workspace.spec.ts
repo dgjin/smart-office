@@ -429,6 +429,16 @@ test.describe('MySQL-only 浏览器验收', () => {
     await adminDrawer.getByRole('button', { name: /动态审批规则与流程版本/ }).click();
     await expect(adminDrawer.getByRole('heading', { name: '动态审批规则与流程版本', exact: true })).toBeVisible();
     await expect(adminDrawer).toContainText('新申请冻结提交时的资源公司，在途申请不因后续资源或流程修改而改变历史范围');
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('楼层图导入');
+    await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
+    await expect(adminDrawer).toContainText('未被图片识别的现有房间会自动保留');
+    await expect(adminDrawer).toContainText('已绑定资源的房间不能通过精确文件省略停用');
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('原生楼层图Excel');
+    await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
+    await expect(adminDrawer).toContainText('二层存在“全/部分”时优先“全”');
+    await expect(adminDrawer).toContainText('十四层存在“新/旧”时优先“新”');
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('图片OCR');
+    await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('运营报表');
     await expect(adminDrawer.getByRole('heading', { name: '运营管理看板与明细对账', exact: true })).toBeVisible();
     await adminDrawer.getByRole('button', { name: '打开功能', exact: true }).click();

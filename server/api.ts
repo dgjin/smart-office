@@ -30,6 +30,13 @@ import { applyOrganizationSync, listOrganizationSyncBatches, previewOrganization
 import { handleOaCallback } from './oaCallbacks.ts';
 import { getIntegrationOperations, reconcileIntegrations, recordIntegrationCompensation, replayIntegrationEvent } from './integrationOperations.ts';
 import {
+  exportHq3dLayout,
+  importHq3dLayout,
+  preflightHq3dLayoutImport
+} from './hq3dLayoutImport.ts';
+import { createHq3dLayoutExcel } from './hq3dLayoutExcel.ts';
+import { parseHq3dLayoutUpload } from './hq3dLayoutFiles.ts';
+import {
   addHq3dMaintenance,
   deleteHq3dMaintenance,
   getHq3dSnapshot,
@@ -322,11 +329,52 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
        写：房间资料、维护记录、楼层面积分开三组，
             各走自己的表与事务，不碰 bookings/resources 的乐观锁。 */
     if (url.pathname === '/api/hq3d/snapshot' && req.method === 'GET') {
-      send(res, 200, await getHq3dSnapshot());
+      const snapshot = await getHq3dSnapshot();
+      send(res, 200, { ...snapshot, capabilities: { canManageLayout: actor.role.includes('SYSTEM_ADMIN') } });
       return true;
     }
     if (url.pathname === '/api/hq3d/rooms' && req.method === 'GET') {
-      send(res, 200, await getHq3dSnapshot());
+      const snapshot = await getHq3dSnapshot();
+      send(res, 200, { ...snapshot, capabilities: { canManageLayout: actor.role.includes('SYSTEM_ADMIN') } });
+      return true;
+    }
+    if (url.pathname === '/api/hq3d/layout/export' && req.method === 'GET') {
+      requireAdmin(actor);
+      const floorNoValue = url.searchParams.get('floorNo');
+      const document = await exportHq3dLayout({
+        kind: url.searchParams.get('scope'),
+        buildingId: url.searchParams.get('buildingId'),
+        floorNo: floorNoValue === null ? undefined : Number(floorNoValue)
+      });
+      if (url.searchParams.get('format') === 'xlsx') {
+        const buffer = await createHq3dLayoutExcel(document);
+        res.statusCode = 200;
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', 'attachment; filename="hq3d-layout.xlsx"');
+        res.setHeader('Content-Length', String(buffer.length));
+        res.setHeader('Cache-Control', 'no-store');
+        res.end(buffer);
+      } else {
+        send(res, 200, document);
+      }
+      return true;
+    }
+    if (url.pathname === '/api/hq3d/layout/parse' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { fileName, contentBase64, scope } = await readJson(req, 12 * 1024 * 1024);
+      send(res, 200, await parseHq3dLayoutUpload({ fileName, contentBase64, scope }));
+      return true;
+    }
+    if (url.pathname === '/api/hq3d/layout/preflight' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { layout } = await readJson(req, 2 * 1024 * 1024);
+      send(res, 200, { report: await preflightHq3dLayoutImport(layout) });
+      return true;
+    }
+    if (url.pathname === '/api/hq3d/layout/import' && req.method === 'POST') {
+      requireAdmin(actor);
+      const { layout, baselineHash } = await readJson(req, 2 * 1024 * 1024);
+      send(res, 200, { report: await importHq3dLayout(actor.id, layout, baselineHash) });
       return true;
     }
     const hqRoomMatch = url.pathname.match(/^\/api\/hq3d\/rooms\/([^/]+)$/);

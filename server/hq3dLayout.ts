@@ -37,6 +37,44 @@ export const validateHq3dLayout = (data: Hq3dSeedData) => {
   return uids;
 };
 
+export const upsertHq3dRoom = async (
+  conn: PoolConnection,
+  buildingId: string,
+  floorNo: number,
+  room: Hq3dSeedRoom,
+  roomIndex: number
+) => {
+  await conn.query(
+    `INSERT INTO hq3d_room
+       (uid, building_id, floor_no, room_no, category, label, dept, person, notes, label_lines, nx, nz, nw, nd, frac, sort_index, is_active, retired_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL)
+     ON DUPLICATE KEY UPDATE
+       building_id = VALUES(building_id), floor_no = VALUES(floor_no), room_no = VALUES(room_no),
+       category = VALUES(category), label = VALUES(label), dept = VALUES(dept), person = VALUES(person),
+       notes = VALUES(notes), label_lines = VALUES(label_lines), nx = VALUES(nx), nz = VALUES(nz),
+       nw = VALUES(nw), nd = VALUES(nd), frac = VALUES(frac), sort_index = VALUES(sort_index),
+       is_active = 1, retired_at = NULL`,
+    [
+      room.uid,
+      buildingId,
+      floorNo,
+      nullable(room.no) ?? '',
+      room.cat,
+      room.label,
+      nullable(room.dept) ?? '',
+      nullable(room.person) ?? '',
+      nullable(room.notes) ?? '',
+      JSON.stringify(room.lines || [room.label]),
+      room.nx,
+      room.nz,
+      room.nw,
+      room.nd,
+      room.frac ?? 0,
+      roomIndex
+    ]
+  );
+};
+
 export const seedHq3dLayout = async (conn: PoolConnection, data: Hq3dSeedData) => {
   const expectedUids = validateHq3dLayout(data);
   let buildings = 0;
@@ -63,35 +101,7 @@ export const seedHq3dLayout = async (conn: PoolConnection, data: Hq3dSeedData) =
         );
         floors += 1;
         for (const [roomIndex, room] of floor.rooms.entries()) {
-          await conn.query(
-            `INSERT INTO hq3d_room
-               (uid, building_id, floor_no, room_no, category, label, dept, person, notes, label_lines, nx, nz, nw, nd, frac, sort_index, is_active, retired_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, NULL)
-             ON DUPLICATE KEY UPDATE
-               building_id = VALUES(building_id), floor_no = VALUES(floor_no), room_no = VALUES(room_no),
-               category = VALUES(category), label = VALUES(label), dept = VALUES(dept), person = VALUES(person),
-               notes = VALUES(notes), label_lines = VALUES(label_lines), nx = VALUES(nx), nz = VALUES(nz),
-               nw = VALUES(nw), nd = VALUES(nd), frac = VALUES(frac), sort_index = VALUES(sort_index),
-               is_active = 1, retired_at = NULL`,
-            [
-              room.uid,
-              building.id,
-              floorNo,
-              nullable(room.no) ?? '',
-              room.cat,
-              room.label,
-              nullable(room.dept) ?? '',
-              nullable(room.person) ?? '',
-              nullable(room.notes) ?? '',
-              JSON.stringify(room.lines || [room.label]),
-              room.nx,
-              room.nz,
-              room.nw,
-              room.nd,
-              room.frac ?? 0,
-              roomIndex
-            ]
-          );
+          await upsertHq3dRoom(conn, building.id, floorNo, room, roomIndex);
           rooms += 1;
         }
       }

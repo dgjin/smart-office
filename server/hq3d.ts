@@ -9,8 +9,8 @@ import { writeAudit } from './audit.ts';
  * 总部楼层 3D 分布图的数据面。
  *
  * 存两条互不干扰的线：
- *  · 布局基线（hq3d_building / hq3d_floor / hq3d_room）—— 由 Excel 解析来的只读数据，
- *    只能通过 scripts/db/seed-hq3d.ts 重建，界面上改不动。
+ *  · 布局基线（hq3d_building / hq3d_floor / hq3d_room）—— 由 Excel 解析来的数据，
+ *    可通过 seed 全量重建，或由系统管理员按整栋、单层预检后导入。
  *  · 业务覆盖（hq3d_room_profile / hq3d_room_maintenance / hq3d_floor.area_total）——
  *    房间改名、换人、报修、楼层面积合计，全部落这几张表。
  *

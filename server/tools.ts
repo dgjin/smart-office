@@ -260,7 +260,7 @@ export const TOOLS = [
       description: '检索当前角色可见的系统操作指南。用户询问“怎么用/在哪里/如何操作”时优先使用，并给出可打开的帮助卡片。',
       parameters: {
         type: 'object',
-        properties: { query: { type: 'string', description: '功能或操作关键词，如 修改预约、长期续期、导出报表、涉密授权' } },
+        properties: { query: { type: 'string', description: '功能或操作关键词，如 修改预约、长期续期、导出报表、涉密授权、楼层图导入、Excel楼层图、原生楼层图Excel、打印区域、图片OCR' } },
         required: ['query']
       }
     }
