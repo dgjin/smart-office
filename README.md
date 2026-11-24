@@ -1,6 +1,6 @@
 # SmartOffice 智慧办公空间管理系统
 
-React 19 + Vite + Node.js + MySQL 8 的单一企业办公空间管理系统，支持多部门、多公司、多楼栋、会议室预约、审批、长期预订、服务工单和 DeepSeek 对话助手。
+React 19 + Vite + Node.js + MySQL 8 的单一企业办公空间管理系统，支持多部门、多公司、多楼栋、会议室预约、审批、长期预订、服务工单、实时监控大屏和 DeepSeek 对话助手。
 
 ## 持久化与身份边界
 
@@ -67,6 +67,15 @@ npm run db:seed:hq3d
 - **侧栏自动收起**：切到「总部楼层 3D」时侧栏自动折叠到 84px，把宽度让给画面（iframe 从 1332 → 1440px）。这个折叠是**视图派生的临时态**，不写进 `user_preferences` —— 否则离开后侧栏会一直收起、下次登录还会被恢复成收起，等于替用户改了设置。在 3D 里手动展开后本次不再自动收，切走视图即复位。
 - **字体自托管**：`public/vendor/fonts/`（205 个 woff2 分片 + `fonts.css`，6.4MB）。三个家族：Noto Sans SC（正文）、ZCOOL XiaoWei（标题）、IBM Plex Mono（数字与微字），由 `npm run fonts:fetch` 从 Google Fonts 抓取并改写为相对路径，页面不请求任何外域。**保留原 `unicode-range` 分片**，浏览器仍按需加载 —— 实测首页只命中 24 片 / 1.1MB，不是把 6.4MB 全下。字体更新时重跑该命令，不要手工改 `fonts.css`（文件名是 URL 的 md5 前 16 位）。
 - **安全头分档**：`server/http.ts` 的 `securityProfileFor()` 只给 `/hq3d.html` 与 `/vendor/three/` 放宽（`X-Frame-Options: SAMEORIGIN`、`frame-ancestors 'self'`、允许内联脚本），因为该页是行内 module 写法；其余路径仍是 `DENY` + `frame-ancestors 'none'`。
+
+## 实时监控大屏
+
+所有登录用户均可从桌面侧栏“监控大屏”或移动端“更多 → 监控大屏”进入。`components/MonitoringScreen.tsx` 使用浏览器原生 `EventSource` 连接同源 `GET /api/monitoring/events`，也通过 `GET /api/monitoring/snapshot` 提供单次权限化快照；Cookie 会话认证不放入 URL。
+
+- **会议室**：按当前已核准且正在进行的预约、可见签到事实及资源状态区分已签到使用中、预约占用、当前空闲、维护中和待开放；待审批申请不算当前占用，提前结束或释放后不再误报占用。下一场仅取未来已核准预约。原始预约用于计算时间占用事实，actor 权限化投影仅用于生成主题、签到等展示字段，避免脱敏破坏时间规则或泄露涉密信息。
+- **办公室**：读取总部 3D 当前房间资料、profile 覆盖和维护记录，按已分配、空置、未登记、维护中展示。“已分配”只表示登记了使用人或部门，不代表门禁、传感器或现场实测有人。
+- **实时链路**：首次连接立即发送快照；核心 `mutateDb` 仅在事务提交成功后发布变更，总部 3D 独立写成功后也发布变更。每个连接按当前 actor 重新生成快照，15 秒发送心跳、30 秒刷新时间状态，断连后清理定时器和订阅；浏览器自动重连并保留最近成功快照。
+- **部署边界**：`server/monitoringEvents.ts` 是单进程内事件总线，不是跨实例消息系统；当前候选仍按单 Node 进程部署，不能直接据此声称多实例实时同步。页面按需加载，不新增图表库、WebSocket 服务或数据库表。
 
 ## 绑定企业身份
 

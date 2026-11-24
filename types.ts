@@ -453,6 +453,45 @@ export interface Booking {
   securityAuthorizationIds?: string[];
 }
 
+export type MeetingRoomMonitoringStatus = 'IN_USE' | 'RESERVED' | 'IDLE' | 'MAINTENANCE' | 'PENDING';
+export type OfficeMonitoringStatus = 'ASSIGNED' | 'VACANT' | 'UNREGISTERED' | 'MAINTENANCE';
+
+export interface MeetingRoomMonitoringItem {
+  resourceId: string;
+  name: string;
+  location: string;
+  capacity?: number;
+  status: MeetingRoomMonitoringStatus;
+  currentBooking?: {
+    purpose: string;
+    startTime: string;
+    endTime: string;
+    checkedIn: boolean;
+    checkInTime?: string;
+  };
+  nextBooking?: { startTime: string; endTime: string };
+}
+
+export interface OfficeMonitoringItem {
+  uid: string;
+  buildingId: string;
+  buildingName: string;
+  floorNo: number;
+  roomNumber: string;
+  name: string;
+  department: string;
+  person: string;
+  status: OfficeMonitoringStatus;
+}
+
+export interface MonitoringSnapshot {
+  generatedAt: string;
+  revision: number;
+  meetingRooms: MeetingRoomMonitoringItem[];
+  offices: OfficeMonitoringItem[];
+  officeSource: 'HQ3D_ASSIGNMENT_LEDGER';
+}
+
 export type WorkOrderStatus = 'TODO' | 'PENDING_INFO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED' | 'EXCEPTION';
 
 export interface WorkOrderStatusRecord {

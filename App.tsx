@@ -10,7 +10,7 @@ import {
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
-  PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp
+  PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp, MonitorPlay
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalRule, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException, WorkflowVersion } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
@@ -33,6 +33,7 @@ import { DEFAULT_RULE_SETTINGS, SERVICE_TYPE_LABELS } from './constants';
 const ChatDock = React.lazy(() => import('./components/ChatDock'));
 const HelpDrawer = React.lazy(() => import('./components/HelpDrawer'));
 const OperationsReports = React.lazy(() => import('./components/OperationsReports'));
+const MonitoringScreen = React.lazy(() => import('./components/MonitoringScreen'));
 
 type AppView = SystemView;
 type Hq3dTarget = NonNullable<AgentAction['hq3d']>;
@@ -3074,7 +3075,7 @@ const App: React.FC = () => {
   const canAccessExceptions = canAccessApproval
     || !!currentUser?.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'].includes(role))
     || workOrders.some(order => currentUser?.role.includes(order.assigneeRole));
-  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D', 'MONITORING']);
   if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
   if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
   if (canAccessExceptions) allowedViews.add('EXCEPTIONS');
@@ -4026,6 +4027,7 @@ const App: React.FC = () => {
     ...(primaryWorkflowItem ? [primaryWorkflowItem] : [])
   ];
   const mobileMoreItems = [
+    { id: 'MONITORING', label: '监控大屏', shortLabel: '监控', icon: MonitorPlay } as NavItem,
     { id: 'HQ_3D', label: '总部楼层 3D', shortLabel: '3D', icon: Layers } as NavItem,
     ...workflowNavItems.filter(item => !mobilePrimaryItems.some(primary => primary.id === item.id)),
     ...adminNavItems
@@ -4044,7 +4046,7 @@ const App: React.FC = () => {
     : '/images/china-orient-logo-horizontal-reverse.png';
 
   return (
-    <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-sidebar={effectiveSidebarCollapsed ? 'collapsed' : 'expanded'}>
+    <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-view={view} data-sidebar={effectiveSidebarCollapsed ? 'collapsed' : 'expanded'}>
       {/* Toast Notifications */}
       <div className="fixed top-6 right-6 z-[1000] space-y-3 pointer-events-none">
         {myNotifications.filter(n => !n.isRead).slice(0, 3).map(n => (
@@ -4074,6 +4076,7 @@ const App: React.FC = () => {
         </div>
         <nav id="studio-sidebar-navigation" aria-label="桌面主导航" className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">
           <SidebarItem icon={LayoutDashboard} label="会议工作台" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
+          <SidebarItem icon={MonitorPlay} label="监控大屏" id="MONITORING" active={view === 'MONITORING'} onClick={setView} />
           <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} />
           <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} />
           <SidebarItem icon={Layers} label="总部楼层 3D" id="HQ_3D" active={view === 'HQ_3D'} onClick={setView} />
@@ -4141,6 +4144,7 @@ const App: React.FC = () => {
           <div className="flex items-center gap-6 flex-1 min-w-0 max-w-2xl">
             <div className="min-w-0 lg:shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title truncate">
               {view === 'DASHBOARD' && '会议工作台'}
+              {view === 'MONITORING' && '监控大屏'}
               {view === 'RESOURCES' && '空间资源库'}
               {view === 'USERS' && '成员中心'}
               {view === 'BOOKINGS' && '我的会议与申请'}
@@ -4223,6 +4227,12 @@ const App: React.FC = () => {
                 style={{ width: '100%', height: '100%', border: 0, display: 'block', background: '#dfeaf8' }}
               />
             </div>
+          )}
+
+          {view === 'MONITORING' && (
+            <React.Suspense fallback={<p role="status" className="studio-panel p-8 text-sm text-gray-500">正在建立实时监控连接…</p>}>
+              <MonitoringScreen onOpenAssistant={() => setShowAgent(true)} />
+            </React.Suspense>
           )}
 
           {view === 'DASHBOARD' && (

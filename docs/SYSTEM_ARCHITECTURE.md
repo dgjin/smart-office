@@ -51,6 +51,7 @@ flowchart TB
   subgraph Presentation[表现层]
     App[App.tsx\n视图/权限/正式表单/动作分发]
     Ops[运营看板与报表]
+    Monitor[MonitoringScreen\n会议室SSE/办公室台账]
     Dock[ChatDock\nSSE对话/草案/确认卡片]
     Help[HelpDrawer\n角色化指南/智能帮助]
     HQ[public/hq3d.html\nThree.js楼层与房间]
@@ -62,6 +63,7 @@ flowchart TB
     ServiceDomain[服务目录/工单/巡查]
     Usage[签到/使用事实/释放/异常]
     Reports[报表/CSV/XLSX/ICS]
+    Monitoring[监控读模型/SSE推送]
     Agent[Agent工具循环/动作白名单]
     Admin[资源/组织/流程/设备/数据中心]
     Integration[集成与设备边界]
@@ -69,6 +71,7 @@ flowchart TB
 
   subgraph Infrastructure[基础设施层]
     DB[db.ts\n事务/快照版本/CAS]
+    Events[monitoringEvents\n进程内变更总线]
     Actor[权限化读模型/涉密裁剪]
     Jobs[Job Worker/Outbox]
     Audit[审计/通知]
@@ -78,6 +81,7 @@ flowchart TB
 
   App --> API
   Ops --> API
+  Monitor --> API
   Dock --> Agent
   Help --> App
   HQ --> API
@@ -85,6 +89,7 @@ flowchart TB
   API --> ServiceDomain
   API --> Usage
   API --> Reports
+  API --> Monitoring
   API --> Admin
   API --> Integration
   Agent --> Booking
@@ -93,9 +98,14 @@ flowchart TB
   ServiceDomain --> DB
   Usage --> DB
   Reports --> Actor
+  Monitoring --> Actor
+  Monitoring --> DB
   Admin --> DB
   Integration --> Jobs
   Jobs --> DB
+  DB --> Events
+  API --> Events
+  Events --> Monitoring
   DB --> MySQL[(MySQL 8)]
   Audit --> DB
   Observability --> Node[Node Runtime]
@@ -106,12 +116,13 @@ flowchart TB
 - `App.tsx` 是主应用协调者：加载权限化工作区、维护当前视图、打开正式预约/修改/续期表单、处理助手固定动作、挂载帮助和 ChatDock。
 - 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。东方蓝品牌区使用同源蓝色横式标志 `public/images/china-orient-logo-horizontal.png`，其他五套主题使用 `public/images/china-orient-logo-horizontal-reverse.png` 透明反白稿并继承当前侧栏主题色；展开时显示完整组合，折叠时仅裁显图形标。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
 - `components/OperationsReports.tsx` 与 `components/OperationsDashboard.tsx` 共用一次 `/api/reports` 返回的 `OperationsReport`，分别呈现“管理看板”和“明细与对账”；SVG 图表不引入大型图表库。
+- `components/MonitoringScreen.tsx` 通过原生 `EventSource` 接收权限化监控快照，展示会议室实时状态与总部 3D 办公室分配台账；断连保留最近成功快照并由浏览器自动重连，办公室“已分配”不解释成现场实测有人。
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
 - 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
 - `helpCatalog.ts` 是帮助与助手共享的功能目录，定义固定系统视图、主题、关键词、步骤和访问边界。
 - `public/hq3d.html` 是独立同源 Three.js 页面，通过 `/api/hq3d/snapshot` 获取布局和业务覆盖；主应用以 iframe 嵌入完整页面或空间剖切，并传递白名单 `theme=coamc|classic`。东方蓝在两个入口同步使用同源横式标志、白色面板、蓝色交互态和深海蓝模型背景，原五套主题恢复经典 3D 皮肤；主题仅改变界面外观，不改变房间类别色、空间状态语义或业务数据。`public/hq3d-auditorium.js` 为礼堂/报告厅提供纯几何排座：按房间宽深确定主席台、台前通道、侧向边距、中央过道及行列数，观众席最多 320 座；主席台、讲台、主席桌椅和观众席继续合批到楼层共享 InstancedMesh，不新增逐座 Mesh 或业务容量事实。完整页面按 `capabilities.canManageLayout` 向系统管理员显示原生对话框，支持整栋/单层 JSON、系统 Excel 模板与原生楼层图 Excel 精确更新、单层 PNG/JPEG 本地 OCR 候选、统一预检、差异确认和导入后刷新；原生 Excel 按附件工作表、打印区域、合并单元格、行高和列宽识别，图片漏识别不会停用现有房间，内嵌剖切与员工角色不显示入口。
 - 工作区每 10 秒轮询，使用请求防重入和身份隔离，页面隐藏或离线时跳过；自动刷新只读取权限化视图，不触发涉密详情读取审计。
-- `ChatDock`、`HelpDrawer` 和 `OperationsReports` 通过 `React.lazy` 按需加载；总部 3D 在 `document.hidden` 时取消 RAF，恢复可见后继续。这些优化不改变业务操作流程。
+- `ChatDock`、`HelpDrawer`、`OperationsReports` 和 `MonitoringScreen` 通过 `React.lazy` 按需加载；总部 3D 在 `document.hidden` 时取消 RAF，恢复可见后继续。这些优化不改变业务操作流程。
 
 ### 3.2 应用与领域层
 
@@ -122,12 +133,14 @@ flowchart TB
 - `server/serviceDomain.ts`、`server/serviceOperations.ts` 处理服务目录冻结、工单状态机、区域、班次、巡查、成本与 SLA；默认责任区只包含未分配资源，资源、公司和楼栋匹配失败后由 `area-default` 兜底。
 - `server/usageDomain.ts`、`server/usageOperations.ts` 处理签到事件、使用确认、实际使用事实、正常完成、提前结束、no-show、使用申诉和释放。
 - `server/reports.ts`、`utils/reports.ts` 统一计划/实际使用、部门投入、备料和对账口径；`server/calendarExport.ts` 负责 ICS。
+- `server/monitoring.ts` 提供单次权限化快照和 SSE：原始预约只计算当前时间占用，actor 投影生成主题和签到等展示字段；办公室读取总部 3D 当前资料与维护记录形成分配台账，不推断实测在场。首次连接立即发送快照，15 秒心跳、30 秒时间刷新，每次刷新重新认证并串行读取，关闭连接时清理全部任务。
 - `server/agent.ts`、`server/tools.ts`、`server/actions.ts` 和 `server/chatConversations.ts` 组成助手闭环。
 - `server/hq3d*.ts` 处理 3D 布局、稳定 UID、房间资料、维护、资源映射和受控同步；`server/hq3dLayoutImport.ts` 提供整栋/单层导出、只读预检、baseline 校验、事务导入和审计，`hq3dLayoutExcel.ts` 提供版本化 XLSX 往返及原生附件整栋/单层识别，`hq3dLayoutOcr.ts` 以本地中文 Tesseract 生成单层候选并保留漏识别房间，`hq3dLayoutFiles.ts` 统一分派上传格式。所有正式接口仅向系统管理员开放，OCR 不直接写库。
 
 ### 3.3 基础设施层
 
 - `server/db.ts` 提供连接池、读写、事务、快照版本和变更上下文；核心业务写入在数据库事务内完成。
+- `server/monitoringEvents.ts` 提供进程内变更订阅；`mutateDb` 只在 `commit` 成功后发布 `workspace`，总部 3D 布局、资料和维护接口在独立写成功后发布 `hq3d`，避免监控推送未提交事实。
 - `server/jobStore.ts` 与 `server/jobs.ts` 提供任务租约、过期恢复、指数退避、去重和 Outbox 投递。
 - `server/audit.ts` 与通知模块记录关键操作和按用户路由的提醒。
 - `server/http.ts`、`server/rateLimit.ts`、`server/observability.ts` 提供请求体限制、安全响应头、认证限流、结构化日志和 Prometheus 指标。
@@ -164,7 +177,8 @@ Node 启动时启动 Job Worker，收到 SIGINT/SIGTERM 后停止接收连接、
 生产部署要求：
 
 - `NODE_ENV=production`，关闭开发身份；OIDC issuer 和回调使用 HTTPS。
-- 反向代理限制管理面与数据库网络访问，MySQL 不对公网或普通办公终端开放。
+- 反向代理限制管理面与数据库网络访问，MySQL 不对公网或普通办公终端开放；监控 SSE 需同源转发并禁用响应缓冲。
+- 监控变更总线仅存在于当前 Node 进程，不跨实例传播；当前候选按单进程部署，扩展多实例前必须另设经过验证的跨实例发布机制，不能直接声称已支持多实例实时同步。
 - 仅当代理会覆盖外部传入的 `X-Forwarded-For` 时启用 `SMART_OFFICE_TRUST_PROXY`。
 -  secrets 仅通过受控环境注入，不进入前端 bundle、文档、聊天、日志或报告。
 - 应用回滚与数据库回滚分开处理；数据库没有自动 down migration，不能让旧应用直接承接不兼容新库写入。
@@ -188,6 +202,7 @@ MySQL 是唯一事实来源。当前数据面由两类结构组成：
 | 预约与审批 | 预约、系列、冻结流程、审批历史、规则快照 | 状态、排期版本、冲突、额度和审批在同一事务重检 |
 | 会务与使用 | 服务目录快照、工单、巡查、签到事件、使用事实、申诉 | 目录版本冻结；事件与排期版本关联；释放联动服务和授权 |
 | 总部 3D | 楼栋、楼层、稳定房间 UID、资料、维护、映射、处置 | `resourceId—roomUid` 显式一对一，不按名称猜测 |
+| 实时监控 | 核心预约/资源与总部 3D 的按需只读投影 | 不新增持久表；时间占用与 actor 展示字段分离；进程内事件只触发重读，不承载业务事实 |
 | 助手与帮助 | 会话 turns、handled、input、固定动作和草案 | 用户隔离、字段白名单、revision 乐观锁、确认后重检 |
 | 任务与集成 | scheduled_jobs、Outbox、投递、回调、授权事实 | 确定性 key、租约、重试、死信、幂等和审计 |
 | 运维证据 | 审计事件、迁移记录、备份和恢复事实 | 关键写入留审计；备份校验和；恢复需明确确认 |
@@ -219,6 +234,7 @@ MySQL 是唯一事实来源。当前数据面由两类结构组成：
 
 - 导航可见性不是安全边界；API 每次从当前会话重新获取 actor。
 - `getActorDbView` 对无权限预约做字段级脱敏；涉密不可见模型清空申请人、参会人及人员冲突投影 ID，普通预约保留去重的人员投影用于冲突提示。
+- 监控快照和每次 SSE 刷新均按当前 actor 重新裁剪。原始预约只用于计算是否仍占用，主题、签到时间和签到状态只能来自权限化投影，防止脱敏后的提前结束/释放字段缺失造成误报，也防止从原始记录恢复涉密信息；自动刷新不记 `CONFIDENTIAL_READ`。
 - 普通预约详情仅向申请人、参会人、授权审批人、相关会务角色和管理员开放。
 - 涉密预约还要求访问授权、申请人/参会人身份、保密角色或可审批范围；系统管理员身份不自动获得涉密读取或直接写操作权限，通知和报表中的涉密用途统一隐藏。
 - 涉密工单和巡查按具体负责角色开放最小履约范围，不授予完整涉密预约读取权；履约视图继续隐藏主题、申请人、参会人、联系人和其他非必需字段，申请人补录及无关会务角色仍受原专用授权约束。
@@ -369,9 +385,9 @@ Job Worker 与 Node 同进程运行，浏览器关闭后仍可执行：
 | 层级 | 真实范围 | 不能替代的事项 |
 |---|---|---|
 | TypeScript | 全项目静态类型 | 浏览器交互和真实权限组合 |
-| Node 单测 | 领域规则、工具、报表、3D、任务等 | MySQL 事务和并发 |
-| 隔离集成测试 | 真实 Node + 隔离 MySQL + Fake OIDC/端点 | 真实企业平台联调 |
-| Chrome E2E | 真实 UI、移动导航、表单、审批、助手/帮助恢复 | 真机、真实 IME、读屏、企业浏览器、低端设备能耗和全企业容量 |
+| Node 单测 | 领域规则、工具、报表、3D、任务，以及监控占用/脱敏/办公室台账和事件清理 | MySQL 事务和并发 |
+| 隔离集成测试 | 真实 Node + 隔离 MySQL + Fake OIDC/端点，以及监控 SSE 初始推送、写后推送和断连清理 | 真实企业平台联调 |
+| Chrome E2E | 真实 UI、移动导航、表单、审批、助手/帮助恢复，以及监控筛选、375px 布局和 SSE 即时更新 | 真机、真实 IME、读屏、企业浏览器、低端设备能耗和全企业容量 |
 | 容量工具 | 原始延迟、吞吐、错误率、资源曲线和指标快照 | 未确认模型下的正式 P9-03 |
 | 恢复演练 | 隔离库备份恢复、迁移和对账 | 生产恢复签字 |
 | wb/CI | 类型、单测、构建、迁移、集成、E2E、恢复 | 企业安全、UAT、灰度和稳定观察 |

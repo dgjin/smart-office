@@ -719,7 +719,7 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext, options: Executo
   const canAccessExceptions = canAccessApproval || Boolean(me && (
     me.role.some(role => SERVICE_ROLES.has(role)) || workOrders.some(order => me.role.includes(order.assigneeRole))
   ));
-  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D', 'MONITORING']);
   if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
   if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
   if (canAccessExceptions) allowedViews.add('EXCEPTIONS');

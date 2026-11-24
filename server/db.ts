@@ -16,6 +16,7 @@ import type { AuditInput } from './audit.ts';
 import { DbError } from './errors.ts';
 import { assertCancellationAuthorized, createBookingWorkOrders, ensureServiceDomain, syncWorkOrdersForBookingChange } from './serviceDomain.ts';
 import { syncIntegrationChanges } from './integrationDomain.ts';
+import { publishMonitoringChange } from './monitoringEvents.ts';
 
 export { DbError } from './errors.ts';
 
@@ -240,6 +241,7 @@ export const mutateDb = async <T>(mutator: (db: OfficeDb, context: MutationConte
     const advanceSnapshot = typeof options.snapshot === 'function' ? options.snapshot(result) : options.snapshot !== false;
     if (advanceSnapshot) await conn.query('UPDATE office_snapshot_meta SET revision = revision + 1 WHERE id = 1');
     await conn.commit();
+    publishMonitoringChange('workspace');
     return result;
   } catch (err) {
     await conn.rollback();

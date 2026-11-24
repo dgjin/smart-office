@@ -1,7 +1,7 @@
 # SmartOffice 详细设计文档
 
 - 文档版本：v1.0
-- 基线日期：2026-11-23
+- 基线日期：2026-11-25
 - 适用实现：单企业、React 19 + Node.js + MySQL 8 唯一持久化版本
 - 配套文档：`docs/SYSTEM_ARCHITECTURE.md`、`docs/USER_MANUAL.md`
 
@@ -24,7 +24,7 @@
 
 `helpCatalog.ts` 定义唯一 `SystemView` 集合：
 
-- 基础：`DASHBOARD`、`RESOURCES`、`BOOKINGS`、`HQ_3D`。
+- 基础：`DASHBOARD`、`RESOURCES`、`BOOKINGS`、`HQ_3D`、`MONITORING`。
 - 流程与会务：`APPROVAL_CENTER`、`WORK_ORDERS`、`EXCEPTIONS`。
 - 管理：`USERS`、`ROLES`、`DEPARTMENTS`、`REPORTS`、`WORKFLOW_CONFIG`、`DEVICES`、`DATA_CENTER`。
 - 保密：`CONFIDENTIALITY`。
@@ -54,7 +54,7 @@
 - 分发助手固定动作，不执行模型给出的 URL、脚本或任意请求。
 - 挂载 `HelpDrawer` 和 `ChatDock`，在二者之间传递智能帮助问题。
 - 工作区每 10 秒轮询；`operationRequestRef` 防止同一身份请求重入，`operationOwnerRef` 隔离身份切换前后的响应，`document.hidden` 或浏览器离线时跳过本轮。
-- `ChatDock`、`HelpDrawer` 和 `OperationsReports` 使用 `React.lazy` 按需加载，不改变其权限检查或业务步骤。
+- `ChatDock`、`HelpDrawer`、`OperationsReports` 和 `MonitoringScreen` 使用 `React.lazy` 按需加载，不改变其权限检查或业务步骤。
 
 资源管理采用逐项会话锁：默认全部锁定，只有当前会话明确解锁的资源可以编辑或删除；重新加载或身份变化后重新锁定。锁只是防误操作措施，服务端仍执行真实权限和关联约束检查。
 
@@ -90,7 +90,18 @@
 - 筛选、CSV/XLSX 导出和原明细对账保持不变。
 - 导出请求必须携带当前页面 `report.revision`；缺失或非法时返回 `400 REPORT_REVISION_REQUIRED`，与服务端当前快照不一致时返回 `409 REPORT_SNAPSHOT_CHANGED`。前端收到快照变化后重新加载报表，提示用户基于最新快照重新导出。
 
-### 3.5 助手输入与运行优化
+### 3.5 实时监控大屏
+
+`components/MonitoringScreen.tsx` 使用原生 `EventSource('/api/monitoring/events')`，组件卸载时关闭连接。首次快照到达后展示指标、房间卡片和办公室台账；网络断连由浏览器自动重连，页面保留最近一次成功快照，会话失效则停止连接并提示重新登录。页面提供会议室状态筛选，以及办公室楼栋、楼层、状态和关键词组合筛选；办公室每次显示 40 条并可继续加载，375px 下仅表格容器横向滚动。
+
+`server/monitoring.ts` 同时提供单次快照和 SSE：
+
+- 会议室以原始预约判断已核准且 `IN_PROGRESS` 的时间占用事实，以 actor 权限化投影生成主题、签到等展示字段；资源维护和待开放优先于预约。可见签到存在时为 `IN_USE`，否则为 `RESERVED`，无当前有效预约为 `IDLE`。下一场仅取未来已核准且 `UPCOMING` 的预约，不计待审批申请。
+- 办公室仅取总部 3D 的 `office/open/exec` 房间，应用 profile 当前值；开放或处理中维护记录优先为 `MAINTENANCE`，明确空置关键词为 `VACANT`，登记使用人或部门为 `ASSIGNED`，其余为 `UNREGISTERED`。该台账不推断实际人员在场。
+- 快照包含 `generatedAt/revision/meetingRooms/offices/officeSource`。SSE 使用递增事件 ID，首次立即发送，15 秒心跳，30 秒时间刷新；每次刷新重新认证 actor，并通过串行刷新与排队标记避免同一连接并发重读。
+- `server/monitoringEvents.ts` 提供进程内订阅；`mutateDb` 仅在 `commit` 成功后发布 `workspace`，总部 3D 资料、维护或布局写成功后发布 `hq3d`。连接关闭清理心跳、周期任务和订阅。该机制只适用于当前单进程部署，不是跨实例消息总线。
+
+### 3.6 助手输入与运行优化
 
 - ChatDock 发送快捷键同时检查 `!event.nativeEvent.isComposing` 和 `event.keyCode !== 229`，中文 IME 组合输入期间按 Enter 不误发送。
 - 打开 ChatDock 后聚焦输入框，Tab/Shift+Tab 约束焦点，Escape 关闭，关闭后焦点返回触发元素；关闭与发送按钮至少 44×44px，移动端输入框至少 44px 高并使用 16px 字号。
@@ -114,6 +125,7 @@
 | 分组 | 主要接口 | 设计职责 |
 |---|---|---|
 | 工作区 | `GET /api/workspace`、`GET /api/dashboard`、`GET /api/exceptions` | 权限化工作区、角色驾驶舱、异常聚合 |
+| 实时监控 | `GET /api/monitoring/snapshot`、`GET /api/monitoring/events` | actor 权限化快照、SSE 初始快照及写后推送 |
 | 预约 | `POST /api/bookings`、`POST /api/bookings/batch`、`POST /api/bookings/:id/confidential-read` 及预约动态路由 | 新建、批量/长期、修改、审批、取消、签到、续期、ICS、主动涉密详情读取审计等固定领域动作 |
 | 报表 | `GET /api/reports`、`GET /api/reports/export` | 同一权限化报表快照及 CSV/XLSX 导出 |
 | 助手 | `GET/PUT /api/agent/conversation`、`GET /api/agent/status`、`POST /api/agent/chat`、`POST /api/agent/action` | 会话恢复、SSE 对话、固定确认动作 |
@@ -139,6 +151,8 @@
 | 资源 `ResourceStatus` | `AVAILABLE/OCCUPIED/MAINTENANCE/PENDING` | PENDING 或维护资源不可作为正常可订资源 |
 | 预约 `BookingStatus` | `PENDING/APPROVED/REJECTED/COMPLETED/CANCELLED` | 持久业务状态 |
 | 预约展示状态 | `PENDING/UPCOMING/IN_PROGRESS/NO_SHOW/RELEASED/ENDED_EARLY/COMPLETED/CANCELLED/REJECTED` | 由持久状态、当前时间和使用事实派生，不另建冲突事实 |
+| 会议室监控状态 | `IN_USE/RESERVED/IDLE/MAINTENANCE/PENDING` | 已签到使用中、预约占用、当前空闲、维护中、待开放 |
+| 办公室监控状态 | `ASSIGNED/VACANT/UNREGISTERED/MAINTENANCE` | 总部3D分配台账口径，不代表现场实测占用 |
 | 工单 `WorkOrderStatus` | `TODO/PENDING_INFO/IN_PROGRESS/DONE/CANCELLED/EXCEPTION` | 记录状态历史、处理人、成本和快照 |
 | 使用申诉 | `PENDING/RESTORED/REJECTED` | 仅处理 no-show、确认未使用或人工异常释放争议；主动取消不可申诉 |
 | 门禁授权 | `PENDING/AUTHORIZED/REVOKED` | 与预约和排期版本关联 |
@@ -289,6 +303,7 @@
 - DeepSeek 默认超时为 60 秒，可由调用选项或环境配置调整；`withLlmRequest` 组合内部 `AbortController`、外部 signal 和定时器。流式请求 abort 时执行 `reader.cancel()`，`server/agent.ts` 监听 `req.aborted` 和 `res.close`，把客户端断开传播到 Agent 和上游调用。
 - 具体资源、时间、人员、预约、审批、工单和统计必须先调用工具，不依赖模型记忆作答。
 - 总部 3D 的楼栋、楼层、房间、部门、使用人、面积、维护、映射和处置查询必须调用 `query_hq3d_spaces`。工具仅在实际执行时动态导入 `server/hq3d.ts` 并读取 `getHq3dSnapshot()`；以 `profiles` 覆盖后的当前房间资料为准，无过滤只返回楼栋/楼层概览，房间结果默认 12 间、上限 20 间，最近维护摘要最多 3 条。
+- 监控大屏通过 `search_help` 和 `navigate_system(MONITORING)` 提供指南与导航。当前助手没有实时监控查询工具，不得编造占用数量或现场人员情况；办公室已分配不等于门禁、传感器或现场实测有人。
 - 新预约要求明确用途和正整数人数，不自动编造参会人，不用“会议/开会”替代真实用途。
 - 未匹配或同名歧义参会人明确报错，不静默丢弃。
 
@@ -358,9 +373,9 @@
 
 ## 15. 测试设计与同步门禁
 
-- Node 单测覆盖预约规则、助手工具、角色裁剪、状态机和报表口径。
-- 隔离 MySQL 集成测试覆盖真实 Node、事务、OIDC Fake、外部 Fake 和恢复。
-- Chrome E2E 覆盖帮助角色过滤、智能帮助、焦点恢复、修改草案跨刷新、历史会务快照、动态规则桌面新增/编辑/发布/删除及移动端草稿重置，以及“只打开正式表单不落库”。
+- Node 单测覆盖预约规则、助手工具、角色裁剪、状态机和报表口径；`tests/monitoring.test.ts` 另覆盖会议室占用/释放/维护/待开放、涉密不可见时的真实时间占用与展示分离、办公室 profile 和维护台账，以及事件订阅清理。
+- 隔离 MySQL 集成测试覆盖真实 Node、事务、OIDC Fake、外部 Fake 和恢复；`tests/integration/monitoring.test.ts` 验证未登录拒绝、actor 脱敏、SSE 初始快照、核心事务及总部 3D 写后推送和断连订阅清理。
+- Chrome E2E 覆盖帮助角色过滤、智能帮助、焦点恢复、修改草案跨刷新、历史会务快照、动态规则桌面新增/编辑/发布/删除及移动端草稿重置，以及“只打开正式表单不落库”；`tests/e2e/monitoring.spec.ts` 验证桌面/375px 监控入口、筛选、分页、主题、无页面横向溢出和 API 写入后 SSE 新房间即时出现。
 - 浏览器和集成写测试必须显式启用 `SMART_OFFICE_TEST_MYSQL=true`，且数据库名以 `smart_office_test_` 开头。
 - 每次功能变化同步架构、详细设计、用户手册、`helpCatalog.ts`、帮助抽屉、助手工具/提示词/动作及对应测试。
 - 本地工程证据不替代正式 P9-03、企业安全、真实 OA/日历/门禁联调、生产恢复及责任方签认、UAT、培训、灰度和稳定观察。

@@ -1,7 +1,7 @@
 export const SYSTEM_VIEWS = [
   'DASHBOARD', 'RESOURCES', 'USERS', 'BOOKINGS', 'ROLES', 'DEPARTMENTS',
   'APPROVAL_CENTER', 'WORK_ORDERS', 'EXCEPTIONS', 'DEVICES', 'REPORTS',
-  'WORKFLOW_CONFIG', 'CONFIDENTIALITY', 'DATA_CENTER', 'HQ_3D'
+  'WORKFLOW_CONFIG', 'CONFIDENTIALITY', 'DATA_CENTER', 'HQ_3D', 'MONITORING'
 ] as const;
 
 export type SystemView = typeof SYSTEM_VIEWS[number];
@@ -25,6 +25,13 @@ export const HELP_TOPICS: HelpTopic[] = [
     summary: '查看今日、本周和本月的会议安排、个人待办、下一场会议与空间使用概览，并按需要切换界面主题。',
     keywords: ['首页', '看板', '今日', '本周', '本月', '下一场', '日程', '东方蓝', '主题', '界面风格', '偏好', '中国东方', 'Logo', '标志'],
     steps: ['在“会议工作台”切换今日、本周或本月。', '点击日程日期查看当天安排，点击下一场会议查看申请详情。', '需要签到时选择“扫码签到”，或从“我的申请”进入会议详情。', '桌面在侧栏底部“界面风格”选择东方蓝或原主题；移动端从“更多 → 界面主题”切换，选择会保存并在刷新后恢复。', '桌面侧栏统一使用中国东方横式组合标志：东方蓝使用蓝色稿，其他五套主题使用透明反白稿；收起侧栏后显示图形标，展开后恢复完整组合。', '总部楼层3D和空间资源库内的3D剖切会同步使用东方蓝；切回原五套主题后保留经典3D配色，并继续使用相同的中国东方标志。']
+  },
+  {
+    id: 'monitoring', title: '实时会议与办公空间监控', category: '会议与空间', view: 'MONITORING', access: 'EVERYONE',
+    summary: '通过实时推送查看会议室预约、签到、空闲和维护状态，并按总部3D房间资料核对办公室分配台账。',
+    keywords: ['监控大屏', '实时监控', '会议室使用', '办公室使用', 'SSE', '已签到', '预约占用', '当前空闲', '已分配', '空置', '未登记'],
+    steps: ['桌面点击“监控大屏”，移动端从“更多 → 监控大屏”进入；页面显示实时连接状态和最近更新时间。', '会议室按已签到使用中、预约占用、当前空闲、维护中和待开放展示，可按状态筛选并查看当前及下一场已核准安排。', '办公室可按楼栋、楼层、台账状态和关键词筛选，点击状态汇总卡可快速过滤，记录较多时使用“显示更多”。', '连接中断时页面保留最近一次成功快照并自动重连；会话失效后重新登录，停止连接时可手动重连。'],
+    note: '会议室当前占用由已核准且正在进行的预约、签到和资源状态计算，待审批申请不计入占用；涉密主题和签到按当前用户权限脱敏。办公室“已分配”仅表示总部3D房间资料登记了使用人或部门，不代表门禁、传感器或现场实测有人。'
   },
   {
     id: 'user-errors', title: '操作失败与中文错误提示', category: '会议与空间', view: 'DASHBOARD', access: 'EVERYONE',

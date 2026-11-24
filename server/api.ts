@@ -45,6 +45,8 @@ import {
   setHq3dFloorArea,
   updateHq3dMaintenanceStatus
 } from './hq3d.ts';
+import { handleMonitoringEvents, handleMonitoringSnapshot } from './monitoring.ts';
+import { publishMonitoringChange } from './monitoringEvents.ts';
 
 const requireAdmin = (actor: User) => {
   if (!actor.role.includes('SYSTEM_ADMIN')) throw new HttpError(403, 'FORBIDDEN');
@@ -96,6 +98,14 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     }
     if (url.pathname === '/api/workspace' && req.method === 'GET') {
       send(res, 200, await getWorkspace(actor));
+      return true;
+    }
+    if (url.pathname === '/api/monitoring/snapshot' && req.method === 'GET') {
+      await handleMonitoringSnapshot(res, actor);
+      return true;
+    }
+    if (url.pathname === '/api/monitoring/events' && req.method === 'GET') {
+      await handleMonitoringEvents(req, res, actor);
       return true;
     }
     if (url.pathname === '/api/dashboard' && req.method === 'GET') {
@@ -380,7 +390,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     if (url.pathname === '/api/hq3d/layout/import' && req.method === 'POST') {
       requireAdmin(actor);
       const { layout, baselineHash } = await readJson(req, 2 * 1024 * 1024);
-      send(res, 200, { report: await importHq3dLayout(actor.id, layout, baselineHash) });
+      const report = await importHq3dLayout(actor.id, layout, baselineHash);
+      publishMonitoringChange('hq3d');
+      send(res, 200, { report });
       return true;
     }
     const hqRoomMatch = url.pathname.match(/^\/api\/hq3d\/rooms\/([^/]+)$/);
@@ -388,13 +400,16 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       requireSpaceEditor(actor);
       const uid = decodeURIComponent(hqRoomMatch[1]);
       const { profile } = await readJson(req);
-      send(res, 200, { profile: await saveHq3dRoomProfile(actor, uid, profile || {}) });
+      const saved = await saveHq3dRoomProfile(actor, uid, profile || {});
+      publishMonitoringChange('hq3d');
+      send(res, 200, { profile: saved });
       return true;
     }
     if (hqRoomMatch && req.method === 'DELETE') {
       requireSpaceEditor(actor);
       const uid = decodeURIComponent(hqRoomMatch[1]);
       await resetHq3dRoomProfile(actor, uid);
+      publishMonitoringChange('hq3d');
       send(res, 200, { reset: true });
       return true;
     }
@@ -403,7 +418,9 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       requireSpaceEditor(actor);
       const uid = decodeURIComponent(hqMaintenanceMatch[1]);
       const { record } = await readJson(req);
-      send(res, 201, { record: await addHq3dMaintenance(actor, uid, record || {}) });
+      const saved = await addHq3dMaintenance(actor, uid, record || {});
+      publishMonitoringChange('hq3d');
+      send(res, 201, { record: saved });
       return true;
     }
     const hqMaintenanceItemMatch = url.pathname.match(/^\/api\/hq3d\/maintenance\/([^/]+)$/);
@@ -411,12 +428,15 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       requireSpaceEditor(actor);
       const id = decodeURIComponent(hqMaintenanceItemMatch[1]);
       const { status } = await readJson(req);
-      send(res, 200, { record: await updateHq3dMaintenanceStatus(actor, id, status) });
+      const record = await updateHq3dMaintenanceStatus(actor, id, status);
+      publishMonitoringChange('hq3d');
+      send(res, 200, { record });
       return true;
     }
     if (hqMaintenanceItemMatch && req.method === 'DELETE') {
       requireSpaceEditor(actor);
       await deleteHq3dMaintenance(actor, decodeURIComponent(hqMaintenanceItemMatch[1]));
+      publishMonitoringChange('hq3d');
       send(res, 200, { deleted: true });
       return true;
     }
@@ -639,6 +659,10 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
     return true;
   } catch (err: any) {
     if (res.writableEnded) return true;
+    if (res.headersSent) {
+      res.end();
+      return true;
+    }
     if (err instanceof DbError) {
       send(res, err.status, { error: err.message, conflicts: err.details });
       return true;

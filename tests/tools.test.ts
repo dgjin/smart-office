@@ -556,6 +556,14 @@ test('帮助检索和系统导航只暴露当前角色可用功能', () => {
   const resourceNavigation = employee.navigate_system({ view: 'RESOURCES' }).action;
   assert.equal(resourceNavigation?.type, 'NAVIGATE');
   if (resourceNavigation?.type === 'NAVIGATE') assert.equal(resourceNavigation.view, 'RESOURCES');
+  const employeeMonitoring = employee.search_help({ query: '监控大屏' });
+  assert.equal(employeeMonitoring.action?.type, 'OPEN_HELP');
+  if (employeeMonitoring.action?.type === 'OPEN_HELP') assert.equal(employeeMonitoring.action.topicId, 'monitoring');
+  assert.match(employeeMonitoring.data.topics[0].note, /不代表门禁、传感器或现场实测有人/);
+  const monitoringNavigation = employee.navigate_system({ view: 'MONITORING' });
+  assert.equal(monitoringNavigation.ok, true);
+  assert.equal(monitoringNavigation.action?.type, 'NAVIGATE');
+  if (monitoringNavigation.action?.type === 'NAVIGATE') assert.equal(monitoringNavigation.action.view, 'MONITORING');
 
   const admin = exec('1');
   const adminReport = admin.search_help({ query: '运营报表' });
