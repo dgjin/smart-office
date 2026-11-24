@@ -1328,7 +1328,6 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .studio-app .studio-brand-mark,
 .studio-app .studio-brand-copy { display: none; }
 .studio-app .studio-brand-orient { display: block; flex: 1; min-width: 0; }
-.studio-app:not([data-theme='coamc']) .studio-brand-orient { padding: 6px; background: #ffffff; }
 .studio-app[data-theme='coamc'] .studio-sidebar {
   background: #ffffff;
   color: var(--ink);
@@ -1339,7 +1338,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .studio-app[data-sidebar='collapsed'] .studio-brand { flex-direction: column; gap: 10px; padding-bottom: 18px; }
 .studio-app[data-sidebar='collapsed'] .studio-brand-orient { display: block; flex: none; padding: 0; }
 .studio-app[data-sidebar='collapsed'] .studio-brand-logo-orient { display: none; }
-.studio-app[data-sidebar='collapsed'] .studio-brand-symbol-orient { display: block; background: #ffffff; }
+.studio-app[data-sidebar='collapsed'] .studio-brand-symbol-orient { display: block; }
 .studio-app[data-theme='coamc'] .studio-sidebar-toggle { border-color: var(--line); color: var(--muted); }
 .studio-app[data-theme='coamc'] .studio-sidebar-toggle:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .studio-app[data-theme='coamc'] .studio-nav-label { color: #7a8995; }
