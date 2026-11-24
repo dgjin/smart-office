@@ -115,9 +115,21 @@ test.describe('MySQL-only 浏览器验收', () => {
     await desktop.page.getByTitle('翡翠绿', { exact: true }).click();
     await classicWrite;
     await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', 'emerald');
-    await expect(desktop.page.locator('.studio-brand-name')).toHaveText('SmartOffice');
-    await expect(desktop.page.locator('.studio-brand-copy')).toBeVisible();
-    await expect(desktop.page.locator('.studio-brand-orient')).toBeHidden();
+    await expect(desktop.page.locator('.studio-brand-copy')).toBeHidden();
+    await expect(desktop.page.locator('.studio-brand-orient')).toBeVisible();
+    await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toHaveAttribute('src', '/images/china-orient-logo-horizontal.png');
+    await desktop.page.getByRole('button', { name: '收起侧边栏', exact: true }).click();
+    await expect(desktop.page.locator('.studio-brand-symbol-orient')).toBeVisible();
+    await expect(desktop.page.locator('.studio-brand-logo-orient')).toBeHidden();
+    await desktop.page.getByRole('button', { name: '展开侧边栏', exact: true }).click();
+    for (const [name, id] of [['商务蓝', 'indigo'], ['活力橙', 'orange'], ['胭脂红', 'rose'], ['极光紫', 'purple']]) {
+      const themeWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
+      await desktop.page.getByTitle(name, { exact: true }).click();
+      await themeWrite;
+      await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', id);
+      await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+      await expect(desktop.page.locator('.studio-brand-copy')).toBeHidden();
+    }
     await desktop.context.close();
 
     const mobile = await openWorkspace(browser, '李员工', { width: 375, height: 812 });
@@ -175,6 +187,11 @@ test.describe('MySQL-only 浏览器验收', () => {
     await classicWrite;
     await expect(spatialFrameElement).toHaveAttribute('src', '/hq3d.html?embed=spatial&theme=classic');
     await expect(spatial.locator('html')).not.toHaveAttribute('data-theme', 'coamc');
+    await desktop.page.getByRole('button', { name: '总部楼层 3D', exact: true }).click();
+    await expect(hqFrameElement).toHaveAttribute('src', '/hq3d.html?theme=classic');
+    await expect(hq.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+    await expect(hq.locator('.brand .logo')).toBeHidden();
+    await desktop.page.getByRole('button', { name: '空间资源库', exact: true }).click();
     const orientWrite = desktop.page.waitForResponse(response => response.url().endsWith('/api/preferences') && response.request().method() === 'PUT' && response.ok());
     await desktop.page.getByTitle('东方蓝', { exact: true }).click();
     await orientWrite;

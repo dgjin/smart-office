@@ -104,7 +104,7 @@ flowchart TB
 ### 3.1 表现层
 
 - `App.tsx` 是主应用协调者：加载权限化工作区、维护当前视图、打开正式预约/修改/续期表单、处理助手固定动作、挂载帮助和 ChatDock。
-- 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。品牌区使用同源透明横式标志 `public/images/china-orient-logo-horizontal.png`，展开时显示完整组合，折叠时仅裁显图形标，原五套主题继续使用 SmartOffice 标识。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
+- 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。所有主题的品牌区统一使用同源透明横式标志 `public/images/china-orient-logo-horizontal.png`，展开时显示完整组合，折叠时仅裁显图形标，非东方蓝的深色侧栏以白色标志底保证辨识。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
 - `components/OperationsReports.tsx` 与 `components/OperationsDashboard.tsx` 共用一次 `/api/reports` 返回的 `OperationsReport`，分别呈现“管理看板”和“明细与对账”；SVG 图表不引入大型图表库。
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
 - 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。

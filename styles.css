@@ -1325,9 +1325,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   background-size: 100% 240px;
   background-repeat: no-repeat;
 }
-.studio-app[data-theme='coamc'] .studio-brand-mark,
-.studio-app[data-theme='coamc'] .studio-brand-copy { display: none; }
-.studio-app[data-theme='coamc'] .studio-brand-orient { display: block; flex: 1; min-width: 0; }
+.studio-app .studio-brand-mark,
+.studio-app .studio-brand-copy { display: none; }
+.studio-app .studio-brand-orient { display: block; flex: 1; min-width: 0; }
+.studio-app:not([data-theme='coamc']) .studio-brand-orient { padding: 6px; background: #ffffff; }
 .studio-app[data-theme='coamc'] .studio-sidebar {
   background: #ffffff;
   color: var(--ink);
@@ -1335,10 +1336,10 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   box-shadow: 10px 0 34px rgba(0, 51, 102, 0.035);
 }
 .studio-app[data-theme='coamc'] .studio-brand { border-bottom-color: var(--line); }
-.studio-app[data-sidebar='collapsed'][data-theme='coamc'] .studio-brand { flex-direction: column; gap: 10px; padding-bottom: 18px; }
-.studio-app[data-sidebar='collapsed'][data-theme='coamc'] .studio-brand-orient { display: block; flex: none; }
-.studio-app[data-sidebar='collapsed'][data-theme='coamc'] .studio-brand-logo-orient { display: none; }
-.studio-app[data-sidebar='collapsed'][data-theme='coamc'] .studio-brand-symbol-orient { display: block; }
+.studio-app[data-sidebar='collapsed'] .studio-brand { flex-direction: column; gap: 10px; padding-bottom: 18px; }
+.studio-app[data-sidebar='collapsed'] .studio-brand-orient { display: block; flex: none; padding: 0; }
+.studio-app[data-sidebar='collapsed'] .studio-brand-logo-orient { display: none; }
+.studio-app[data-sidebar='collapsed'] .studio-brand-symbol-orient { display: block; background: #ffffff; }
 .studio-app[data-theme='coamc'] .studio-sidebar-toggle { border-color: var(--line); color: var(--muted); }
 .studio-app[data-theme='coamc'] .studio-sidebar-toggle:hover { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
 .studio-app[data-theme='coamc'] .studio-nav-label { color: #7a8995; }
