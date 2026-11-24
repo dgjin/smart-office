@@ -118,9 +118,10 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(desktop.page.locator('.studio-brand-copy')).toBeHidden();
     await expect(desktop.page.locator('.studio-brand-orient')).toBeVisible();
     await expect(desktop.page.locator('.studio-brand-orient')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toHaveAttribute('src', '/images/china-orient-logo-horizontal.png');
+    await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toHaveAttribute('src', '/images/china-orient-logo-horizontal-reverse.png');
     await desktop.page.getByRole('button', { name: '收起侧边栏', exact: true }).click();
     await expect(desktop.page.locator('.studio-brand-symbol-orient')).toBeVisible();
+    await expect(desktop.page.locator('.studio-brand-symbol-orient')).toHaveAttribute('src', '/images/china-orient-logo-horizontal-reverse.png');
     await expect(desktop.page.locator('.studio-brand-symbol-orient')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
     await expect(desktop.page.locator('.studio-brand-logo-orient')).toBeHidden();
     await desktop.page.getByRole('button', { name: '展开侧边栏', exact: true }).click();
@@ -130,6 +131,7 @@ test.describe('MySQL-only 浏览器验收', () => {
       await themeWrite;
       await expect(desktop.page.locator('.studio-app')).toHaveAttribute('data-theme', id);
       await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toBeVisible();
+      await expect(desktop.page.getByRole('img', { name: '中国东方', exact: true })).toHaveAttribute('src', '/images/china-orient-logo-horizontal-reverse.png');
       await expect(desktop.page.locator('.studio-brand-orient')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
       await expect(desktop.page.locator('.studio-brand-copy')).toBeHidden();
     }

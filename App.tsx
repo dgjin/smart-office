@@ -4039,6 +4039,9 @@ const App: React.FC = () => {
   };
   const isMoreView = mobileMoreItems.some(item => item.id === view);
   const isAdminView = adminNavItems.some(item => item.id === view);
+  const brandLogoSrc = theme === 'coamc'
+    ? '/images/china-orient-logo-horizontal.png'
+    : '/images/china-orient-logo-horizontal-reverse.png';
 
   return (
     <div className="studio-app min-h-screen flex overflow-hidden" data-theme={theme} data-sidebar={effectiveSidebarCollapsed ? 'collapsed' : 'expanded'}>
@@ -4053,8 +4056,8 @@ const App: React.FC = () => {
         <div className="studio-brand shrink-0">
           <div className="studio-brand-mark"><Cpu className="studio-brand-icon-classic" size={21} strokeWidth={1.5}/></div>
           <div className="studio-brand-orient">
-            <img className="studio-brand-logo-orient" src="/images/china-orient-logo-horizontal.png" alt="中国东方" />
-            <img className="studio-brand-symbol-orient" src="/images/china-orient-logo-horizontal.png" alt="" aria-hidden="true" />
+            <img className="studio-brand-logo-orient" src={brandLogoSrc} alt="中国东方" />
+            <img className="studio-brand-symbol-orient" src={brandLogoSrc} alt="" aria-hidden="true" />
           </div>
           <div className="studio-brand-copy"><div className="studio-brand-name">SmartOffice</div><div className="studio-brand-sub">MEETING & SPACE</div></div>
           <button
