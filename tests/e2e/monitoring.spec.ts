@@ -36,13 +36,36 @@ const expectDistinctStatusColors = async (page: Page) => {
   expect(new Set(palette).size).toBe(5);
   const roomStatuses = await page.locator('.monitoring-room-card').evaluateAll(cards => cards.map(card => ({
     status: card.getAttribute('data-status'),
-    color: getComputedStyle(card).borderTopColor
+    color: getComputedStyle(card).borderTopColor,
+    headerBackground: getComputedStyle(card.querySelector('.monitoring-card-head')!).backgroundColor,
+    badgeBackground: getComputedStyle(card.querySelector('.monitoring-status-badge')!).backgroundColor,
+    badgeColor: getComputedStyle(card.querySelector('.monitoring-status-badge')!).color
   })));
   expect(new Set(roomStatuses.map(item => item.color)).size).toBe(new Set(roomStatuses.map(item => item.status)).size);
-  const officeColors = await page.locator('.monitoring-office-summary button').evaluateAll(buttons =>
-    buttons.map(button => getComputedStyle(button).borderTopColor)
-  );
-  expect(new Set(officeColors).size).toBe(4);
+  expect(new Set(roomStatuses.map(item => item.headerBackground)).size).toBe(new Set(roomStatuses.map(item => item.status)).size);
+  for (const item of roomStatuses) {
+    expect(item.badgeBackground).toBe(item.color);
+    expect(item.badgeColor).toBe('rgb(255, 255, 255)');
+  }
+  const officeSummaries = await page.locator('.monitoring-office-summary button').evaluateAll(buttons => buttons.map(button => ({
+    status: button.getAttribute('data-status'),
+    border: getComputedStyle(button).borderTopColor,
+    background: getComputedStyle(button).backgroundColor,
+    number: getComputedStyle(button.querySelector('strong')!).color
+  })));
+  expect(new Set(officeSummaries.map(item => item.border)).size).toBe(4);
+  expect(new Set(officeSummaries.map(item => item.background)).size).toBe(4);
+  for (const item of officeSummaries) expect(item.number).toBe(item.border);
+  const officeStatusColors = new Map(officeSummaries.map(item => [item.status, item.border]));
+  const officeBadges = await page.locator('.monitoring-office-status').evaluateAll(badges => badges.map(badge => ({
+    status: badge.getAttribute('data-status'),
+    color: getComputedStyle(badge).color,
+    background: getComputedStyle(badge).backgroundColor
+  })));
+  for (const item of officeBadges) {
+    expect(item.color).toBe('rgb(255, 255, 255)');
+    expect(item.background).toBe(officeStatusColors.get(item.status));
+  }
 };
 
 test.describe('监控大屏浏览器验收', () => {
@@ -124,9 +147,12 @@ test.describe('监控大屏浏览器验收', () => {
     const { context, page } = await openWorkspace(browser, '李员工', { width: 375, height: 812 });
     const errors: string[] = [];
     page.on('pageerror', error => errors.push(error.message));
+    await page.locator('.studio-main').evaluate(element => element.scrollTo({ top: element.scrollHeight }));
+    expect(await page.locator('.studio-main').evaluate(element => element.scrollTop)).toBeGreaterThan(0);
     await page.getByRole('navigation', { name: '移动端主导航', exact: true }).getByRole('button', { name: '更多', exact: true }).click();
     await page.getByRole('dialog', { name: '更多功能', exact: true }).getByRole('button', { name: '监控大屏', exact: true }).click();
     await expectLiveSnapshot(page);
+    await expect.poll(() => page.locator('.studio-main').evaluate(element => element.scrollTop)).toBe(0);
     await expectDistinctStatusColors(page);
     await expect(page.locator('.monitoring-metric')).toHaveCount(4);
     await expect(page.locator('.studio-agent-launcher')).toBeHidden();

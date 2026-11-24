@@ -2681,6 +2681,7 @@ const ConfidentialityAdminPanel = ({ users, authorizationTargets, whitelist, aut
 // --- Main App ---
 
 const App: React.FC = () => {
+  const mainRef = useRef<HTMLElement | null>(null);
   const [view, setView] = useState<AppView>('DASHBOARD');
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>('TODAY');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
@@ -2733,6 +2734,10 @@ const App: React.FC = () => {
       localStorage.removeItem(key);
     }
   }, []);
+
+  useEffect(() => {
+    mainRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [view, currentUser?.id]);
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -4139,7 +4144,7 @@ const App: React.FC = () => {
 
       {showMobileMenu && <div id="mobile-more-menu"><MobileMoreSheet items={mobileMoreItems} currentView={view} onSelect={id => { setView(id); setShowMobileMenu(false); }} onClose={() => setShowMobileMenu(false)} theme={theme} onThemeChange={setTheme} currentUser={currentUser} isOnline={isOnline} saveStatus={saveStatus} onLogout={handleLogout} /></div>}
 
-      <main className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
+      <main ref={mainRef} className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
         <header className="studio-topbar backdrop-blur-md flex items-center justify-between gap-3 sticky top-0 z-40">
           <div className="flex items-center gap-6 flex-1 min-w-0 max-w-2xl">
             <div className="min-w-0 lg:shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title truncate">
