@@ -1,7 +1,7 @@
 # SmartOffice 系统文档索引与同步约定
 
 - 索引版本：v1.0
-- 基线日期：2026-11-23
+- 基线日期：2026-11-25
 
 本文件是系统文档统一入口。原简略需求说明和操作手册已由以下按当前实现整理的文档替代。
 
@@ -12,14 +12,17 @@
 | [系统架构文档](docs/SYSTEM_ARCHITECTURE.md) | 架构、开发、运维、安全和管理人员 | 系统上下文、逻辑/部署/数据/安全架构、助手与帮助、3D、任务集成、测试与投产门禁 |
 | [详细设计文档](docs/DETAILED_DESIGN.md) | 开发、测试和实施人员 | 模块职责、固定视图、API 分组、状态枚举、预约/审批/保密/会务/使用规则、报表、助手工具和会话持久化 |
 | [用户使用手册](docs/USER_MANUAL.md) | 员工、审批人、会务、管理员和保密管理员 | 登录导航、找房预约、审批、签到、工单、3D、报表、系统管理、帮助、助手和常见问题 |
+| [基础数据与初始化清单](docs/BASE_DATA.md) | 实施、运维、业务管理员和测试人员 | 正式会议室、总部3D、办公室类空间、默认组织、预约规则、审批流程、会务目录及演示数据边界 |
+| [系统部署手册](docs/DEPLOYMENT.md) | 部署、运维、安全、数据库和责任方 | 环境配置、空库初始化、OIDC、构建启动、反向代理、验证、升级、回滚、备份恢复和投产门禁 |
 | [README](README.md) | 部署、运维和开发人员 | 环境准备、迁移、OIDC、运行、测试、备份恢复、总部 3D 和当前投产限制 |
 
-系统内入口：侧栏底部“打开帮助”提供角色化功能指南和智能帮助；“打开智能助手”提供对话、查询、草案、导航和确认动作。
+系统内入口：顶部栏“打开帮助”提供角色化功能指南和智能帮助；“打开智能助手”提供对话、查询、草案、导航和确认动作。
 
 ## 2. 实现口径
 
 - 系统面向单一企业，不引入多租户字段。
 - MySQL 是全部业务数据、身份、会话、偏好、对话、草案、任务、通知、审计和集成事实的唯一持久化存储。
+- 正式 `db:init` 只允许全新空库，核心集合和总部3D在同一事务写入，重复执行明确拒绝；演示 `db:seed` 不进入正式部署。
 - 生产使用 OIDC Authorization Code Flow + PKCE；外部身份只绑定已有内部用户。
 - 总部 3D 与空间资源库通过显式 `resourceId—roomUid` 一对一映射同步，不按名称模糊关联。
 - 运营看板、明细和 CSV/XLSX 导出使用同一 `OperationsReport` 数据快照。
@@ -33,11 +36,12 @@
 
 1. `docs/SYSTEM_ARCHITECTURE.md`：模块、数据流、安全、部署或外部依赖边界。
 2. `docs/DETAILED_DESIGN.md`：领域规则、状态机、接口、持久化、工具动作和并发约束。
-3. `docs/USER_MANUAL.md`：用户入口、操作步骤、角色、错误处理和限制。
-4. `helpCatalog.ts`：指南主题、搜索关键词、固定视图和访问权限。
-5. `components/HelpDrawer.tsx`：帮助展示、智能帮助和无障碍交互。
-6. `server/agent.ts`、`server/tools.ts`、`components/ChatDock.tsx`、`server/chatConversations.ts`：助手提示词、工具、动作、确认边界和会话恢复。
-7. 对应 Node 单测、隔离 MySQL 集成测试和真实 Chrome 回归。
+3. `docs/BASE_DATA.md`、`docs/DEPLOYMENT.md`：初始化输入、数据口径、部署步骤、升级回滚和运维限制。
+4. `docs/USER_MANUAL.md`：用户入口、操作步骤、角色、错误处理和限制。
+5. `helpCatalog.ts`：指南主题、搜索关键词、固定视图和访问权限。
+6. `components/HelpDrawer.tsx`：帮助展示、智能帮助和无障碍交互。
+7. `server/agent.ts`、`server/tools.ts`、`components/ChatDock.tsx`、`server/chatConversations.ts`：助手提示词、工具、动作、确认边界和会话恢复。
+8. 对应 Node 单测、隔离 MySQL 集成测试和真实 Chrome 回归。
 
 若功能尚未实现或仍需外部验收，必须在文档和帮助中明确写为限制，不得把规划、Fake 端点或本地测试描述成已投产能力。
 

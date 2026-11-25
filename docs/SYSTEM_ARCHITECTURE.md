@@ -1,7 +1,7 @@
 # SmartOffice 系统架构文档
 
 - 文档版本：v1.0
-- 基线日期：2026-11-23
+- 基线日期：2026-11-25
 - 适用范围：单一企业、MySQL 唯一持久化的智慧办公空间管理系统
 - 对应实现：React 19 + TypeScript + Vite 6 + Node.js + MySQL 8 + Three.js 0.160
 
@@ -146,7 +146,9 @@ flowchart TB
 - `server/audit.ts` 与通知模块记录关键操作和按用户路由的提醒。
 - `server/http.ts`、`server/rateLimit.ts`、`server/observability.ts` 提供请求体限制、安全响应头、认证限流、结构化日志和 Prometheus 指标。
 - `server/migrations/` 提供带校验和的顺序迁移；已应用迁移不可改写，结构变化只能新增迁移。
-- `scripts/db/native-*.ts` 提供原生备份、覆盖性恢复和隔离恢复演练。
+- `server/bootstrap.ts` 统一正式初始化与演示 seed 的空核心集合检查和默认组织、规则、流程、会务数据组装；`scripts/db/init.ts` 只面向已完成迁移的空业务库，读取版本化会议室与总部 3D JSON，并在 `mutateDb` 的同一事务中通过 `writeHq3dLayout` 写入核心状态与总部 3D。任一核心业务集合、总部 3D 相关表或资源退役表已有数据均拒绝，失败整体回滚，重复执行不覆盖或合并。
+- `scripts/db/seed.ts` 保留 3 条演示资源的演示/测试入口，与正式 `db:init` 分离；`db:seed:hq3d` 仍是会 UPSERT 和差异软停用的布局维护工具，不是已有业务库的通用升级入口。
+- `scripts/db/native-*.ts` 提供原生备份、覆盖性恢复和隔离恢复演练。基础数据口径和部署顺序分别见 `docs/BASE_DATA.md`、`docs/DEPLOYMENT.md`。
 
 ## 4. 运行时与部署架构
 
@@ -178,6 +180,7 @@ Node 启动时启动 Job Worker，收到 SIGINT/SIGTERM 后停止接收连接、
 生产部署要求：
 
 - `NODE_ENV=production`，关闭开发身份；OIDC issuer 和回调使用 HTTPS。
+- 发布物不能只包含 `dist`；Node 直接运行服务端 TypeScript，部署包必须保留 `server/`、`scripts/`、`utils/`、迁移、初始化数据、锁文件及经完整验证的项目依赖。全新部署按迁移、状态检查、`db:init`、校验、构建、首个 OIDC 管理员绑定和启动的顺序执行；已有库升级不得执行正式或演示 seed。
 - 反向代理限制管理面与数据库网络访问，MySQL 不对公网或普通办公终端开放；监控 SSE 需同源转发并禁用响应缓冲。
 - 监控变更总线仅存在于当前 Node 进程，不跨实例传播；当前候选按单进程部署，扩展多实例前必须另设经过验证的跨实例发布机制，不能直接声称已支持多实例实时同步。
 - 仅当代理会覆盖外部传入的 `X-Forwarded-For` 时启用 `SMART_OFFICE_TRUST_PROXY`。
@@ -193,6 +196,8 @@ MySQL 是唯一事实来源。当前数据面由两类结构组成：
 
 1. **核心办公聚合与投影**：`office_state` 保存带版本的核心聚合 JSON；`bookings`、`notifications` 等表支撑关键查询和写入。领域事务同时维护聚合、投影、任务、Outbox 和审计，不能只更新其中一处。普通 mutation 比较前后内容，仅写变化集合、预约和通知；`replaceBookings` 仍按设计全量替换预约投影。
 2. **独立关系表**：身份、OIDC 请求、会话、用户偏好、ChatDock 会话、定时任务、Outbox、审计、总部 3D 布局/资料/维护、资源映射/处置/退役归档等使用专门表。通知列表直接查询 `notifications` 关系表；定向通知沿用通知行已读字段，`sys` 广播通过 `notification_read_states(notification_id,user_id)` 独立保存每个用户的已读事实，读取互不影响。已读更新保留 `smart_office_write` 锁和事务并幂等写入，但不推进核心 revision、不重复写 Outbox。迁移 `017_notification_read_path.sql` 增加通知读取索引，`017z_notification_read_states_collation.sql` 先按既有 `notifications.id` 排序规则兼容建表，`018_notification_read_states.sql` 再幂等确认按用户广播已读表，兼容升级库与新初始化库且不改写通知数据。
+
+`server/data/meeting-rooms.json` 与 `server/data/hq3d-floorplan.json` 仅是首次正式初始化的版本化输入，不是运行时副本或第二事实来源。初始化完成后，资源、规则、布局和房间资料的后续维护均只以 MySQL 为权威，不回写 JSON；已有库通过新增迁移升级，不能用重新初始化替代迁移。
 
 主要数据分组：
 

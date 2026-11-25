@@ -1,0 +1,321 @@
+# SmartOffice 系统部署手册
+
+- 文档版本：v1.0
+- 基线日期：2026-11-25
+- 适用版本：单一企业、Node.js 单进程、MySQL 8 唯一持久化版本
+
+## 1. 部署前必读
+
+本手册区分两种场景：
+
+1. **全新部署**：空数据库，完成迁移后执行一次 `npm run db:init` 写入正式基础数据。
+2. **已有系统升级**：已有业务数据，只执行备份、新增迁移、构建和应用切换，**不得执行 `db:init`、`db:seed` 或把 `db:seed:hq3d` 当作通用升级命令**。
+
+当前部署边界：
+
+- 一个 Node.js 进程同时提供 API、静态页面、MySQL Job Worker、Outbox 和监控 SSE。
+- MySQL 是唯一业务持久化存储；浏览器不是业务数据源。
+- 生产认证使用企业 OIDC Authorization Code Flow + PKCE，不能使用开发身份代替。
+- 监控事件总线和 SSE 刷新仅支持当前单进程部署，不代表多实例实时同步。
+- 本地构建和测试通过不等于正式投产验收完成。
+
+基础数据的内容、数量和口径见 [基础数据与初始化清单](BASE_DATA.md)。
+
+## 2. 运行环境与网络
+
+### 2.1 软件要求
+
+| 组件 | 要求 | 说明 |
+|---|---|---|
+| Node.js | 22.23+ 或 24 | 直接运行项目 TypeScript 服务端源码及 npm 脚本 |
+| MySQL | 8.x | 业务库、迁移、会话、任务、审计和总部 3D 数据 |
+| 企业 OIDC Provider | 支持 Authorization Code Flow + PKCE S256 | 生产登录必需 |
+| 企业反向代理 | 支持 HTTPS、SSE 和请求头控制 | 生产入口必需 |
+| Chrome | 仅浏览器回归需要 | 正式运行不依赖服务器安装 Chrome |
+
+可选能力：DeepSeek 对话助手，以及企业微信、短信、邮件、OA、日历和门禁适配器。可选能力未配置时，不应被描述为已联调或已投产。
+
+### 2.2 网络与端口
+
+- Node 默认监听 `127.0.0.1:3001`，通过企业反向代理对外提供 HTTPS。
+- MySQL 只允许受控应用和运维网络访问，不暴露到公共网络。
+- 反向代理到 Node、Node 到 MySQL/OIDC/DeepSeek 的网络和 DNS 必须可用。
+- 首次初始化、备份恢复和迁移账号与运行账号可分离，按企业最小权限要求配置。
+
+## 3. 发布物与目录要求
+
+不能只发布 `dist`。当前生产启动仍需要服务端 TypeScript 源码、npm 脚本和完整项目依赖。
+
+至少保留：
+
+- `server/`、`scripts/`、`utils/`、`types.ts`、`constants.ts`。
+- `package.json`、锁文件及 `node_modules/`。
+- 构建生成的 `dist/`。
+- 初始化输入 `server/data/` 和数据库迁移 `server/migrations/`。
+- 生产环境配置文件 `.env`，由受控部署渠道提供，不进入 Git。
+
+当前版本使用完整 `npm ci` 安装构建和运行依赖。不要盲目执行 `npm ci --omit=dev` 或部署后裁剪开发依赖；服务端源码直接运行，且部分运行链路可能使用当前归类为开发依赖的包。若需精简生产依赖，必须单独审计并做完整生产冒烟。
+
+## 4. 配置准备
+
+在项目根目录执行：
+
+```bash
+npm ci
+cp .env.example .env
+```
+
+由部署责任人编辑 `.env`。不得打印、粘贴到聊天、提交或公开传输其中的密码、密钥、Token 和设备凭据。
+
+### 4.1 必需配置
+
+| 配置 | 生产要求 |
+|---|---|
+| `NODE_ENV` | 由进程管理器或环境设置为 `production` |
+| `MYSQL_HOST` / `MYSQL_PORT` | MySQL 地址与端口 |
+| `MYSQL_USER` / `MYSQL_PASSWORD` | 业务运行账号 |
+| `MYSQL_DATABASE` | 默认 `smart_office`；只允许字母、数字和下划线 |
+| `SMART_OFFICE_HOST` | 反向代理场景建议 `127.0.0.1` |
+| `SMART_OFFICE_PORT` | 默认 `3001` |
+| `SMART_OFFICE_DEV_AUTH` | 必须为 `false` 或未启用 |
+| `OIDC_ISSUER` | 企业 OIDC issuer，生产使用 HTTPS |
+| `OIDC_CLIENT_ID` / `OIDC_CLIENT_SECRET` | 企业登记的本系统客户端凭据 |
+| `OIDC_REDIRECT_URI` | 与 IdP 登记完全一致，路径为 `/api/auth/callback`，生产使用 HTTPS |
+| `OIDC_TOKEN_ENCRYPTION_KEY` | 32 字节密钥的 base64url，或 64 位十六进制编码 |
+
+迁移账号需要时单独设置：
+
+- `MYSQL_MIGRATION_HOST`、`MYSQL_MIGRATION_PORT`。
+- `MYSQL_MIGRATION_USER`、`MYSQL_MIGRATION_PASSWORD`。
+- 未单独设置时回退到运行数据库配置；是否允许回退由企业权限策略决定。
+
+### 4.2 安全与可选配置
+
+- `SMART_OFFICE_AUTH_RATE_LIMIT`：默认每窗口 30 次。
+- `SMART_OFFICE_AUTH_RATE_LIMIT_WINDOW_MS`：默认 300000 毫秒。
+- `SMART_OFFICE_TRUST_PROXY`：只有可信反向代理会**覆盖外部伪造的 `X-Forwarded-For`** 时才设为 `true`。
+- `SMART_OFFICE_METRICS_TOKEN`：非 loopback 读取 `/metrics` 时使用 Bearer Token。
+- `DEEPSEEK_API_KEY`：仅服务端使用；未配置时基础业务仍可使用，智能对话不可用。
+- 外部消息、OA、日历、门禁等适配器默认关闭，启用前必须完成真实平台联调、凭据评审和现场验收。
+
+## 5. 全新系统部署
+
+以下步骤只适用于新发布的空业务数据库。
+
+### 5.1 执行数据库迁移
+
+```bash
+npm run db:migrate
+npm run db:status
+```
+
+迁移按文件名字典序执行，记录 SHA-256。已执行文件内容发生变化时后续迁移会拒绝；不得修改已应用迁移，结构变化只能新增文件。当前应用就绪要求包含 `018_notification_read_states.sql`。
+
+### 5.2 初始化正式基础数据
+
+确认目标库没有任何业务数据后执行：
+
+```bash
+npm run db:init
+```
+
+成功输出应包含：
+
+```text
+会议室 28 · 楼栋 2 · 楼层 24 · 空间 427
+```
+
+初始化内容包括：
+
+- 28 间正式会议室：18 间 `AVAILABLE`、10 间 `PENDING`。
+- 2 栋、24 层、427 个总部 3D 空间及唯一 UID。
+- 7 个角色、3 个初始内部成员、7 个部门节点。
+- 默认预约规则、流程版本、5 条动态审批规则。
+- 13 类会务目录和默认责任区。
+- 空预约、空工单、空通知和其他空业务事实。
+
+核心集合与总部 3D 在同一事务写入。任何既有业务集合或总部 3D 相关表非空都会拒绝，重复执行同样拒绝；不要把拒绝信息当成可忽略的警告，更不要清空业务库强行重跑。
+
+### 5.3 校验并构建
+
+```bash
+npm run db:verify
+npm run build
+```
+
+`db:verify` 检查必需迁移、快照 revision 和核心表可读取性，不代替业务验收。还应核对初始化输出、资源状态、3D 空间和默认规则。
+
+`npm start` 不会自动执行构建；缺少 `dist/index.html` 时页面会返回 `503 CLIENT_BUILD_NOT_FOUND`。
+
+### 5.4 绑定首个企业管理员身份
+
+初始化只创建内部成员，不创建外部登录身份。先从企业 OIDC 获取首个系统管理员的准确 `issuer` 和 `subject`，再执行：
+
+```bash
+npm run auth:bootstrap -- \
+  --userId <已有系统管理员ID> \
+  --issuer <OIDC issuer> \
+  --subject <OIDC subject>
+```
+
+限制：
+
+- 目标成员必须已存在且具有 `SYSTEM_ADMIN`。
+- 数据库尚无任何身份绑定时才允许此次引导。
+- 空用户库不能直接绑定；已有身份绑定后不能重复执行引导。
+- 后续身份使用已授权管理流程或 `auth:bind`，均只绑定已有内部用户，不按邮箱自动创建账号。
+
+### 5.5 启动生产进程
+
+```bash
+NODE_ENV=production npm start
+```
+
+生产应使用企业进程管理器托管，并配置：
+
+- 工作目录为项目根目录。
+- 受控环境变量和文件权限。
+- 异常退出告警与按策略重启。
+- stdout/stderr JSON 日志采集、保留和访问控制。
+- SIGINT/SIGTERM 优雅停止，不强杀作为常规发布动作。
+
+服务收到停止信号后会停止接收连接、等待 Job Worker 收尾并关闭 MySQL 连接池。
+
+## 6. 反向代理与 HTTPS
+
+反向代理必须：
+
+1. 终止企业 HTTPS，并转发到受控 Node 地址。
+2. 保留原始 `Host`。
+3. 对 SSE 关闭代理缓冲，保持长连接，允许心跳通过。
+4. 只由可信代理写入客户端地址和协议头，不轻信外部传入值。
+5. 限制管理面、指标和数据库的网络访问。
+
+Nginx 参考片段：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3001;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Connection "";
+    proxy_buffering off;
+    proxy_read_timeout 75s;
+}
+```
+
+上述 `X-Forwarded-For $remote_addr` 会覆盖外部伪造值；只有采用同等可信覆盖策略时才启用 `SMART_OFFICE_TRUST_PROXY=true`。具体 TLS 证书、安全套件和访问控制按企业标准配置。
+
+## 7. 启动后验证
+
+### 7.1 健康检查
+
+```bash
+curl -fsS http://127.0.0.1:3001/livez
+curl -fsS http://127.0.0.1:3001/healthz
+```
+
+- `/livez`：只表示进程存活。
+- `/healthz`：检查数据库连接和必需迁移，是 readiness 依据。
+- `/metrics`：loopback 可读取；远程读取需配置 `SMART_OFFICE_METRICS_TOKEN` 并发送 Bearer Token。
+
+### 7.2 业务冒烟
+
+由授权人员至少核对：
+
+1. OIDC 登录、退出、会话失效和未授权访问。
+2. 28 间会议室及 18/10 状态分布；10 间待核验资源不可按正常资源预约。
+3. 主楼 20 层、南配楼 4 层及 427 个空间可读取。
+4. 普通预约、特殊规则审批、取消、签到和会务工单的关键链路。
+5. 角色、部门、成员、规则版本和默认责任区。
+6. 两类监控页面的角色授权、快照、SSE 和撤权关闭。
+7. 通知、后台任务、审计、日志、指标和备份任务。
+
+不得用共享管理员账号替代真实用户验收，不得把演示身份用于生产。
+
+## 8. 已有系统升级
+
+### 8.1 升级顺序
+
+1. 确认发布版本、变更清单、新增迁移、维护窗口和责任人。
+2. 停止业务写入或进入经批准的维护窗口。
+3. 对目标 MySQL 做原生整库备份并校验 SHA-256，确认可用回滚版本。
+4. 部署新版本完整源码与依赖。
+5. 执行 `npm run db:migrate` 和 `npm run db:status`。
+6. 执行 `npm run db:verify` 和 `npm run build`。
+7. 切换并启动新 Node 进程，检查 `/healthz`。
+8. 验证核心预约、审批、通知、任务、3D、监控和审计后逐步恢复流量。
+
+**已有业务库不得执行 `db:init`。** 正式初始化只面向全新空库，重复执行保护不是升级机制。
+
+### 8.2 回滚边界
+
+- 数据库迁移没有自动 down migration。
+- 应用回滚只切换 Node 源码和 `dist`，不会撤销数据库结构或数据变化。
+- 未经专项兼容写入验证，不得让旧应用直接承接新库写入。
+- 若新版本已经写入不兼容数据，应停止写入，由数据库负责人按演练过的方案恢复兼容备份。
+- 恢复是覆盖性操作，必须核对目标库、备份校验和、审批和恢复确认参数。
+
+## 9. 备份、恢复与演练
+
+```bash
+npm run db:backup -- --output /受控备份目录/smart-office.sql
+sha256sum -c /受控备份目录/smart-office.sql.sha256
+```
+
+恢复前停止应用写入，并由数据库负责人审批：
+
+```bash
+SMART_OFFICE_RESTORE_CONFIRM="$MYSQL_DATABASE" npm run db:restore -- \
+  --input /受控备份目录/smart-office.sql
+```
+
+注意：
+
+- `SMART_OFFICE_RESTORE_CONFIRM` 必须与目标数据库名完全一致。
+- 备份目录不得位于 Web 静态目录，不得提交到 Git。
+- 不得把生产备份恢复到共享测试实例。
+- 企业须确定 RPO/RTO、加密、异地副本、保留期和恢复责任人。
+- 建议至少每日全量备份、每周隔离恢复演练，并保存真实证据。
+
+## 10. 日常运行与告警
+
+最低监控项：
+
+- `smart_office_database_up == 0` 或 `/healthz` 连续失败。
+- HTTP 5xx、认证失败、认证 429 持续增长。
+- `jobs.tick_failed`、`api.failed` 等异常日志。
+- Node CPU、RSS、事件循环和进程重启。
+- MySQL 连接、锁等待、慢查询、磁盘与备份失败。
+- SSE 断连和 Job Worker/Outbox 积压。
+
+日志通过 `X-Request-ID` 关联请求。不得将 Cookie、Token、密码、OIDC code、设备令牌或涉密内容写入公开日志和报告。
+
+## 11. 常见问题
+
+| 现象 | 检查与处理 |
+|---|---|
+| 页面提示认证服务不可用 | 检查 OIDC 四项配置、HTTPS 回调、IdP 客户端登记和网络；不要用开发身份绕过 |
+| 提示数据库未就绪或缺少迁移 | 执行 `db:status`，按发布版本完成新增迁移；不要修改已执行迁移 |
+| 页面返回 `CLIENT_BUILD_NOT_FOUND` | 在项目根目录执行 `npm run build`，确认 Node 发布物包含当前 `dist` |
+| `db:init` 拒绝执行 | 目标库已有数据；全新部署应核对是否选错库，已有系统升级不得运行初始化 |
+| 首个 OIDC 管理员无法绑定 | 确认内部管理员已初始化、角色正确、身份表为空且 issuer/subject 准确 |
+| 监控一直缓冲或不实时 | 检查反向代理 SSE 缓冲、长连接和单进程部署；不要假设多实例共享进程内事件 |
+| 健康检查失败 | 检查 MySQL 网络、账号、数据库名、必需迁移和连接池；同时保留请求 ID 与日志 |
+| 智能助手不可用 | 核对 DeepSeek 服务端配置与网络；基础预约、空间管理和静态帮助不依赖模型 |
+
+## 12. 正式投产门禁
+
+在全企业上线前仍需真实完成并留证：
+
+- 对应不可变提交的远程 CI 全绿和依赖安全评审。
+- OIDC、HTTPS、代理、网络安全和企业安全测试。
+- 正式 P9-03 容量模型、P95/P99、吞吐、错误率和资源曲线验收。
+- 生产迁移、备份恢复和回滚演练及责任方签字。
+- 真实外部平台联调、现场设备与门禁验收。
+- 10 间 PENDING 容量核定、资源与 3D 映射确认。
+- UAT、培训、灰度发布、稳定观察及业务/运维/安全/数据库签认。
+
+本手册提供可执行的部署路径，不替代上述企业验收和责任确认。

@@ -21,9 +21,11 @@ React 19 + Vite + Node.js + MySQL 8 的单一企业办公空间管理系统，�
 要求 Node.js 22.23+ 或 Node.js 24、MySQL 8。
 
 ```bash
-npm install
+npm ci
 cp .env.example .env
 ```
+
+完整的新装、生产配置、升级、回滚和验收步骤见 [系统部署手册](docs/DEPLOYMENT.md)；正式基础数据的来源和数量见 [基础数据与初始化清单](docs/BASE_DATA.md)。
 
 在 `.env` 中配置 DeepSeek、MySQL 和 OIDC。`.env` 已被 Git 排除，不要提交或打印其中的密钥。生产环境必须满足：
 
@@ -37,22 +39,32 @@ cp .env.example .env
 
 ## 数据库迁移与受控初始化
 
+全新系统完成迁移后，只在空业务库执行一次正式初始化：
+
 ```bash
 npm run db:migrate
 npm run db:status
-npm run db:seed
+npm run db:init
 npm run db:verify
 ```
 
-`db:seed` 只允许写入空业务数据库。迁移按文件名顺序执行，记录 SHA-256 校验和；已执行迁移的内容发生变化时会拒绝继续。不要手工修改已应用迁移，应新增迁移文件。当前必需迁移为 `018_notification_read_states.sql`：定向通知继续使用原已读字段，`sys` 广播已读事实按 `(notification_id,user_id)` 独立保存，避免不同用户互相覆盖。
+`db:init` 在同一 MySQL 事务中写入 28 间正式会议室（18 间开放、10 间待核验）、2 栋 24 层共 427 个总部 3D 空间，以及默认角色、初始成员、部门、预约规则、动态审批、13 类会务目录和默认责任区；不包含预约、通知或演示资源。任何核心业务集合或总部 3D 相关表已有数据都会拒绝，重复执行不会覆盖或合并业务数据。已有业务库升级不得执行该命令，应按部署手册完成备份和新增迁移。
 
-楼层 3D 分布图的布局基线单独初始化（可重复执行，事务内 UPSERT 并差异停用已移除空间）：
+迁移按文件名顺序执行，记录 SHA-256 校验和；已执行迁移的内容发生变化时会拒绝继续。不要手工修改已应用迁移，应新增迁移文件。当前必需迁移为 `018_notification_read_states.sql`：定向通知继续使用原已读字段，`sys` 广播已读事实按 `(notification_id,user_id)` 独立保存，避免不同用户互相覆盖。
+
+`db:seed` 保留为演示和隔离测试入口，只写入 3 条演示资源，不是正式新系统的初始化命令：
+
+```bash
+npm run db:seed
+```
+
+`db:seed:hq3d` 是独立的既有布局维护工具，事务内 UPSERT 并差异软停用已移除空间：
 
 ```bash
 npm run db:seed:hq3d
 ```
 
-它把 `server/data/hq3d-floorplan.json`（主楼 20 层 332 间 + 南配楼 4 层 95 间）写进 `hq3d_building / hq3d_floor / hq3d_room`。427 间空间均使用布局中显式声明且全局唯一的持久 uid，不再按名称或顺序动态生成。重复初始化会更新现有空间；从布局移除的空间只做差异停用，保留房间资料和维护记录，后续恢复时沿用原 uid。
+它把 `server/data/hq3d-floorplan.json`（主楼 20 层 332 间 + 南配楼 4 层 95 间）写进 `hq3d_building / hq3d_floor / hq3d_room`。427 间空间均使用布局中显式声明且全局唯一的持久 uid，不再按名称或顺序动态生成。该命令会更新现有空间，不能当作已有业务库的通用升级命令；从布局移除的空间只做差异停用，保留房间资料和维护记录，后续恢复时沿用原 uid。
 
 ## 总部楼层 3D 分布图
 
@@ -110,9 +122,9 @@ npm run build
 NODE_ENV=production npm start
 ```
 
-默认监听 `127.0.0.1:3001`，可通过 `SMART_OFFICE_HOST`、`SMART_OFFICE_PORT` 调整。健康检查为 `GET /healthz`。
+默认监听 `127.0.0.1:3001`，可通过 `SMART_OFFICE_HOST`、`SMART_OFFICE_PORT` 调整。`GET /livez` 仅检查进程存活，`GET /healthz` 检查数据库和必需迁移。`npm start` 不自动构建，生产发布也不能只复制 `dist`，必须同时保留服务端 TypeScript 源码、脚本、迁移、初始化数据和完整运行依赖。
 
-生产反向代理应终止 HTTPS，转发到 `127.0.0.1:3001`，保留原始 `Host`，并限制管理面和数据库网络访问。不要暴露 MySQL，不要将开发身份用于共享环境。服务收到 SIGINT/SIGTERM 后会停止接收连接并关闭 MySQL 连接池。
+生产反向代理应终止 HTTPS，转发到 `127.0.0.1:3001`，保留原始 `Host`，关闭 SSE 缓冲，并限制管理面和数据库网络访问。不要暴露 MySQL，不要将开发身份用于共享环境。服务收到 SIGINT/SIGTERM 后会停止接收连接并关闭 MySQL 连接池。完整配置和运维步骤见 [系统部署手册](docs/DEPLOYMENT.md)。
 
 ## 校验与隔离测试
 

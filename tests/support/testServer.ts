@@ -55,12 +55,17 @@ export const mutateTestCollection = async <T>(stateKey: string, mutator: (items:
   }
 };
 
-export const resetTestDb = async () => {
+export const resetTestDb = async (mode: 'demo' | 'empty' = 'demo') => {
   if (!integrationEnabled) throw new Error('只允许清理由 smart_office_test_ 前缀标识的测试数据库');
   const db = await connection();
   try {
     await db.query('SET FOREIGN_KEY_CHECKS = 0');
-    for (const table of ['oidc_auth_requests', 'user_identities', 'sessions', 'user_preferences', 'chatdock_conversations', 'scheduled_jobs', 'outbox_events', 'audit_events', 'notification_read_states', 'notifications', 'bookings', 'office_state']) {
+    for (const table of [
+      'oidc_auth_requests', 'user_identities', 'sessions', 'user_preferences', 'chatdock_conversations',
+      'scheduled_jobs', 'outbox_events', 'audit_events', 'notification_read_states', 'notifications',
+      'bookings', 'office_state', 'resource_retirements', 'hq3d_room_resource', 'hq3d_room_disposition',
+      'hq3d_room_maintenance', 'hq3d_room_profile', 'hq3d_room', 'hq3d_floor', 'hq3d_building'
+    ]) {
       await db.query(`DELETE FROM ${table}`);
     }
     await db.query('SET FOREIGN_KEY_CHECKS = 1');
@@ -68,6 +73,7 @@ export const resetTestDb = async () => {
   } finally {
     await db.end();
   }
+  if (mode === 'empty') return;
   await exec(process.execPath, ['scripts/db/seed.ts'], {
     cwd: root,
     env: { ...process.env, NODE_ENV: 'development' },

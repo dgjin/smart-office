@@ -75,49 +75,52 @@ export const upsertHq3dRoom = async (
   );
 };
 
-export const seedHq3dLayout = async (conn: PoolConnection, data: Hq3dSeedData) => {
+export const writeHq3dLayout = async (conn: PoolConnection, data: Hq3dSeedData) => {
   const expectedUids = validateHq3dLayout(data);
   let buildings = 0;
   let floors = 0;
   let rooms = 0;
-  let retired = 0;
 
-  await conn.beginTransaction();
-  try {
-    for (const [buildingIndex, building] of data.buildings.entries()) {
+  for (const [buildingIndex, building] of data.buildings.entries()) {
+    await conn.query(
+      `INSERT INTO hq3d_building (id, name, aspect, asp_all, sort_order) VALUES (?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE name = VALUES(name), aspect = VALUES(aspect), asp_all = VALUES(asp_all), sort_order = VALUES(sort_order)`,
+      [building.id, building.name, building.aspect, JSON.stringify(building.aspAll || []), buildingIndex]
+    );
+    buildings += 1;
+    for (const [floorIndex, floor] of building.floors.entries()) {
+      const floorNo = floorIndex + 1;
+      const floorTag = `${floorNo}F`;
       await conn.query(
-        `INSERT INTO hq3d_building (id, name, aspect, asp_all, sort_order) VALUES (?, ?, ?, ?, ?)
-         ON DUPLICATE KEY UPDATE name = VALUES(name), aspect = VALUES(aspect), asp_all = VALUES(asp_all), sort_order = VALUES(sort_order)`,
-        [building.id, building.name, building.aspect, JSON.stringify(building.aspAll || []), buildingIndex]
+        `INSERT INTO hq3d_floor (building_id, floor_no, floor_tag, sheet_name) VALUES (?, ?, ?, ?)
+         ON DUPLICATE KEY UPDATE floor_tag = VALUES(floor_tag), sheet_name = VALUES(sheet_name)`,
+        [building.id, floorNo, floorTag, floor.sheet]
       );
-      buildings += 1;
-      for (const [floorIndex, floor] of building.floors.entries()) {
-        const floorNo = floorIndex + 1;
-        const floorTag = `${floorNo}F`;
-        await conn.query(
-          `INSERT INTO hq3d_floor (building_id, floor_no, floor_tag, sheet_name) VALUES (?, ?, ?, ?)
-           ON DUPLICATE KEY UPDATE floor_tag = VALUES(floor_tag), sheet_name = VALUES(sheet_name)`,
-          [building.id, floorNo, floorTag, floor.sheet]
-        );
-        floors += 1;
-        for (const [roomIndex, room] of floor.rooms.entries()) {
-          await upsertHq3dRoom(conn, building.id, floorNo, room, roomIndex);
-          rooms += 1;
-        }
+      floors += 1;
+      for (const [roomIndex, room] of floor.rooms.entries()) {
+        await upsertHq3dRoom(conn, building.id, floorNo, room, roomIndex);
+        rooms += 1;
       }
     }
+  }
 
-    const uids = [...expectedUids];
-    const [result] = await conn.query<any>(
-      uids.length
-        ? `UPDATE hq3d_room SET is_active = 0, retired_at = COALESCE(retired_at, CURRENT_TIMESTAMP(3))
-           WHERE is_active = 1 AND uid NOT IN (${uids.map(() => '?').join(',')})`
-        : 'UPDATE hq3d_room SET is_active = 0, retired_at = COALESCE(retired_at, CURRENT_TIMESTAMP(3)) WHERE is_active = 1',
-      uids
-    );
-    retired = result.affectedRows;
+  const uids = [...expectedUids];
+  const [result] = await conn.query<any>(
+    uids.length
+      ? `UPDATE hq3d_room SET is_active = 0, retired_at = COALESCE(retired_at, CURRENT_TIMESTAMP(3))
+         WHERE is_active = 1 AND uid NOT IN (${uids.map(() => '?').join(',')})`
+      : 'UPDATE hq3d_room SET is_active = 0, retired_at = COALESCE(retired_at, CURRENT_TIMESTAMP(3)) WHERE is_active = 1',
+    uids
+  );
+  return { buildings, floors, rooms, retired: result.affectedRows };
+};
+
+export const seedHq3dLayout = async (conn: PoolConnection, data: Hq3dSeedData) => {
+  await conn.beginTransaction();
+  try {
+    const result = await writeHq3dLayout(conn, data);
     await conn.commit();
-    return { buildings, floors, rooms, retired };
+    return result;
   } catch (error) {
     await conn.rollback();
     throw error;

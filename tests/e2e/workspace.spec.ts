@@ -468,6 +468,8 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(drawer.getByPlaceholder('搜索预约、审批、报表、设备…')).toBeFocused();
     await drawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('组织同步');
     await expect(drawer.getByText('没有找到匹配指南', { exact: true })).toBeVisible();
+    await drawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('部署初始化');
+    await expect(drawer.getByText('没有找到匹配指南', { exact: true })).toBeVisible();
     await drawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('修改预约');
     await expect(drawer.getByRole('heading', { name: '修改、取消与提前结束预约', exact: true })).toBeVisible();
     await drawer.getByRole('button', { name: '针对此指南提问', exact: true }).click();
@@ -505,6 +507,10 @@ test.describe('MySQL-only 浏览器验收', () => {
     await expect(adminDrawer).toContainText('十四层存在“新/旧”时优先“新”');
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('图片OCR');
     await expect(adminDrawer.getByRole('heading', { name: '整栋与单层楼层图导入', exact: true })).toBeVisible();
+    await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('部署初始化');
+    await expect(adminDrawer.getByRole('heading', { name: '基础数据与部署初始化', exact: true })).toBeVisible();
+    await expect(adminDrawer).toContainText('核心集合与总部3D在同一MySQL事务写入');
+    await expect(adminDrawer).toContainText('已有业务库升级只走备份、新增迁移、构建和应用发布');
     await adminDrawer.getByPlaceholder('搜索预约、审批、报表、设备…').fill('运营报表');
     await expect(adminDrawer.getByRole('heading', { name: '运营管理看板与明细对账', exact: true })).toBeVisible();
     await adminDrawer.getByRole('button', { name: '打开功能', exact: true }).click();

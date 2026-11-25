@@ -3,7 +3,7 @@
 - 文档版本：v1.0
 - 基线日期：2026-11-25
 - 适用实现：单企业、React 19 + Node.js + MySQL 8 唯一持久化版本
-- 配套文档：`docs/SYSTEM_ARCHITECTURE.md`、`docs/USER_MANUAL.md`
+- 配套文档：`docs/SYSTEM_ARCHITECTURE.md`、`docs/USER_MANUAL.md`、`docs/BASE_DATA.md`、`docs/DEPLOYMENT.md`
 
 ## 1. 设计范围与原则
 
@@ -169,6 +169,17 @@
 - `ChatDock` 的 `chatdock_conversations` 以 `user_id` 为主键，保存 `revision` 和 `payload JSON`。
 - 会话 PUT 在事务中读取当前行并 `FOR UPDATE`，客户端 revision 不一致时返回 `409 CONVERSATION_CONFLICT`。
 - 核心办公快照也有独立版本/CAS；`GET /api/reports` 返回的 `report.revision` 标识页面数据快照，CSV/XLSX 导出必须回传同一版本；3D 房间资料采用单行细粒度写入，避免整库快照重写。
+
+### 5.3 正式初始化与部署输入设计
+
+`server/bootstrap.ts` 与 `scripts/db/init.ts` 提供新系统正式初始化，`server/data/meeting-rooms.json` 和 `server/data/hq3d-floorplan.json` 是版本化首次输入；完整基础数据口径见 `docs/BASE_DATA.md`，部署操作见 `docs/DEPLOYMENT.md`。
+
+- 初始化只在迁移完成后的空业务库运行。`assertInitialStateEmpty` 检查全部核心业务数组，初始化脚本另外检查总部 3D 楼栋、楼层、房间、资料、维护、映射、处置和资源退役表；任何一处非空均拒绝。
+- 正式会议室先经 `normalizeResource` 规范化，再由 `applyInitialOfficeState` 写入 28 间会议室、7 个角色、3 个初始内部成员、7 个部门、默认预约规则、版本化流程与 5 条动态规则、13 类会务目录和默认责任区。预约、通知、工单、签到、设备、集成和其他业务事实明确初始化为空，不包含 3 条演示资源。
+- `mutateDb` 获取写锁、开启事务并锁定快照版本；初始化回调使用同一 `MutationContext.connection` 调用 `writeHq3dLayout`，核心集合、预约投影和总部 3D 一并提交。任何错误整体回滚，成功后才推进 revision 和发布变更；重复执行直接拒绝，不覆盖、不合并、不修复既有数据。
+- 总部 3D 初始化输入为 2 栋、24 层、427 个唯一 UID 空间，其中 `office/open/exec` 共 203 个办公室类空间。开放办公区不是逐工位台账，办公室分配不代表实测在场；初始面积为空，PENDING 会议室容量是待核验技术占位。
+- 版本化 JSON 只在首次初始化读取。运行后 MySQL 是唯一权威，页面维护、布局导入和规则发布不回写 JSON；已有业务库升级不得运行 `db:init`、`db:seed`，也不能把会 UPSERT/差异软停用的 `db:seed:hq3d` 当作通用升级命令。
+- 生产发布不能只包含 `dist`，必须保留 Node 直接运行的服务端 TypeScript、脚本、迁移、初始化数据及经完整验证的依赖；初始化、迁移、seed 和恢复均为受控 CLI/运维动作，不开放业务 HTTP 接口或助手直接执行。
 
 ## 6. 资源与总部 3D 设计
 
