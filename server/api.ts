@@ -100,12 +100,11 @@ export async function handleApiRequest(req: IncomingMessage, res: ServerResponse
       send(res, 200, await getWorkspace(actor));
       return true;
     }
-    if (url.pathname === '/api/monitoring/snapshot' && req.method === 'GET') {
-      await handleMonitoringSnapshot(res, actor);
-      return true;
-    }
-    if (url.pathname === '/api/monitoring/events' && req.method === 'GET') {
-      await handleMonitoringEvents(req, res, actor);
+    const monitoringMatch = url.pathname.match(/^\/api\/monitoring\/(meeting-rooms|offices)\/(snapshot|events)$/);
+    if (monitoringMatch && req.method === 'GET') {
+      const scope = monitoringMatch[1] === 'meeting-rooms' ? 'MEETING_ROOMS' : 'OFFICES';
+      if (monitoringMatch[2] === 'events') await handleMonitoringEvents(req, res, actor, scope);
+      else await handleMonitoringSnapshot(res, actor, scope);
       return true;
     }
     if (url.pathname === '/api/dashboard' && req.method === 'GET') {

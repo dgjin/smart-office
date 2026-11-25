@@ -116,7 +116,7 @@ flowchart TB
 - `App.tsx` 是主应用协调者：加载权限化工作区、维护当前视图、打开正式预约/修改/续期表单、处理助手固定动作、挂载帮助和 ChatDock。
 - 根节点 `data-theme` 与 `styles.css` 变量统一承载界面主题；`coamc`“东方蓝”参考中国东方资产官网的白色品牌区、东方蓝导航和深蓝标题，与原五套主题并存。东方蓝品牌区使用同源蓝色横式标志 `public/images/china-orient-logo-horizontal.png`，其他五套主题使用 `public/images/china-orient-logo-horizontal-reverse.png` 透明反白稿并继承当前侧栏主题色；展开时显示完整组合，折叠时仅裁显图形标。桌面侧栏和移动端“更多 → 界面主题”共用同一偏好状态，`server/preferences.ts` 校验主题白名单并通过 `/api/preferences` 保存到 MySQL，刷新、Node 重启和会话复用后恢复。
 - `components/OperationsReports.tsx` 与 `components/OperationsDashboard.tsx` 共用一次 `/api/reports` 返回的 `OperationsReport`，分别呈现“管理看板”和“明细与对账”；SVG 图表不引入大型图表库。
-- `components/MonitoringScreen.tsx` 通过原生 `EventSource` 接收权限化监控快照，展示会议室实时状态与总部 3D 办公室分配台账；五种会议室状态和四种办公室状态使用独立固定语义色，以浅色状态区块、实心徽标和文字标签清晰呈现，不随主题强调色合并。断连保留最近成功快照并由浏览器自动重连，办公室“已分配”不解释成现场实测有人。
+- `components/MonitoringScreen.tsx` 按 `MEETING_ROOMS` 或 `OFFICES` scope 渲染独立页面，通过原生 `EventSource` 分别接收会议室实时状态和总部 3D 办公室分配台账。桌面及移动端提供两个独立授权入口，链接为 `#/monitoring/meeting-rooms` 与 `#/monitoring/offices`，支持刷新和前进后退。系统管理员默认允许，其他角色由“权限集管理”的 `monitoringScopes` 分别授权；未授权入口、深链接和助手导航均不可用。会议室已签到使用中、预约占用、当前空闲、维护中、待开放分别使用红、蓝、绿、琥珀、灰固定语义色，办公室已分配、空置、未登记、维护中使用蓝、绿、灰、琥珀色，并同时显示语义图标和文字，不随主题强调色改变。普通断连保留最近成功快照并自动重连；权限撤销后清除旧受控数据。办公室“已分配”不解释成现场实测有人。
 - `components/ChatDock.tsx` 负责流式对话、草案修订、待确认卡片和会话恢复，不直接写业务 API。
 - 顶部栏固定帮助入口打开 `components/HelpDrawer.tsx`，提供抽屉式指南、搜索、分类、角色过滤、功能导航和智能帮助入口。
 - `helpCatalog.ts` 是帮助与助手共享的功能目录，定义固定系统视图、主题、关键词、步骤和访问边界。
@@ -133,7 +133,8 @@ flowchart TB
 - `server/serviceDomain.ts`、`server/serviceOperations.ts` 处理服务目录冻结、工单状态机、区域、班次、巡查、成本与 SLA；默认责任区只包含未分配资源，资源、公司和楼栋匹配失败后由 `area-default` 兜底。
 - `server/usageDomain.ts`、`server/usageOperations.ts` 处理签到事件、使用确认、实际使用事实、正常完成、提前结束、no-show、使用申诉和释放。
 - `server/reports.ts`、`utils/reports.ts` 统一计划/实际使用、部门投入、备料和对账口径；`server/calendarExport.ts` 负责 ICS。
-- `server/monitoring.ts` 提供单次权限化快照和 SSE：原始预约只计算当前时间占用，actor 投影生成主题和签到等展示字段；办公室读取总部 3D 当前资料与维护记录形成分配台账，不推断实测在场。首次连接立即发送快照，15 秒心跳、30 秒时间刷新，每次刷新重新认证并串行读取，关闭连接时清理全部任务。
+- `utils/monitoringAccess.ts` 与 `RoleDefinition.monitoringScopes` 统一监控授权：系统管理员默认允许，其他角色分别授予 `MEETING_ROOMS` 或 `OFFICES`，旧角色未配置时默认拒绝；角色保存复用现有 MySQL JSON 集合和审计，无新增权限表或迁移。
+- `server/monitoring.ts` 提供按 scope 严格分离的单次快照和 SSE：`/api/monitoring/meeting-rooms/*` 仅返回会议室数据，`/api/monitoring/offices/*` 仅返回办公室台账，读取前强制鉴权。原始预约只计算当前时间占用，actor 投影生成主题和签到等展示字段；办公室读取总部 3D 当前资料与维护记录形成分配台账，不推断实测在场。首次连接立即发送快照，15 秒心跳、30 秒时间刷新，每次刷新重新认证、重检权限并串行读取；权限撤销时发送 `MONITORING_FORBIDDEN` 并关闭，连接关闭时清理全部任务。
 - `server/agent.ts`、`server/tools.ts`、`server/actions.ts` 和 `server/chatConversations.ts` 组成助手闭环。
 - `server/hq3d*.ts` 处理 3D 布局、稳定 UID、房间资料、维护、资源映射和受控同步；`server/hq3dLayoutImport.ts` 提供整栋/单层导出、只读预检、baseline 校验、事务导入和审计，`hq3dLayoutExcel.ts` 提供版本化 XLSX 往返及原生附件整栋/单层识别，`hq3dLayoutOcr.ts` 以本地中文 Tesseract 生成单层候选并保留漏识别房间，`hq3dLayoutFiles.ts` 统一分派上传格式。所有正式接口仅向系统管理员开放，OCR 不直接写库。
 

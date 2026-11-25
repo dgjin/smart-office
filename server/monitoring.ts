@@ -1,14 +1,14 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Booking, MeetingRoomMonitoringItem, MeetingRoomMonitoringStatus, MonitoringSnapshot, OfficeMonitoringItem, OfficeMonitoringStatus, Resource, User } from '../types.ts';
+import type { Booking, MeetingRoomMonitoringItem, MeetingRoomMonitoringStatus, MonitoringScope, MonitoringSnapshot, OfficeMonitoringItem, OfficeMonitoringStatus, Resource, User } from '../types.ts';
 import { getBookingDisplayStatus } from '../utils/bookingRules.ts';
+import { canViewMonitoring } from '../utils/monitoringAccess.ts';
 import { actorFromRequest } from './auth/sessions.ts';
 import { getActorDbView } from './confidentiality.ts';
 import { readSnapshot } from './db.ts';
 import { getHq3dSnapshot, type Hq3dSnapshot } from './hq3d.ts';
 import { subscribeMonitoringChanges } from './monitoringEvents.ts';
-import { send } from './http.ts';
+import { HttpError, send } from './http.ts';
 import { logEvent } from './observability.ts';
-import type { OfficeDb } from './tools.ts';
 
 const OFFICE_CATEGORIES = new Set(['office', 'open', 'exec']);
 const VACANT_PATTERN = /空房|空置|闲置|预留|放置家具/;
@@ -73,26 +73,29 @@ export const buildOfficeMonitoring = (snapshot: Hq3dSnapshot): OfficeMonitoringI
   }))
 ).sort((a, b) => a.buildingId.localeCompare(b.buildingId) || a.floorNo - b.floorNo || a.roomNumber.localeCompare(b.roomNumber, 'zh-CN', { numeric: true }));
 
-export const buildMonitoringSnapshot = (
-  db: OfficeDb,
-  hq3d: Hq3dSnapshot,
-  revision: number,
-  now = new Date(),
-  visibleDb: OfficeDb = db
-): MonitoringSnapshot => ({
-  generatedAt: now.toISOString(),
-  revision,
-  meetingRooms: buildMeetingRoomMonitoring(db.resources || [], db.bookings || [], now, visibleDb.bookings || []),
-  offices: buildOfficeMonitoring(hq3d),
-  officeSource: 'HQ3D_ASSIGNMENT_LEDGER'
-});
-
-export const getMonitoringSnapshot = async (actor: User): Promise<MonitoringSnapshot> => {
-  const [{ db, revision }, hq3d] = await Promise.all([readSnapshot(), getHq3dSnapshot()]);
-  return buildMonitoringSnapshot(db, hq3d, revision, new Date(), getActorDbView(db, actor));
+export const getMonitoringSnapshot = async (actor: User, scope: MonitoringScope): Promise<MonitoringSnapshot> => {
+  const { db, revision } = await readSnapshot();
+  if (!canViewMonitoring(actor, db.roles || [], scope)) throw new HttpError(403, 'MONITORING_FORBIDDEN');
+  const generatedAt = new Date().toISOString();
+  if (scope === 'MEETING_ROOMS') {
+    return {
+      scope,
+      generatedAt,
+      revision,
+      meetingRooms: buildMeetingRoomMonitoring(db.resources || [], db.bookings || [], new Date(), getActorDbView(db, actor).bookings || [])
+    };
+  }
+  return {
+    scope,
+    generatedAt,
+    revision,
+    offices: buildOfficeMonitoring(await getHq3dSnapshot()),
+    officeSource: 'HQ3D_ASSIGNMENT_LEDGER'
+  };
 };
 
-export const handleMonitoringEvents = async (req: IncomingMessage, res: ServerResponse, actor: User) => {
+export const handleMonitoringEvents = async (req: IncomingMessage, res: ServerResponse, actor: User, scope: MonitoringScope) => {
+  await getMonitoringSnapshot(actor, scope);
   req.socket.setTimeout(0);
   res.writeHead(200, {
     'Content-Type': 'text/event-stream; charset=utf-8',
@@ -130,8 +133,13 @@ export const handleMonitoringEvents = async (req: IncomingMessage, res: ServerRe
         close();
         return;
       }
-      emit('snapshot', await getMonitoringSnapshot(currentActor));
+      emit('snapshot', await getMonitoringSnapshot(currentActor, scope));
     } catch (error: any) {
+      if (error instanceof HttpError && error.status === 403) {
+        emit('error', { error: 'MONITORING_FORBIDDEN', message: '当前角色的监控查看权限已变更，实时连接已停止。' });
+        close();
+        return;
+      }
       logEvent('error', 'monitoring.snapshot_failed', { errorName: error?.name, code: error?.code });
       emit('error', { error: 'SNAPSHOT_UNAVAILABLE', message: '监控数据暂时不可用，正在自动重试。' });
     } finally {
@@ -149,6 +157,6 @@ export const handleMonitoringEvents = async (req: IncomingMessage, res: ServerRe
   await refresh();
 };
 
-export const handleMonitoringSnapshot = async (res: ServerResponse, actor: User) => {
-  send(res, 200, await getMonitoringSnapshot(actor));
+export const handleMonitoringSnapshot = async (res: ServerResponse, actor: User, scope: MonitoringScope) => {
+  send(res, 200, await getMonitoringSnapshot(actor, scope));
 };

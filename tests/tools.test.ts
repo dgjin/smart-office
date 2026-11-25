@@ -557,13 +557,32 @@ test('帮助检索和系统导航只暴露当前角色可用功能', () => {
   assert.equal(resourceNavigation?.type, 'NAVIGATE');
   if (resourceNavigation?.type === 'NAVIGATE') assert.equal(resourceNavigation.view, 'RESOURCES');
   const employeeMonitoring = employee.search_help({ query: '监控大屏' });
-  assert.equal(employeeMonitoring.action?.type, 'OPEN_HELP');
-  if (employeeMonitoring.action?.type === 'OPEN_HELP') assert.equal(employeeMonitoring.action.topicId, 'monitoring');
-  assert.match(employeeMonitoring.data.topics[0].note, /不代表门禁、传感器或现场实测有人/);
-  const monitoringNavigation = employee.navigate_system({ view: 'MONITORING' });
-  assert.equal(monitoringNavigation.ok, true);
-  assert.equal(monitoringNavigation.action?.type, 'NAVIGATE');
-  if (monitoringNavigation.action?.type === 'NAVIGATE') assert.equal(monitoringNavigation.action.view, 'MONITORING');
+  assert.equal(employeeMonitoring.ok, true);
+  assert.equal(employeeMonitoring.data.total, 0);
+  assert.equal(employee.navigate_system({ view: 'MONITORING_ROOMS' }).ok, false);
+  assert.equal(employee.navigate_system({ view: 'MONITORING_OFFICES' }).ok, false);
+
+  const roomDb = makeDb();
+  roomDb.roles!.find(role => role.id === 'EMPLOYEE')!.monitoringScopes = ['MEETING_ROOMS'];
+  const roomMonitor = createExecutor(roomDb, { userId: '3', now: NOW });
+  const roomHelp = roomMonitor.search_help({ query: '会议室实时监控' });
+  if (roomHelp.action?.type === 'OPEN_HELP') assert.equal(roomHelp.action.topicId, 'monitoring-rooms');
+  else assert.fail('会议室监控授权后应能检索对应指南');
+  assert.equal(roomMonitor.search_help({ query: '办公室分配监控' }).data.total, 0);
+  assert.equal(roomMonitor.navigate_system({ view: 'MONITORING_ROOMS' }).ok, true);
+  assert.equal(roomMonitor.navigate_system({ view: 'MONITORING_OFFICES' }).ok, false);
+
+  const officeDb = makeDb();
+  officeDb.roles!.find(role => role.id === 'EMPLOYEE')!.monitoringScopes = ['OFFICES'];
+  const officeMonitor = createExecutor(officeDb, { userId: '3', now: NOW });
+  const officeHelp = officeMonitor.search_help({ query: '办公室分配监控' });
+  if (officeHelp.action?.type === 'OPEN_HELP') {
+    assert.equal(officeHelp.action.topicId, 'monitoring-offices');
+    assert.match(officeHelp.data.topics[0].note, /不代表门禁、传感器或现场实测有人/);
+  } else assert.fail('办公室监控授权后应能检索对应指南');
+  assert.equal(officeMonitor.search_help({ query: '会议室实时监控' }).data.total, 0);
+  assert.equal(officeMonitor.navigate_system({ view: 'MONITORING_ROOMS' }).ok, false);
+  assert.equal(officeMonitor.navigate_system({ view: 'MONITORING_OFFICES' }).ok, true);
 
   const admin = exec('1');
   const adminReport = admin.search_help({ query: '运营报表' });
@@ -579,6 +598,8 @@ test('帮助检索和系统导航只暴露当前角色可用功能', () => {
   }
   assert.equal(admin.navigate_system({ view: 'REPORTS' }).ok, true);
   assert.equal(admin.navigate_system({ view: 'DATA_CENTER' }).ok, true);
+  assert.equal(admin.navigate_system({ view: 'MONITORING_ROOMS' }).ok, true);
+  assert.equal(admin.navigate_system({ view: 'MONITORING_OFFICES' }).ok, true);
 });
 
 test('修改预约只生成表单草案，冲突排除自身且禁止他人和涉密预约', () => {

@@ -8,6 +8,7 @@ import { DEFAULT_RULE_SETTINGS, isServiceType } from '../constants.ts';
 import { ensureServiceDomain } from './serviceDomain.ts';
 import type { ApprovalDelegate, ApprovalNode, ApprovalRule, ApprovalRuleSetVersion, Booking, BookingRuleSettings, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, Department, ExceptionActionRecord, Resource, ResourceImportBatch, RoleDefinition, RuleVersion, User, WorkOrder, WorkflowVersion } from '../types.ts';
 import { validateDeviceBackup } from './devices.ts';
+import { isMonitoringScope, MONITORING_SCOPES } from '../utils/monitoringAccess.ts';
 
 const stringValue = (value: unknown, field: string, max = 200) => {
   if (typeof value !== 'string' || !value.trim() || value.trim().length > max) throw new DbError(`INVALID_${field}`, 400);
@@ -33,17 +34,24 @@ const userAuditView = (user?: User) => user ? {
   directorySource: user.directorySource, directorySyncedAt: user.directorySyncedAt, disabledAt: user.disabledAt
 } : null;
 const roleAuditView = (role?: RoleDefinition) => role ? {
-  id: role.id, name: role.name, description: role.description, color: role.color
+  id: role.id, name: role.name, description: role.description, color: role.color, monitoringScopes: role.monitoringScopes || []
 } : null;
 const departmentAuditView = (department?: Department) => department ? {
   id: department.id, name: department.name, parentId: department.parentId
 } : null;
 
+const normalizeMonitoringScopes = (value: unknown) => {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.some(item => !isMonitoringScope(item))) throw new DbError('INVALID_MONITORING_SCOPES', 400);
+  return MONITORING_SCOPES.filter(scope => value.includes(scope));
+};
+
 const normalizeRole = (input: any, id?: string): RoleDefinition => ({
   id: id || idValue(input?.id),
   name: stringValue(input?.name, 'ROLE_NAME', 80),
   description: stringValue(input?.description, 'ROLE_DESCRIPTION', 500),
-  color: ['indigo', 'emerald', 'amber', 'rose', 'purple'].includes(input?.color) ? input.color : 'indigo'
+  color: ['indigo', 'emerald', 'amber', 'rose', 'purple'].includes(input?.color) ? input.color : 'indigo',
+  monitoringScopes: normalizeMonitoringScopes(input?.monitoringScopes)
 });
 
 export const normalizeUser = (input: any, roles: RoleDefinition[], departments: Department[], id?: string): User => {

@@ -1,9 +1,12 @@
 
+export type MonitoringScope = 'MEETING_ROOMS' | 'OFFICES';
+
 export interface RoleDefinition {
   id: string;
   name: string;
   description: string;
   color: string;
+  monitoringScopes?: MonitoringScope[];
 }
 
 export type Role = string; // IDs of RoleDefinition
@@ -484,13 +487,23 @@ export interface OfficeMonitoringItem {
   status: OfficeMonitoringStatus;
 }
 
-export interface MonitoringSnapshot {
+interface MonitoringSnapshotBase {
   generatedAt: string;
   revision: number;
+}
+
+export interface MeetingRoomMonitoringSnapshot extends MonitoringSnapshotBase {
+  scope: 'MEETING_ROOMS';
   meetingRooms: MeetingRoomMonitoringItem[];
+}
+
+export interface OfficeMonitoringSnapshot extends MonitoringSnapshotBase {
+  scope: 'OFFICES';
   offices: OfficeMonitoringItem[];
   officeSource: 'HQ3D_ASSIGNMENT_LEDGER';
 }
+
+export type MonitoringSnapshot = MeetingRoomMonitoringSnapshot | OfficeMonitoringSnapshot;
 
 export type WorkOrderStatus = 'TODO' | 'PENDING_INFO' | 'IN_PROGRESS' | 'DONE' | 'CANCELLED' | 'EXCEPTION';
 

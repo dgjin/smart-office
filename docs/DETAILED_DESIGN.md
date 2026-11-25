@@ -24,12 +24,12 @@
 
 `helpCatalog.ts` 定义唯一 `SystemView` 集合：
 
-- 基础：`DASHBOARD`、`RESOURCES`、`BOOKINGS`、`HQ_3D`、`MONITORING`。
+- 基础：`DASHBOARD`、`RESOURCES`、`BOOKINGS`、`HQ_3D`、`MONITORING_ROOMS`、`MONITORING_OFFICES`。
 - 流程与会务：`APPROVAL_CENTER`、`WORK_ORDERS`、`EXCEPTIONS`。
 - 管理：`USERS`、`ROLES`、`DEPARTMENTS`、`REPORTS`、`WORKFLOW_CONFIG`、`DEVICES`、`DATA_CENTER`。
 - 保密：`CONFIDENTIALITY`。
 
-前端 `App.tsx` 和服务端 `server/tools.ts` 分别根据当前用户角色、审批职责、有效代理和实际工单职责计算可见视图。助手 `NAVIGATE` 只允许上述固定值，并在前后端重复校验。成员新增和编辑会规范化角色数组并去重，保存完整多角色集合，不能只保留当前操作涉及的单个角色。
+前端 `App.tsx` 和服务端 `server/tools.ts` 分别根据当前用户角色、审批职责、有效代理和实际工单职责计算可见视图。`utils/monitoringAccess.ts` 统一两类监控授权：系统管理员默认允许，其他角色须由 `RoleDefinition.monitoringScopes` 显式包含 `MEETING_ROOMS` 或 `OFFICES`，旧角色无该字段时默认拒绝。前端入口与深链接、帮助目录、助手导航和监控 API/SSE 使用同一授权语义，不能只靠隐藏菜单。助手 `NAVIGATE` 只允许上述固定值，并在前后端重复校验。成员新增和编辑会规范化角色数组并去重，保存完整多角色集合，不能只保留当前操作涉及的单个角色。
 
 ### 2.2 数据可见性
 
@@ -92,13 +92,15 @@
 
 ### 3.5 实时监控大屏
 
-`components/MonitoringScreen.tsx` 使用原生 `EventSource('/api/monitoring/events')`，组件卸载时关闭连接。首次快照到达后展示指标、房间卡片和办公室台账；网络断连由浏览器自动重连，页面保留最近一次成功快照，会话失效则停止连接并提示重新登录。页面提供会议室状态筛选，以及办公室楼栋、楼层、状态和关键词组合筛选；办公室每次显示 40 条并可继续加载，375px 下仅表格容器横向滚动。五种会议室状态分别使用蓝、紫、绿、琥珀、灰色，四种办公室状态分别使用蓝、绿、灰、琥珀色；固定语义色不被主题强调色合并，会议室标题区和办公室汇总卡使用对应浅底色，状态徽标使用实心状态色和白色文字，确保实际页面中的状态颜色清晰可辨。
+`components/MonitoringScreen.tsx` 接收 `MEETING_ROOMS` 或 `OFFICES` scope，分别连接 `/api/monitoring/meeting-rooms/events` 或 `/api/monitoring/offices/events`，组件卸载时关闭连接。`App.tsx` 将两个视图映射到 `#/monitoring/meeting-rooms` 与 `#/monitoring/offices`，通过 History API、`popstate` 和 `hashchange` 支持可复制链接、刷新及前进后退；深链接须等待工作区角色加载后再判断授权。未授权用户不显示桌面或移动端入口，也不能通过深链接、帮助或助手进入。
 
-`server/monitoring.ts` 同时提供单次快照和 SSE：
+首次快照到达后，会议室页面只展示指标、状态筛选和房间卡片，办公室页面只展示汇总、组合筛选和办公室台账。普通网络断连由浏览器自动重连并保留最近一次成功快照；会话失效或权限撤销则停止连接、清除旧快照并显示中文原因。办公室每次显示 40 条并可继续加载，375px 下仅表格容器横向滚动。会议室已签到使用中、预约占用、当前空闲、维护中、待开放分别使用红、蓝、绿、琥珀、灰色；办公室已分配、空置、未登记、维护中分别使用蓝、绿、灰、琥珀色。固定语义色不随主题改变，浅色状态区块、实心徽标、语义图标和文字共同表达状态，不能只靠颜色区分。
+
+`server/monitoring.ts` 按 scope 提供严格分离的单次快照和 SSE，并在读取受控数据前调用统一授权判断：
 
 - 会议室以原始预约判断已核准且 `IN_PROGRESS` 的时间占用事实，以 actor 权限化投影生成主题、签到等展示字段；资源维护和待开放优先于预约。可见签到存在时为 `IN_USE`，否则为 `RESERVED`，无当前有效预约为 `IDLE`。下一场仅取未来已核准且 `UPCOMING` 的预约，不计待审批申请。
 - 办公室仅取总部 3D 的 `office/open/exec` 房间，应用 profile 当前值；开放或处理中维护记录优先为 `MAINTENANCE`，明确空置关键词为 `VACANT`，登记使用人或部门为 `ASSIGNED`，其余为 `UNREGISTERED`。该台账不推断实际人员在场。
-- 快照包含 `generatedAt/revision/meetingRooms/offices/officeSource`。SSE 使用递增事件 ID，首次立即发送，15 秒心跳，30 秒时间刷新；每次刷新重新认证 actor，并通过串行刷新与排队标记避免同一连接并发重读。
+- 快照公共字段为 `scope/generatedAt/revision`；会议室响应仅增加 `meetingRooms`，办公室响应仅增加 `offices/officeSource`，不能交叉携带另一类数据。SSE 使用递增事件 ID，首次立即发送，15 秒心跳，30 秒时间刷新；每次刷新重新认证 actor 并重检 scope 权限，通过串行刷新与排队标记避免同一连接并发重读。权限撤销时发送 `MONITORING_FORBIDDEN` 错误事件并关闭连接。
 - `server/monitoringEvents.ts` 提供进程内订阅；`mutateDb` 仅在 `commit` 成功后发布 `workspace`，总部 3D 资料、维护或布局写成功后发布 `hq3d`。连接关闭清理心跳、周期任务和订阅。该机制只适用于当前单进程部署，不是跨实例消息总线。
 
 ### 3.6 助手输入与运行优化
@@ -125,7 +127,7 @@
 | 分组 | 主要接口 | 设计职责 |
 |---|---|---|
 | 工作区 | `GET /api/workspace`、`GET /api/dashboard`、`GET /api/exceptions` | 权限化工作区、角色驾驶舱、异常聚合 |
-| 实时监控 | `GET /api/monitoring/snapshot`、`GET /api/monitoring/events` | actor 权限化快照、SSE 初始快照及写后推送 |
+| 实时监控 | `GET /api/monitoring/meeting-rooms/snapshot`、`GET /api/monitoring/meeting-rooms/events`、`GET /api/monitoring/offices/snapshot`、`GET /api/monitoring/offices/events` | 两类独立授权的 actor 权限化快照、SSE 初始快照、写后推送及刷新重检 |
 | 预约 | `POST /api/bookings`、`POST /api/bookings/batch`、`POST /api/bookings/:id/confidential-read` 及预约动态路由 | 新建、批量/长期、修改、审批、取消、签到、续期、ICS、主动涉密详情读取审计等固定领域动作 |
 | 报表 | `GET /api/reports`、`GET /api/reports/export` | 同一权限化报表快照及 CSV/XLSX 导出 |
 | 助手 | `GET/PUT /api/agent/conversation`、`GET /api/agent/status`、`POST /api/agent/chat`、`POST /api/agent/action` | 会话恢复、SSE 对话、固定确认动作 |
@@ -303,7 +305,7 @@
 - DeepSeek 默认超时为 60 秒，可由调用选项或环境配置调整；`withLlmRequest` 组合内部 `AbortController`、外部 signal 和定时器。流式请求 abort 时执行 `reader.cancel()`，`server/agent.ts` 监听 `req.aborted` 和 `res.close`，把客户端断开传播到 Agent 和上游调用。
 - 具体资源、时间、人员、预约、审批、工单和统计必须先调用工具，不依赖模型记忆作答。
 - 总部 3D 的楼栋、楼层、房间、部门、使用人、面积、维护、映射和处置查询必须调用 `query_hq3d_spaces`。工具仅在实际执行时动态导入 `server/hq3d.ts` 并读取 `getHq3dSnapshot()`；以 `profiles` 覆盖后的当前房间资料为准，无过滤只返回楼栋/楼层概览，房间结果默认 12 间、上限 20 间，最近维护摘要最多 3 条。
-- 监控大屏通过 `search_help` 和 `navigate_system(MONITORING)` 提供指南与导航。当前助手没有实时监控查询工具，不得编造占用数量或现场人员情况；办公室已分配不等于门禁、传感器或现场实测有人。
+- 会议室监控和办公室监控通过 `search_help` 与 `navigate_system` 分别提供指南和导航，目标为 `MONITORING_ROOMS` 或 `MONITORING_OFFICES`，并按当前角色的对应 scope 权限过滤；无权页面明确拒绝。当前助手没有实时监控查询工具，不得编造占用数量或现场人员情况；办公室已分配不等于门禁、传感器或现场实测有人。
 - 新预约要求明确用途和正整数人数，不自动编造参会人，不用“会议/开会”替代真实用途。
 - 未匹配或同名歧义参会人明确报错，不静默丢弃。
 

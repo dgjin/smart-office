@@ -10,7 +10,7 @@ import {
   CalendarDays, History, Square, CheckSquare, Search, FileText, FileUp,
   Lock, Smartphone, Mail, Key, Minus, Layers, PlayCircle, QrCode, Eye, Lightbulb, Bell, Filter,
   Save, RotateCcw, Phone, Ban, Video, CupSoda, Crown, Cloud, CloudOff, ArrowUpRight,
-  PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp, MonitorPlay
+  PanelLeftClose, PanelLeftOpen, LockOpen, CircleHelp, MonitorPlay, DoorOpen
 } from 'lucide-react';
 import { User, Resource, Booking, Role, BookingStatus, ResourceType, ApprovalNode, ApprovalRule, ApprovalDelegate, AuditEvent, Department, RoleDefinition, ResourceStatus, Notification, WorkOrder, RoomFeature, ResourceImportReport, BookingRuleSettings, MeetingType, ConfidentialityChoice, BookingServiceRequirement, AuditoriumSetup, ApprovalRuleSetVersion, ConfidentialWhitelistEntry, ConfidentialityAuthorization, ConfidentialAuthorizationTarget, ServiceCatalogItem, ServiceArea, ServiceShift, ServiceInspection, CheckInEvent, BookingUsageFact, UsageAppeal, DashboardSnapshot, DoorDevice, OperationalException, WorkflowVersion } from './types';
 import { formatDate, formatTime, migrateBookings, pad2, toLocalDateString, toLocalDateTimeString, toLocalTimeString } from './utils/dateTime';
@@ -24,6 +24,7 @@ import { addLocalDays, bookingEffectiveEnd, calculateResourceOccupancy, countsTo
 import { parseCheckInQr } from './utils/checkInQr';
 import { type AgentAction } from './components/ChatDock';
 import { canUseHelpTopic, getHelpTopic, type SystemView } from './helpCatalog';
+import { canViewMonitoring } from './utils/monitoringAccess';
 import ServiceOperations, { BookingUsageActions } from './components/ServiceOperations';
 import ExceptionCenter from './components/ExceptionCenter';
 import DeviceManagement from './components/DeviceManagement';
@@ -36,6 +37,20 @@ const OperationsReports = React.lazy(() => import('./components/OperationsReport
 const MonitoringScreen = React.lazy(() => import('./components/MonitoringScreen'));
 
 type AppView = SystemView;
+const MONITORING_ROUTES: Partial<Record<AppView, string>> = {
+  MONITORING_ROOMS: '/monitoring/meeting-rooms',
+  MONITORING_OFFICES: '/monitoring/offices'
+};
+const monitoringViewFromHash = (hash: string): AppView | null => {
+  const path = hash.startsWith('#') ? hash.slice(1) : hash;
+  return (Object.entries(MONITORING_ROUTES).find(([, route]) => route === path)?.[0] as AppView | undefined) || null;
+};
+const syncMonitoringUrl = (target: AppView, replace = false) => {
+  const route = MONITORING_ROUTES[target];
+  if (!route && !monitoringViewFromHash(window.location.hash)) return;
+  const url = `${window.location.pathname}${window.location.search}${route ? `#${route}` : ''}`;
+  window.history[replace ? 'replaceState' : 'pushState']({}, '', url);
+};
 type Hq3dTarget = NonNullable<AgentAction['hq3d']>;
 type Hq3dLocation = Hq3dTarget & { navigationId: number };
 const buildHq3dSrc = (theme: string, target: Hq3dLocation | null) => {
@@ -48,7 +63,7 @@ const buildHq3dSrc = (theme: string, target: Hq3dLocation | null) => {
   }
   return `/hq3d.html?${params.toString()}`;
 };
-type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number };
+type NavItem = { id: AppView; label: string; shortLabel: string; icon: React.ElementType; badge?: number; href?: string };
 
 // --- Theme Config ---
 const THEMES = [
@@ -260,13 +275,13 @@ const RoleTag = ({ roleId, roles, theme }: any) => {
   return <span className={`px-2 py-0.5 rounded text-[10px] font-bold bg-${role.color}-100 text-${role.color}-700 border border-${role.color}-200`}>{role.name}</span>;
 };
 
-const SidebarItem = ({ icon: Icon, label, id, active, onClick, badge }: any) => (
-  <button type="button" onClick={() => onClick(id)} className="studio-nav-item" data-active={active} aria-current={active ? 'page' : undefined} aria-label={label} title={label}>
-    <Icon size={17} strokeWidth={1.7} />
-    <span>{label}</span>
-    {badge > 0 && <span className="studio-nav-count">{badge}</span>}
-  </button>
-);
+const SidebarItem = ({ icon: Icon, label, id, active, onClick, badge, href }: any) => {
+  const content = <><Icon size={17} strokeWidth={1.7} /><span>{label}</span>{badge > 0 && <span className="studio-nav-count">{badge}</span>}</>;
+  const shared = { className: 'studio-nav-item', 'data-active': active, 'aria-current': active ? 'page' as const : undefined, 'aria-label': label, title: label };
+  return href
+    ? <a {...shared} href={href} onClick={event => { event.preventDefault(); onClick(id); }}>{content}</a>
+    : <button {...shared} type="button" onClick={() => onClick(id)}>{content}</button>;
+};
 
 const MobileMoreSheet = ({ items, currentView, onSelect, onClose, theme, onThemeChange, currentUser, isOnline, saveStatus, onLogout }: {
   items: NavItem[];
@@ -1580,25 +1595,43 @@ const RoleModal = ({ role, onClose, onSave, theme }: any) => {
   const [formData, setFormData] = useState({
     name: role?.name || '',
     description: role?.description || '',
-    color: role?.color || 'indigo'
+    color: role?.color || 'indigo',
+    monitoringScopes: role?.monitoringScopes || []
   });
+  const isSystemAdmin = role?.id === 'SYSTEM_ADMIN';
+  const toggleMonitoringScope = (scope: 'MEETING_ROOMS' | 'OFFICES') => setFormData((current: any) => ({
+    ...current,
+    monitoringScopes: current.monitoringScopes.includes(scope)
+      ? current.monitoringScopes.filter((item: string) => item !== scope)
+      : [...current.monitoringScopes, scope]
+  }));
 
   return (
     <div className="fixed inset-0 z-[200] bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full shadow-2xl animate-in zoom-in">
+      <div className="bg-white rounded-[2rem] p-8 max-w-md w-full max-h-[90dvh] overflow-y-auto shadow-2xl animate-in zoom-in">
         <h3 className="font-black text-xl mb-6">{role ? '编辑角色集' : '新增角色集'}</h3>
         <div className="space-y-4">
           <input value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} placeholder="角色名称" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100" />
           <textarea value={formData.description} onChange={e => setFormData({...formData, description: e.target.value})} placeholder="职能描述" className="w-full p-3 bg-gray-50 rounded-xl border border-gray-100 h-24" />
+          <fieldset className="rounded-xl border border-gray-100 bg-gray-50 p-4">
+            <legend className="px-1 text-xs font-black text-gray-700">监控大屏查看权限</legend>
+            <p className="mb-3 text-[11px] leading-relaxed text-gray-500">两类监控分别授权；未授权角色不会看到入口，也不能访问对应接口。</p>
+            <div className="space-y-2">
+              {([['MEETING_ROOMS', '会议室监控', '查看会议室预约、签到与维护状态'], ['OFFICES', '办公室监控', '查看办公室分配台账与维护状态']] as const).map(([scope, label, detail]) => <label key={scope} className="flex min-h-11 cursor-pointer items-start gap-3 rounded-lg bg-white px-3 py-2.5">
+                <input type="checkbox" className="mt-1" checked={isSystemAdmin || formData.monitoringScopes.includes(scope)} disabled={isSystemAdmin} onChange={() => toggleMonitoringScope(scope)} />
+                <span><strong className="block text-xs text-gray-700">{label}</strong><small className="mt-1 block text-[11px] text-gray-500">{isSystemAdmin ? '系统管理员始终允许查看' : detail}</small></span>
+              </label>)}
+            </div>
+          </fieldset>
           <div className="flex space-x-2">
             {['indigo', 'emerald', 'amber', 'rose', 'purple'].map(c => (
-              <button key={c} onClick={() => setFormData({...formData, color: c})} className={`w-8 h-8 rounded-full bg-${c}-500 ${formData.color === c ? 'ring-2 ring-offset-2 ring-gray-400' : ''}`} />
+              <button key={c} type="button" aria-label={`选择${c}角色颜色`} onClick={() => setFormData({...formData, color: c})} className={`w-8 h-8 rounded-full bg-${c}-500 ${formData.color === c ? 'ring-2 ring-offset-2 ring-gray-400' : ''}`} />
             ))}
           </div>
         </div>
         <div className="flex space-x-3 mt-6">
-          <button onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
-          <button onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
+          <button type="button" onClick={onClose} className="flex-1 py-3 bg-gray-100 text-gray-500 rounded-xl font-bold">取消</button>
+          <button type="button" onClick={() => onSave(formData)} className={`flex-1 py-3 bg-${theme}-600 text-white rounded-xl font-bold`}>保存</button>
         </div>
       </div>
     </div>
@@ -2682,7 +2715,7 @@ const ConfidentialityAdminPanel = ({ users, authorizationTargets, whitelist, aut
 
 const App: React.FC = () => {
   const mainRef = useRef<HTMLElement | null>(null);
-  const [view, setView] = useState<AppView>('DASHBOARD');
+  const [view, setView] = useState<AppView>(() => monitoringViewFromHash(window.location.hash) || 'DASHBOARD');
   const [scheduleRange, setScheduleRange] = useState<ScheduleRange>('TODAY');
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -2738,6 +2771,10 @@ const App: React.FC = () => {
   useEffect(() => {
     mainRef.current?.scrollTo({ top: 0, left: 0 });
   }, [view, currentUser?.id]);
+
+  useEffect(() => {
+    syncMonitoringUrl(view, true);
+  }, [view]);
 
   useEffect(() => {
     fetch('/api/auth/me')
@@ -3080,7 +3117,9 @@ const App: React.FC = () => {
   const canAccessExceptions = canAccessApproval
     || !!currentUser?.role.some(role => ['SYSTEM_ADMIN', 'APPROVAL_ADMIN', 'SERVICE_COORDINATOR', 'FRONT_DESK'].includes(role))
     || workOrders.some(order => currentUser?.role.includes(order.assigneeRole));
-  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D', 'MONITORING']);
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  if (canViewMonitoring(currentUser, roles, 'MEETING_ROOMS')) allowedViews.add('MONITORING_ROOMS');
+  if (canViewMonitoring(currentUser, roles, 'OFFICES')) allowedViews.add('MONITORING_OFFICES');
   if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
   if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
   if (canAccessExceptions) allowedViews.add('EXCEPTIONS');
@@ -3094,11 +3133,43 @@ const App: React.FC = () => {
       addNotification('无法打开功能', '目标页面不存在，或当前角色没有访问权限。', 'WARNING');
       return;
     }
+    syncMonitoringUrl(target);
     setView(target);
     setHq3dLocation(null);
     setShowHelp(false);
     setShowMobileMenu(false);
   };
+
+  useEffect(() => {
+    const restoreRoute = () => {
+      if (!workspaceLoaded) return;
+      const target = monitoringViewFromHash(window.location.hash);
+      if (target && allowedViews.has(target)) {
+        setView(target);
+        setHq3dLocation(null);
+      } else if (target) {
+        addNotification('无法打开监控页面', '当前角色没有该类监控的查看权限，请联系系统管理员授权。', 'WARNING');
+        syncMonitoringUrl('DASHBOARD', true);
+        setView('DASHBOARD');
+      } else if (MONITORING_ROUTES[view]) {
+        setView('DASHBOARD');
+      }
+    };
+    window.addEventListener('popstate', restoreRoute);
+    window.addEventListener('hashchange', restoreRoute);
+    return () => {
+      window.removeEventListener('popstate', restoreRoute);
+      window.removeEventListener('hashchange', restoreRoute);
+    };
+  }, [workspaceLoaded, currentUser, roles, view]);
+
+  useEffect(() => {
+    if (!workspaceLoaded || !MONITORING_ROUTES[view] || allowedViews.has(view)) return;
+    addNotification('监控查看权限已变更', '当前角色已无此页面的查看权限，已返回会议工作台。', 'WARNING');
+    syncMonitoringUrl('DASHBOARD', true);
+    setView('DASHBOARD');
+  }, [workspaceLoaded, currentUser, roles, view]);
+
   const openHelp = (topicId?: string) => {
     if (topicId) {
       const topic = getHelpTopic(topicId);
@@ -4007,6 +4078,10 @@ const App: React.FC = () => {
     users.find(user => user.id === event.actorId)?.name
   ].some(value => String(value || '').toLowerCase().includes(normalizedAuditQuery)));
 
+  const monitoringNavItems: NavItem[] = [
+    ...(allowedViews.has('MONITORING_ROOMS') ? [{ id: 'MONITORING_ROOMS', label: '会议室监控', shortLabel: '会议室', icon: MonitorPlay, href: `#${MONITORING_ROUTES.MONITORING_ROOMS}` } as NavItem] : []),
+    ...(allowedViews.has('MONITORING_OFFICES') ? [{ id: 'MONITORING_OFFICES', label: '办公室监控', shortLabel: '办公室', icon: DoorOpen, href: `#${MONITORING_ROUTES.MONITORING_OFFICES}` } as NavItem] : [])
+  ];
   const workflowNavItems: NavItem[] = [
     ...(canAccessApproval ? [{ id: 'APPROVAL_CENTER', label: '审批工作台', shortLabel: '审批', icon: ShieldCheck, badge: pendingCount } as NavItem] : []),
     ...(canAccessWorkOrders ? [{ id: 'WORK_ORDERS', label: '服务工单', shortLabel: '工单', icon: Coffee, badge: openWorkOrderCount } as NavItem] : []),
@@ -4032,7 +4107,7 @@ const App: React.FC = () => {
     ...(primaryWorkflowItem ? [primaryWorkflowItem] : [])
   ];
   const mobileMoreItems = [
-    { id: 'MONITORING', label: '监控大屏', shortLabel: '监控', icon: MonitorPlay } as NavItem,
+    ...monitoringNavItems,
     { id: 'HQ_3D', label: '总部楼层 3D', shortLabel: '3D', icon: Layers } as NavItem,
     ...workflowNavItems.filter(item => !mobilePrimaryItems.some(primary => primary.id === item.id)),
     ...adminNavItems
@@ -4080,19 +4155,19 @@ const App: React.FC = () => {
           </button>
         </div>
         <nav id="studio-sidebar-navigation" aria-label="桌面主导航" className="flex-1 space-y-2 overflow-y-auto custom-scrollbar pr-1">
-          <SidebarItem icon={LayoutDashboard} label="会议工作台" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={setView} />
-          <SidebarItem icon={MonitorPlay} label="监控大屏" id="MONITORING" active={view === 'MONITORING'} onClick={setView} />
-          <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={setView} />
-          <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={setView} />
-          <SidebarItem icon={Layers} label="总部楼层 3D" id="HQ_3D" active={view === 'HQ_3D'} onClick={setView} />
+          <SidebarItem icon={LayoutDashboard} label="会议工作台" id="DASHBOARD" active={view === 'DASHBOARD'} onClick={navigateToView} />
+          {monitoringNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} href={item.href} active={view === item.id} onClick={navigateToView} />)}
+          <SidebarItem icon={MapPin} label="空间资源库" id="RESOURCES" active={view === 'RESOURCES'} onClick={navigateToView} />
+          <SidebarItem icon={Calendar} label="我的申请" id="BOOKINGS" active={view === 'BOOKINGS'} onClick={navigateToView} />
+          <SidebarItem icon={Layers} label="总部楼层 3D" id="HQ_3D" active={view === 'HQ_3D'} onClick={navigateToView} />
           {(workflowNavItems.length > 0 || adminNavItems.length > 0) && <div className="studio-nav-label">流程与中心</div>}
-          {workflowNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={setView} badge={item.badge} />)}
+          {workflowNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={navigateToView} badge={item.badge} />)}
           {adminNavItems.length > 0 && (
             <div className="studio-nav-group">
               <button type="button" className="studio-nav-item studio-nav-group-toggle" data-active={isAdminView} aria-label="系统管理" title="系统管理" aria-expanded={showAdminMenu} aria-controls="desktop-admin-menu" onClick={() => setShowAdminMenu(value => !value)}>
                 <FolderTree size={17} strokeWidth={1.7} /><span>系统管理</span><ChevronDown size={14} className={showAdminMenu ? 'rotate-180 transition-transform' : 'transition-transform'} />
               </button>
-              {showAdminMenu && <div id="desktop-admin-menu" className="studio-nav-children">{adminNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={setView} />)}</div>}
+              {showAdminMenu && <div id="desktop-admin-menu" className="studio-nav-children">{adminNavItems.map(item => <SidebarItem key={item.id} icon={item.icon} label={item.label} id={item.id} active={view === item.id} onClick={navigateToView} />)}</div>}
             </div>
           )}
         </nav>
@@ -4132,7 +4207,7 @@ const App: React.FC = () => {
 
       <nav aria-label="移动端主导航" className="studio-mobile-nav lg:hidden fixed bottom-3 left-3 right-3 z-[80] backdrop-blur-lg">
         {mobilePrimaryItems.map(item => (
-          <button key={item.id} type="button" onClick={() => setView(item.id)} aria-current={view === item.id ? 'page' : undefined}>
+          <button key={item.id} type="button" onClick={() => navigateToView(item.id)} aria-current={view === item.id ? 'page' : undefined}>
             <item.icon size={18} strokeWidth={1.7} /><span>{item.shortLabel}</span>
             {(item.badge || 0) > 0 && <strong className="studio-mobile-badge">{item.badge}</strong>}
           </button>
@@ -4142,14 +4217,15 @@ const App: React.FC = () => {
         </button>
       </nav>
 
-      {showMobileMenu && <div id="mobile-more-menu"><MobileMoreSheet items={mobileMoreItems} currentView={view} onSelect={id => { setView(id); setShowMobileMenu(false); }} onClose={() => setShowMobileMenu(false)} theme={theme} onThemeChange={setTheme} currentUser={currentUser} isOnline={isOnline} saveStatus={saveStatus} onLogout={handleLogout} /></div>}
+      {showMobileMenu && <div id="mobile-more-menu"><MobileMoreSheet items={mobileMoreItems} currentView={view} onSelect={navigateToView} onClose={() => setShowMobileMenu(false)} theme={theme} onThemeChange={setTheme} currentUser={currentUser} isOnline={isOnline} saveStatus={saveStatus} onLogout={handleLogout} /></div>}
 
       <main ref={mainRef} className="studio-main flex-1 min-w-0 overflow-auto relative pb-32">
         <header className="studio-topbar backdrop-blur-md flex items-center justify-between gap-3 sticky top-0 z-40">
           <div className="flex items-center gap-6 flex-1 min-w-0 max-w-2xl">
             <div className="min-w-0 lg:shrink-0"><span className="studio-page-kicker">企业会议与空间管理</span><h2 className="studio-page-title truncate">
               {view === 'DASHBOARD' && '会议工作台'}
-              {view === 'MONITORING' && '监控大屏'}
+              {view === 'MONITORING_ROOMS' && '会议室监控大屏'}
+              {view === 'MONITORING_OFFICES' && '办公室监控大屏'}
               {view === 'RESOURCES' && '空间资源库'}
               {view === 'USERS' && '成员中心'}
               {view === 'BOOKINGS' && '我的会议与申请'}
@@ -4234,9 +4310,9 @@ const App: React.FC = () => {
             </div>
           )}
 
-          {view === 'MONITORING' && (
+          {(view === 'MONITORING_ROOMS' || view === 'MONITORING_OFFICES') && (
             <React.Suspense fallback={<p role="status" className="studio-panel p-8 text-sm text-gray-500">正在建立实时监控连接…</p>}>
-              <MonitoringScreen onOpenAssistant={() => setShowAgent(true)} />
+              <MonitoringScreen key={view} scope={view === 'MONITORING_ROOMS' ? 'MEETING_ROOMS' : 'OFFICES'} onOpenAssistant={() => setShowAgent(true)} />
             </React.Suspense>
           )}
 
@@ -4749,9 +4825,16 @@ const App: React.FC = () => {
                      <div className={`w-12 h-12 rounded-2xl bg-${r.color}-50 flex items-center justify-center text-${r.color}-600 mb-6 shadow-inner`}><Shield size={24}/></div>
                      <h5 className="font-black text-xl text-gray-800">{r.name}</h5>
                      <p className="text-xs text-gray-500 mt-3 leading-relaxed font-medium">{r.description}</p>
+                     <div className="mt-4 rounded-xl bg-gray-50 px-3 py-2 text-[11px] leading-relaxed text-gray-600">
+                       <span className="font-black text-gray-700">监控授权：</span>
+                       {r.id === 'SYSTEM_ADMIN' ? '会议室监控、办公室监控（管理员默认）' : [
+                         ...(r.monitoringScopes?.includes('MEETING_ROOMS') ? ['会议室监控'] : []),
+                         ...(r.monitoringScopes?.includes('OFFICES') ? ['办公室监控'] : [])
+                       ].join('、') || '未授权'}
+                     </div>
                      <div className="mt-6 pt-6 border-t border-gray-50 flex justify-between items-center">
                        <span className="text-[10px] font-black text-gray-500 uppercase tracking-widest">ID: {r.id}</span>
-                       <button onClick={() => { setEditingRole(r); setShowRoleModal(true); }} className="p-2 text-gray-500 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"><Edit2 size={14}/></button>
+                       <button aria-label={`编辑角色${r.name}`} onClick={() => { setEditingRole(r); setShowRoleModal(true); }} className="p-2 text-gray-500 hover:text-indigo-600 opacity-0 group-hover:opacity-100 transition-all"><Edit2 size={14}/></button>
                      </div>
                    </div>
                  ))}
@@ -5025,7 +5108,7 @@ const App: React.FC = () => {
         onClose={() => setRecurringPlan(null)}
       />}
 
-      {!showMobileMenu && <button
+      {!showMobileMenu && view !== 'MONITORING_ROOMS' && view !== 'MONITORING_OFFICES' && <button
         type="button"
         onClick={() => setShowAgent(true)}
         aria-label="打开智能助手"

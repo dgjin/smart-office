@@ -1,10 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import type { Booking, Resource } from '../types.ts';
+import type { Booking, Resource, RoleDefinition } from '../types.ts';
 import { buildMeetingRoomMonitoring, buildOfficeMonitoring } from '../server/monitoring.ts';
 import type { Hq3dSnapshot } from '../server/hq3d.ts';
 import { monitoringSubscriberCount, publishMonitoringChange, subscribeMonitoringChanges } from '../server/monitoringEvents.ts';
 import { redactBooking } from '../server/confidentiality.ts';
+import { canViewMonitoring } from '../utils/monitoringAccess.ts';
 
 const now = new Date('2026-11-25T02:00:00.000Z');
 const resource = (overrides: Partial<Resource> = {}): Resource => ({
@@ -88,6 +89,23 @@ test('办公室应用资料覆盖，区分已分配、空置、未登记与维�
   ]);
   assert.equal(items[0].name, '财务办公室');
   assert.equal(items[0].department, '财务部');
+});
+
+test('监控授权由管理员或角色范围决定，两类权限独立且旧角色默认拒绝', () => {
+  const roles: RoleDefinition[] = [
+    { id: 'ROOM_VIEWER', name: '会议室监控员', description: '', color: 'blue', monitoringScopes: ['MEETING_ROOMS'] },
+    { id: 'OFFICE_VIEWER', name: '办公室监控员', description: '', color: 'green', monitoringScopes: ['OFFICES'] },
+    { id: 'LEGACY', name: '旧角色', description: '', color: 'gray' }
+  ];
+  assert.equal(canViewMonitoring(null, roles, 'MEETING_ROOMS'), false);
+  assert.equal(canViewMonitoring({ role: ['SYSTEM_ADMIN'] }, roles, 'MEETING_ROOMS'), true);
+  assert.equal(canViewMonitoring({ role: ['SYSTEM_ADMIN'] }, roles, 'OFFICES'), true);
+  assert.equal(canViewMonitoring({ role: ['ROOM_VIEWER'] }, roles, 'MEETING_ROOMS'), true);
+  assert.equal(canViewMonitoring({ role: ['ROOM_VIEWER'] }, roles, 'OFFICES'), false);
+  assert.equal(canViewMonitoring({ role: ['OFFICE_VIEWER'] }, roles, 'MEETING_ROOMS'), false);
+  assert.equal(canViewMonitoring({ role: ['OFFICE_VIEWER'] }, roles, 'OFFICES'), true);
+  assert.equal(canViewMonitoring({ role: ['LEGACY'] }, roles, 'MEETING_ROOMS'), false);
+  assert.equal(canViewMonitoring({ role: ['LEGACY'] }, roles, 'OFFICES'), false);
 });
 
 test('监控事件订阅在取消后完全清理', () => {

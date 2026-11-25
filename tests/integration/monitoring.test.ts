@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { after, before, describe, it } from 'node:test';
-import type { Booking, MonitoringSnapshot } from '../../types.ts';
+import type { Booking, MeetingRoomMonitoringSnapshot, MonitoringScope, MonitoringSnapshot, OfficeMonitoringSnapshot } from '../../types.ts';
 import { closeDbPool } from '../../server/db.ts';
 import { handleMonitoringEvents } from '../../server/monitoring.ts';
 import { monitoringSubscriberCount } from '../../server/monitoringEvents.ts';
@@ -10,14 +10,22 @@ import { integrationEnabled, mutateTestCollection, queryTestDb, resetTestDb, Tes
 const server = new TestServer();
 type Session = Awaited<ReturnType<TestServer['login']>>;
 type StreamEvent = { id: number; event: string; data: any };
+type MonitoringPath = 'meeting-rooms' | 'offices';
 
 let admin: Session;
 let requester: Session;
 let other: Session;
+let roomViewer: Session;
+let officeViewer: Session;
 let confidentialResourceId = '';
 let occupiedResourceId = '';
 let releasedResourceId = '';
 const otherId = 'u-monitoring-other';
+const roomViewerId = 'u-monitoring-room-viewer';
+const officeViewerId = 'u-monitoring-office-viewer';
+const allRoleId = 'MONITORING_TEST_ALL';
+const roomRoleId = 'MONITORING_TEST_ROOMS';
+const officeRoleId = 'MONITORING_TEST_OFFICES';
 
 const call = (pathname: string, method: string, session: Session, body?: unknown) => server.request(pathname, {
   method,
@@ -75,7 +83,7 @@ const readEventStream = (response: Response) => {
             timeout = setTimeout(() => reject(new Error('读取监控 SSE 事件超时')), Math.max(1, deadline - Date.now()));
           })
         ]);
-        if (result.done) throw new Error('监控 SSE 在发送快照前关闭');
+        if (result.done) throw new Error('监控 SSE 已关闭');
         buffer += decoder.decode(result.value, { stream: true });
       } finally {
         if (timeout) clearTimeout(timeout);
@@ -85,12 +93,22 @@ const readEventStream = (response: Response) => {
   };
   return { next, close: () => reader.cancel() };
 };
-const connect = (session: Session) => server.request('/api/monitoring/events', { headers: { Cookie: session.cookie } }).then(readEventStream);
+const connect = (session: Session, path: MonitoringPath) => server.request(`/api/monitoring/${path}/events`, { headers: { Cookie: session.cookie } }).then(readEventStream);
 const nextSnapshot = async (stream: { next: () => Promise<StreamEvent> }): Promise<MonitoringSnapshot> => {
   const event = await stream.next();
   assert.equal(event.event, 'snapshot', JSON.stringify(event.data));
   assert.ok(event.id > 0);
   return event.data;
+};
+const nextMeetingSnapshot = async (stream: { next: () => Promise<StreamEvent> }): Promise<MeetingRoomMonitoringSnapshot> => {
+  const snapshot = await nextSnapshot(stream);
+  if (snapshot.scope !== 'MEETING_ROOMS') assert.fail('会议室通道返回了其他监控数据');
+  return snapshot;
+};
+const nextOfficeSnapshot = async (stream: { next: () => Promise<StreamEvent> }): Promise<OfficeMonitoringSnapshot> => {
+  const snapshot = await nextSnapshot(stream);
+  if (snapshot.scope !== 'OFFICES') assert.fail('办公室通道返回了其他监控数据');
+  return snapshot;
 };
 const waitFor = async (predicate: () => boolean, message: string) => {
   const deadline = Date.now() + 3000;
@@ -105,10 +123,21 @@ before(async () => {
   await resetTestDb();
   await server.start();
   [admin, requester] = await Promise.all([server.login('1'), server.login('3')]);
-  await expectJson(await call('/api/users', 'POST', admin, {
-    user: { id: otherId, name: '监控其他员工', email: `${otherId}@company.com`, role: ['EMPLOYEE'], department: '行政部', mobile: '13800000139' }
-  }), 201);
-  other = await server.login(otherId);
+  for (const role of [
+    { id: allRoleId, name: '监控双页测试角色', description: '集成测试双监控授权', color: 'indigo', monitoringScopes: ['MEETING_ROOMS', 'OFFICES'] satisfies MonitoringScope[] },
+    { id: roomRoleId, name: '会议室监控测试角色', description: '集成测试单向授权', color: 'emerald', monitoringScopes: ['MEETING_ROOMS'] satisfies MonitoringScope[] },
+    { id: officeRoleId, name: '办公室监控测试角色', description: '集成测试单向授权', color: 'amber', monitoringScopes: ['OFFICES'] satisfies MonitoringScope[] }
+  ]) {
+    await expectJson(await call('/api/roles', 'POST', admin, { role }), 201);
+  }
+  for (const user of [
+    { id: otherId, name: '监控其他员工', email: `${otherId}@company.com`, role: [allRoleId], department: '行政部', mobile: '13800000139' },
+    { id: roomViewerId, name: '会议室监控员', email: `${roomViewerId}@company.com`, role: [roomRoleId], department: '行政部', mobile: '13800000140' },
+    { id: officeViewerId, name: '办公室监控员', email: `${officeViewerId}@company.com`, role: [officeRoleId], department: '行政部', mobile: '13800000141' }
+  ]) {
+    await expectJson(await call('/api/users', 'POST', admin, { user }), 201);
+  }
+  [other, roomViewer, officeViewer] = await Promise.all([server.login(otherId), server.login(roomViewerId), server.login(officeViewerId)]);
   const workspace = await expectJson(await call('/api/workspace', 'GET', admin), 200);
   const rooms = workspace.resources.filter((item: any) => item.type === 'ROOM' && ['AVAILABLE', 'OCCUPIED'].includes(item.status)).slice(0, 2);
   assert.equal(rooms.length, 2);
@@ -119,12 +148,12 @@ before(async () => {
   }), 201);
   const now = Date.now();
   await insertBooking(booking({
-    id: 'monitor-confidential-current', userId: '3', resourceId: confidentialResourceId, purpose: '监控机密项目真实名称',
+    id: 'monitor-confidential-current', userId: otherId, resourceId: confidentialResourceId, purpose: '监控机密项目真实名称',
     meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL', checkedInAt: new Date(now - 60000).toISOString(),
     startTime: new Date(now - 600000).toISOString(), endTime: new Date(now + 3600000).toISOString()
   }));
   await mutateTestCollection<any>('confidentialAccessGrants', items => [...items, {
-    id: 'cag-monitoring-current', bookingId: 'monitor-confidential-current', userId: '3', access: 'REQUESTER', grantedBy: '1', grantedAt: new Date().toISOString()
+    id: 'cag-monitoring-current', bookingId: 'monitor-confidential-current', userId: otherId, access: 'REQUESTER', grantedBy: '1', grantedAt: new Date().toISOString()
   }]);
   await insertBooking(booking({
     id: 'monitor-own-current', userId: otherId, resourceId: occupiedResourceId, purpose: '监控本人已签到会议',
@@ -132,7 +161,7 @@ before(async () => {
     startTime: new Date(now - 600000).toISOString(), endTime: new Date(now + 3600000).toISOString()
   }));
   await insertBooking(booking({
-    id: 'monitor-confidential-ended', userId: '3', resourceId: releasedResourceId, purpose: '监控已结束机密项目',
+    id: 'monitor-confidential-ended', userId: otherId, resourceId: releasedResourceId, purpose: '监控已结束机密项目',
     meetingType: 'CONFIDENTIAL', confidentialityChoice: 'CONFIDENTIAL', endedEarlyAt: new Date(now - 60000).toISOString(), actualEndTime: new Date(now - 60000).toISOString(),
     startTime: new Date(now - 3600000).toISOString(), endTime: new Date(now + 3600000).toISOString()
   }));
@@ -143,40 +172,82 @@ after(async () => {
 });
 
 describe('监控大屏真实 API 与 SSE', { skip: !integrationEnabled, concurrency: false }, () => {
-  it('拒绝未登录访问，快照按 actor 脱敏且保留真实占用时间事实', async () => {
-    assert.equal((await server.request('/api/monitoring/snapshot')).status, 401);
-    assert.equal((await server.request('/api/monitoring/events')).status, 401);
+  it('未登录和未授权角色无法读取任一类快照或建立 SSE', async () => {
+    for (const path of ['meeting-rooms', 'offices'] as const) {
+      assert.equal((await server.request(`/api/monitoring/${path}/snapshot`)).status, 401);
+      assert.equal((await server.request(`/api/monitoring/${path}/events`)).status, 401);
+      assert.equal((await call(`/api/monitoring/${path}/snapshot`, 'GET', requester)).status, 403);
+      assert.equal((await call(`/api/monitoring/${path}/events`, 'GET', requester)).status, 403);
+    }
+  });
 
-    const otherSnapshot = await expectJson(await call('/api/monitoring/snapshot', 'GET', other), 200) as MonitoringSnapshot;
-    const confidential = otherSnapshot.meetingRooms.find(item => item.resourceId === confidentialResourceId)!;
+  it('管理员默认允许，指定角色分别授权且响应不混入另一类数据', async () => {
+    const adminRooms = await expectJson(await call('/api/monitoring/meeting-rooms/snapshot', 'GET', admin), 200) as MeetingRoomMonitoringSnapshot;
+    const adminOffices = await expectJson(await call('/api/monitoring/offices/snapshot', 'GET', admin), 200) as OfficeMonitoringSnapshot;
+    assert.equal(adminRooms.scope, 'MEETING_ROOMS');
+    assert.ok(adminRooms.meetingRooms.length > 0);
+    assert.equal('offices' in adminRooms, false);
+    assert.equal('officeSource' in adminRooms, false);
+    assert.equal(adminOffices.scope, 'OFFICES');
+    assert.ok(adminOffices.offices.length > 0);
+    assert.equal(adminOffices.officeSource, 'HQ3D_ASSIGNMENT_LEDGER');
+    assert.equal('meetingRooms' in adminOffices, false);
+
+    assert.equal((await call('/api/monitoring/meeting-rooms/snapshot', 'GET', roomViewer)).status, 200);
+    assert.equal((await call('/api/monitoring/offices/snapshot', 'GET', roomViewer)).status, 403);
+    assert.equal((await call('/api/monitoring/offices/events', 'GET', roomViewer)).status, 403);
+    assert.equal((await call('/api/monitoring/offices/snapshot', 'GET', officeViewer)).status, 200);
+    assert.equal((await call('/api/monitoring/meeting-rooms/snapshot', 'GET', officeViewer)).status, 403);
+    assert.equal((await call('/api/monitoring/meeting-rooms/events', 'GET', officeViewer)).status, 403);
+
+    const roomStream = await connect(roomViewer, 'meeting-rooms');
+    const officeStream = await connect(officeViewer, 'offices');
+    try {
+      assert.equal((await nextMeetingSnapshot(roomStream)).scope, 'MEETING_ROOMS');
+      assert.equal((await nextOfficeSnapshot(officeStream)).scope, 'OFFICES');
+    } finally {
+      await Promise.all([roomStream.close(), officeStream.close()]);
+    }
+  });
+
+  it('会议室快照按 actor 脱敏且保留真实占用事实，办公室只返回分配台账', async () => {
+    const redacted = await expectJson(await call('/api/monitoring/meeting-rooms/snapshot', 'GET', roomViewer), 200) as MeetingRoomMonitoringSnapshot;
+    const confidential = redacted.meetingRooms.find(item => item.resourceId === confidentialResourceId)!;
     assert.equal(confidential.status, 'RESERVED');
     assert.equal(confidential.currentBooking?.purpose, '已预约');
     assert.equal(confidential.currentBooking?.checkedIn, false);
     assert.equal(confidential.currentBooking?.checkInTime, undefined);
-    assert.equal(otherSnapshot.meetingRooms.find(item => item.resourceId === occupiedResourceId)?.status, 'IN_USE');
-    assert.equal(otherSnapshot.meetingRooms.find(item => item.resourceId === releasedResourceId)?.status, 'IDLE');
-    assert.equal(otherSnapshot.officeSource, 'HQ3D_ASSIGNMENT_LEDGER');
-    assert.ok(otherSnapshot.offices.length > 0);
-    assert.equal(JSON.stringify(otherSnapshot).includes('监控机密项目真实名称'), false);
-    assert.equal(JSON.stringify(otherSnapshot).includes('监控已结束机密项目'), false);
+    const redactedOrdinary = redacted.meetingRooms.find(item => item.resourceId === occupiedResourceId)!;
+    assert.equal(redactedOrdinary.status, 'RESERVED');
+    assert.equal(redactedOrdinary.currentBooking?.checkedIn, false);
+    assert.equal(redactedOrdinary.currentBooking?.checkInTime, undefined);
+    assert.equal(redacted.meetingRooms.find(item => item.resourceId === releasedResourceId)?.status, 'IDLE');
+    assert.equal(JSON.stringify(redacted).includes('监控机密项目真实名称'), false);
+    assert.equal(JSON.stringify(redacted).includes('监控已结束机密项目'), false);
 
-    const ownerSnapshot = await expectJson(await call('/api/monitoring/snapshot', 'GET', requester), 200) as MonitoringSnapshot;
+    const ownerSnapshot = await expectJson(await call('/api/monitoring/meeting-rooms/snapshot', 'GET', other), 200) as MeetingRoomMonitoringSnapshot;
     const ownConfidential = ownerSnapshot.meetingRooms.find(item => item.resourceId === confidentialResourceId)!;
     assert.equal(ownConfidential.status, 'IN_USE');
     assert.equal(ownConfidential.currentBooking?.purpose, '监控机密项目真实名称');
     assert.equal(ownConfidential.currentBooking?.checkedIn, true);
+    assert.equal(ownerSnapshot.meetingRooms.find(item => item.resourceId === occupiedResourceId)?.status, 'IN_USE');
+    assert.equal(ownerSnapshot.meetingRooms.find(item => item.resourceId === occupiedResourceId)?.currentBooking?.checkedIn, true);
+
+    const officeSnapshot = await expectJson(await call('/api/monitoring/offices/snapshot', 'GET', other), 200) as OfficeMonitoringSnapshot;
+    assert.ok(officeSnapshot.offices.length > 0);
+    assert.equal(JSON.stringify(officeSnapshot).includes('监控机密项目真实名称'), false);
   });
 
-  it('SSE 立即推送快照，并在核心写事务提交后推送新资源', async () => {
-    const stream = await connect(admin);
+  it('会议室 SSE 立即推送快照，并在核心写事务提交后推送新资源', async () => {
+    const stream = await connect(admin, 'meeting-rooms');
     try {
-      const initial = await nextSnapshot(stream);
+      const initial = await nextMeetingSnapshot(stream);
       const resource = {
         id: 'r-monitoring-live', name: '实时监控测试会议室', type: 'ROOM', capacity: 6,
         location: '主楼 3层', features: [], status: 'AVAILABLE'
       };
       await expectJson(await call('/api/resources', 'POST', admin, { resource }), 201);
-      const pushed = await nextSnapshot(stream);
+      const pushed = await nextMeetingSnapshot(stream);
       assert.ok(pushed.revision > initial.revision);
       assert.equal(pushed.meetingRooms.find(item => item.resourceId === resource.id)?.status, 'IDLE');
     } finally {
@@ -184,15 +255,15 @@ describe('监控大屏真实 API 与 SSE', { skip: !integrationEnabled, concurre
     }
   });
 
-  it('总部 3D 房间资料写成功后推送办公室台账变化', async () => {
-    const stream = await connect(other);
+  it('总部 3D 房间资料写成功后只向办公室通道推送台账变化', async () => {
+    const stream = await connect(officeViewer, 'offices');
     try {
-      const initial = await nextSnapshot(stream);
+      const initial = await nextOfficeSnapshot(stream);
       const office = initial.offices[0];
       await expectJson(await call(`/api/hq3d/rooms/${encodeURIComponent(office.uid)}`, 'PUT', admin, {
         profile: { person: '监控集成测试使用人', dept: '监控集成测试部' }
       }), 200);
-      const pushed = await nextSnapshot(stream);
+      const pushed = await nextOfficeSnapshot(stream);
       const updated = pushed.offices.find(item => item.uid === office.uid)!;
       assert.equal(updated.person, '监控集成测试使用人');
       assert.equal(updated.department, '监控集成测试部');
@@ -202,17 +273,36 @@ describe('监控大屏真实 API 与 SSE', { skip: !integrationEnabled, concurre
     }
   });
 
+  it('角色撤销会议室权限后 SSE 明确报错并关闭', async () => {
+    const stream = await connect(other, 'meeting-rooms');
+    try {
+      await nextMeetingSnapshot(stream);
+      await expectJson(await call(`/api/roles/${allRoleId}`, 'PUT', admin, {
+        role: { id: allRoleId, name: '监控双页测试角色', description: '集成测试双监控授权', color: 'indigo', monitoringScopes: ['OFFICES'] }
+      }), 200);
+      const revoked = await stream.next();
+      assert.equal(revoked.event, 'error');
+      assert.equal(revoked.data.error, 'MONITORING_FORBIDDEN');
+      assert.match(revoked.data.message, /权限已变更/);
+      await assert.rejects(stream.next(), /监控 SSE 已关闭/);
+      assert.equal((await call('/api/monitoring/offices/snapshot', 'GET', other)).status, 200);
+      assert.equal((await call('/api/monitoring/meeting-rooms/snapshot', 'GET', other)).status, 403);
+    } finally {
+      await stream.close();
+    }
+  });
+
   it('SSE 客户端断连后清理事件订阅', async () => {
     await server.stop();
-    const local = createServer((req, res) => { void handleMonitoringEvents(req, res, admin.body.actor); });
+    const local = createServer((req, res) => { void handleMonitoringEvents(req, res, admin.body.actor, 'MEETING_ROOMS'); });
     await new Promise<void>((resolve, reject) => local.listen(0, '127.0.0.1', resolve).once('error', reject));
     const address = local.address();
     assert.ok(address && typeof address !== 'string');
     try {
       const before = monitoringSubscriberCount();
-      const response = await fetch(`http://127.0.0.1:${address.port}/api/monitoring/events`, { headers: { Cookie: admin.cookie } });
+      const response = await fetch(`http://127.0.0.1:${address.port}/api/monitoring/meeting-rooms/events`, { headers: { Cookie: admin.cookie } });
       const stream = readEventStream(response);
-      await nextSnapshot(stream);
+      await nextMeetingSnapshot(stream);
       assert.equal(monitoringSubscriberCount(), before + 1);
       await stream.close();
       await waitFor(() => monitoringSubscriberCount() === before, 'SSE 断连后仍残留事件订阅');

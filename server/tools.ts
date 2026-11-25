@@ -1,6 +1,7 @@
 import type { ApprovalDelegate, ApprovalRuleSetVersion, AuditoriumSetup, Booking, BookingServiceRequirement, BookingUsageFact, CheckInEvent, ConfidentialAccessGrant, ConfidentialityAuthorization, ConfidentialWhitelistEntry, DoorDevice, ExceptionActionRecord, OrganizationSyncBatch, Resource, ServiceArea, ServiceCatalogItem, ServiceInspection, ServiceShift, UsageAppeal, User, ApprovalNode, WorkOrder, RoleDefinition, Department, Notification, WorkflowVersion, RuleVersion, ResourceImportBatch, ExternalCallback, ExternalCompensation, AccessAuthorizationFact, IntegrationDelivery } from '../types.ts';
 import { findBookingConflicts, isActiveBooking, findNextAvailableSlot, isResourceAcceptingBookings, isValidBookingPurpose, validateBookingResource } from '../utils/bookingRules.ts';
 import { approveBooking, getApprovalGroups, getBookingWorkflow, rejectBooking } from '../utils/approval.ts';
+import { canViewMonitoring } from '../utils/monitoringAccess.ts';
 import { SERVICE_TYPES, SERVICE_TYPE_LABELS, isServiceType } from '../constants.ts';
 import { canUseHelpTopic, HELP_TOPICS, isSystemView, searchHelpTopics, SYSTEM_VIEWS, type SystemView } from '../helpCatalog.ts';
 import type { Hq3dSnapshot } from './hq3d.ts';
@@ -719,7 +720,9 @@ export const createExecutor = (db: OfficeDb, ctx: AgentContext, options: Executo
   const canAccessExceptions = canAccessApproval || Boolean(me && (
     me.role.some(role => SERVICE_ROLES.has(role)) || workOrders.some(order => me.role.includes(order.assigneeRole))
   ));
-  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D', 'MONITORING']);
+  const allowedViews = new Set<SystemView>(['DASHBOARD', 'RESOURCES', 'BOOKINGS', 'HQ_3D']);
+  if (canViewMonitoring(me, db.roles || [], 'MEETING_ROOMS')) allowedViews.add('MONITORING_ROOMS');
+  if (canViewMonitoring(me, db.roles || [], 'OFFICES')) allowedViews.add('MONITORING_OFFICES');
   if (canAccessApproval) allowedViews.add('APPROVAL_CENTER');
   if (canAccessWorkOrders) allowedViews.add('WORK_ORDERS');
   if (canAccessExceptions) allowedViews.add('EXCEPTIONS');
